@@ -131,6 +131,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <errno.h>
+#include <sys/time.h>
 
 #ifndef MAXPATHLEN
 #define MAXPATHLEN 1024
@@ -176,6 +177,37 @@ struct atari_dirent {
 	char namehi[3];
 };
 
+struct trackformat {
+	int offset[18];		/* sector offset from start: offset[i]==i*100 if no skew */
+	int bad[18];		/* Only set with special SIO2Linux command */
+};
+
+struct image {
+	int secsize;		/* 128 or 256 */
+	int seccount;		/* 720, 1040, or whatever */
+	enum seekcodes seekcode;/* Image type */
+	int diskfd;		/* file descriptor */
+	int ro;			/* non-zero if read-only */
+	int active;		/* non-zero if Linux is responding for this disk */
+	int fakewrite;		/* non-zero if writes are accepted but dropped */
+	int blank;		/* non-zero if disk can grow as needed */
+	/*
+	 * Stuff for directories as virtual disk images
+	 */
+	DIR *dir;		/* NULL if not a directory */
+	int filefd;		/* fd of open file in directory */
+	int afileno;		/* afileno (0-63) of open file */
+	int secoff;		/* sector offset of open file */
+	char *dirname;		/* directory name, used to append filenames */
+	/*
+	 * Stuff for real disks, so that we can analyze the format
+	 */
+	int lastsec;		/* last sector read for real disks */
+	int prevsec;		/* sector before last for real disks */
+	struct timeval lasttime;/* time that lastsec[] was read */
+	struct trackformat track[40]; /* format information derived from observations */
+};
+
 /*
  * Prototypes
  */
@@ -188,6 +220,8 @@ static void recvdata(int disk,int sec);
 static int get_atari(void);
 void getcmd(unsigned char *buf);
 static void loaddisk(char *path,int disk);
+int firstgood(int disk,int sec);
+void addtiming(int disk,int sec);
 static void decode(unsigned char *buf);
 void write_atr_head(int disk);
 void snoopread(int disk,int sec);
@@ -196,14 +230,17 @@ int afnamecpy(char *an,const char *n);
 /*
  * Macros
  */
-#define SEEK(n,i)		(seekcode[i]==xfd)?SEEK0(n,i):((seekcode[i]=atr)?SEEK1(n,i):SEEK2(n,i))
-#define SEEK0(n,i)	((n-1)*secsize[i])
-#define SEEK1(n,i)	(ATRHEAD + ((n<4)?((n-1)*128):(3*128+(n-4)*secsize[i])))
-#define SEEK2(n,i)	(ATRHEAD + ((n-1)*secsize[i]))
+#define SEEK(n,i)	(disks[disk].seekcode==xfd)?SEEK0(n,i):((disks[i].seekcode=atr)?SEEK1(n,i):SEEK2(n,i))
+#define SEEK0(n,i)	((n-1)*disks[i].secsize)
+#define SEEK1(n,i)	(ATRHEAD + ((n<4)?((n-1)*128):(3*128+(n-4)*disks[i].secsize)))
+#define SEEK2(n,i)	(ATRHEAD + ((n-1)*disks[i].secsize))
 #define ATRHEAD		16
 #define MAXDISKS	8
-
-
+#define TRACK18(n)	(((n)-1)/18) /* track of sector 'n' if 18 sectors per track (0-39) */
+#define OFF18(n)	(((n)-1)%18) /* offset of sector 'n' in track (0-17) */
+#define TRACKSTART(n)	((((n)-1)/18)*18+1)
+#define RPM(_uspr)	(60*1000*1000/_uspr) /* microseconds for one revolution -> RPMs */
+#define RPM3(_uspr)	((int)((60*1000ull*1000ull*1000ull/_uspr)%1000ull)) /* Fractional RPMS to 3 decimal points */
 /*
  * Default Timings from SIO2PC:
  *	Time before first ACK:	   85us
@@ -219,24 +256,13 @@ int afnamecpy(char *an,const char *n);
 /*
  * Global variables
  */
-static int secsize[MAXDISKS];
-static int seccount[MAXDISKS];
-static enum seekcodes seekcode[MAXDISKS];
-static int diskfd[MAXDISKS];
-static int ro[MAXDISKS];
-static int active[MAXDISKS];
-static int fakewrite[MAXDISKS];
-static int blank[MAXDISKS];
-static DIR *dir[MAXDISKS]; /* NULL if not a directory */
-static int filefd[MAXDISKS]; /* fd of open file in directory */
-static int afileno[MAXDISKS]; /* afileno (0-63) of open file */
-static int secoff[MAXDISKS]; /* sector offset of open file */
-static char *dirname[MAXDISKS];
-static int atari; /* fd of the serial port hooked up to the SIO2PC cable */
+struct image disks[MAXDISKS];
+int atari; /* fd of the serial port hooked up to the SIO2PC cable */
 /* Config options */
 int snoop; /* If true, display detailed data on unmapped drives */
 int quiet; /* If true, don't display per-I/O data */
 char *serial;
+int uspr=208333; /* microseconds per revolution, default for 288 RPM */
 
 /*
  * main()
@@ -275,10 +301,9 @@ int main(int argc,char *argv[])
 	setvbuf(stdout,NULL,_IONBF,0);
 	setvbuf(stderr,NULL,_IONBF,0);
 
+	memset(disks,0,sizeof(disks));
 	for(i=0;i<MAXDISKS;++i) {
-		diskfd[i]= -1;
-		ro[i]=0;
-		active[i]=0;
+		disks[i].diskfd= -1;
 	}
 	serial="/dev/ttyS0";
 	for(i=1;i<argc;i++) {
@@ -291,26 +316,26 @@ int main(int argc,char *argv[])
 				++numdisks;
 				break;
 			    case 'B': /* double-density blank disk */
-				secsize[numdisks]=128;
+				disks[numdisks].secsize=128;
 				/* fall through */
 			    case 'b': /* single-density blank disk */
-				secsize[numdisks]+=128;
-				seccount[numdisks]=3; /* Will grow */
-				blank[numdisks]=1;
+				disks[numdisks].secsize+=128;
+				disks[numdisks].seccount=3; /* Will grow */
+				disks[numdisks].blank=1;
 				if ( i+1==argc ) {
 					fprintf(stderr, "Must have a parameter for '-b'\n" );
 					exit(1);
 				}
 				break;
 			    case 'r':
-				ro[numdisks]=1;
+				disks[numdisks].ro=1;
 				if ( i+1==argc ) {
 					fprintf(stderr, "Must have a parameter for '-f'\n" );
 					exit(1);
 				}
 				break;
 			    case 'f': /* Fake writes (no change to disk) */
-				fakewrite[numdisks]=1;
+				disks[numdisks].fakewrite=1;
 				if ( i+1==argc ) {
 					fprintf(stderr, "Must have a parameter for '-f'\n" );
 					exit(1);
@@ -408,8 +433,8 @@ void senddirdata(int disk,int sec)
 	char path[MAXPATHLEN];
 
 	memset(buf,0,sizeof(buf));
-	size=secsize[disk];
-	total=seccount[disk]-3-1-8-1;
+	size=disks[disk].secsize;
+	total=disks[disk].seccount-3-1-8-1;
 	if ( sec <= 3 ) {
 		sendrawdata(buf,size);
 		return;
@@ -434,11 +459,11 @@ void senddirdata(int disk,int sec)
 		return;
 	}
 	if ( sec>=361 && sec<=368 ) { /* Create directory */
-		rewinddir(dir[disk]);
-		readdir(dir[disk]);
-		readdir(dir[disk]);
+		rewinddir(disks[disk].dir);
+		readdir(disks[disk].dir);
+		readdir(disks[disk].dir);
 		for(i=0;i<8*(sec-361);++i) {
-			if (!readdir(dir[disk])) {
+			if (!readdir(disks[disk].dir)) {
 				sendrawdata(buf,size);
 				return;
 			}
@@ -450,12 +475,12 @@ void senddirdata(int disk,int sec)
 			struct stat sb;
 			struct atari_dirent ad;
 
-			de=readdir(dir[disk]);
+			de=readdir(disks[disk].dir);
 			fn=(sec-361)*8+i;
 			start=4+fn*5;
 			if ( de ) {
 				memset(&ad,0,sizeof(ad));
-				strcpy(path,dirname[disk]);
+				strcpy(path,disks[disk].dirname);
 				strcat(path,"/");
 				strcat(path,de->d_name);
 				r=stat(path,&sb);
@@ -484,41 +509,41 @@ void senddirdata(int disk,int sec)
 		off=sec-4-fn*5;
 		if ( off ) {
 			/* This file had better be open already */
-			if ( fn != afileno[disk] ) {
+			if ( fn != disks[disk].afileno ) {
 				if ( !quiet ) printf("-no data-");
 				memset(buf,0,size);
 				sendrawdata(buf,size);
 				return;
 			}
-			seekto=(secoff[disk]+off)*125;
+			seekto=(disks[disk].secoff+off)*125;
 		}
 		else {
-			if ( afileno[disk] ) close(afileno[disk]);
-			secoff[disk]=0;
-			afileno[disk]=fn;
-			rewinddir(dir[disk]);
-			readdir(dir[disk]);
-			readdir(dir[disk]);
-			for(i=0;i<=fn;++i) de=readdir(dir[disk]);
-			strcpy(path,dirname[disk]);
+			if ( disks[disk].afileno ) close(disks[disk].afileno);
+			disks[disk].secoff=0;
+			disks[disk].afileno=fn;
+			rewinddir(disks[disk].dir);
+			readdir(disks[disk].dir);
+			readdir(disks[disk].dir);
+			for(i=0;i<=fn;++i) de=readdir(disks[disk].dir);
+			strcpy(path,disks[disk].dirname);
 			strcat(path,"/");
 			strcat(path,de->d_name);
-			filefd[disk]=open(path,O_RDONLY);
+			disks[disk].filefd=open(path,O_RDONLY);
 			seekto=0;
 		}
-		r=lseek(filefd[disk],seekto,SEEK_SET);
+		r=lseek(disks[disk].filefd,seekto,SEEK_SET);
 		if ( r<0 ) {
 			if ( !quiet ) printf("-lseek errno %d-",errno);
 			memset(buf,0,size);
 			sendrawdata(buf,size);
 			return;
 		}
-		r=read(filefd[disk],buf,125);
+		r=read(disks[disk].filefd,buf,125);
 		buf[125]=fn<<2;
 		buf[126]=sec+1;
 		if ( off==4 ) {
 			buf[126] -= 4;
-			secoff[disk]+=4;
+			disks[disk].secoff+=4;
 		}
 		buf[127]=r;
 		if ( r<125 ) {
@@ -539,26 +564,26 @@ static void senddata(int disk,int sec)
 	off_t check,to;
 	int i;
 
-	if ( dir[disk] ) {
+	if ( disks[disk].dir ) {
 		senddirdata(disk,sec);
 		return;
 	}
-	size=secsize[disk];
+	size=disks[disk].secsize;
 	if (sec<=3) size=128;
 
-	if ( sec > seccount[disk] ) {
+	if ( sec > disks[disk].seccount ) {
 		memset(buf,0,size);
 	}
 	else {
 		to=SEEK(sec,disk);
-		check=lseek(diskfd[disk],to,SEEK_SET);
+		check=lseek(disks[disk].diskfd,to,SEEK_SET);
 		if (check!=to) {
 			if (errno) perror("lseek");
 			fprintf(stderr,"lseek failed, went to %ld instead of %ld\n",check,to);
 			exit(1);
 		}
 		/* printf("-%d-",check); */
-		i=read(diskfd[disk],buf,size);
+		i=read(disks[disk].diskfd,buf,size);
 		if (i!=size) {
 			if (i<0) perror("read");
 			fprintf(stderr,"Incomplete read\n");
@@ -598,7 +623,7 @@ static void recvdata(int disk,int sec)
 	unsigned char mybuf[ 2048 ];
 	int size;
 
-	size=secsize[disk];
+	size=disks[disk].secsize;
 	if (sec<=3) size=128;
 
 	for( i=0; i<size; i++ ) {
@@ -608,15 +633,15 @@ static void recvdata(int disk,int sec)
 	}
 	read(atari,&i,1);
 	if ((i & 0xff) != (sum & 0xff) && !quiet) printf( "[BAD SUM]" );
-	else if (fakewrite[disk]) {
+	else if (disks[disk].fakewrite) {
 		if ( !quiet) printf("[write discarded]");
 	}
 	else {
-		lseek(diskfd[disk],SEEK(sec,disk),SEEK_SET);
-		i=write(diskfd[disk],mybuf,size);
+		lseek(disks[disk].diskfd,SEEK(sec,disk),SEEK_SET);
+		i=write(disks[disk].diskfd,mybuf,size);
 		if (i!=size) if ( !quiet) printf("[write failed: %d]",i);
-		if ( blank[disk] && sec>seccount[disk] ) {
-			seccount[disk]=sec;
+		if ( disks[disk].blank && sec>disks[disk].seccount ) {
+			disks[disk].seccount=sec;
 			write_atr_head(disk);
 		}
 	}
@@ -630,7 +655,7 @@ void snoopread(int disk,int sec)
 	int size;
 	int r;
 
-	size=secsize[disk];
+	size=disks[disk].secsize;
 	if (sec<=3 || size<128 ) size=128;
 	r=read(atari,&i,1);
 	if ( r!=1 ) {
@@ -667,19 +692,19 @@ void write_atr_head(int disk)
 	struct atr_head buf;
 	int paragraphs;
 
-	lseek(diskfd[disk],0,SEEK_SET);
+	lseek(disks[disk].diskfd,0,SEEK_SET);
 
 	memset(&buf,0,sizeof(buf));
 	buf.h0=0x96;
 	buf.h1=0x02;
-	paragraphs=seccount[disk]*(secsize[disk]/16) - (secsize[disk]-128)/16;
+	paragraphs=disks[disk].seccount*(disks[disk].secsize/16) - (disks[disk].secsize-128)/16;
 	buf.seccountlo=(paragraphs&0xff);
 	buf.seccounthi=((paragraphs>>8)&0xff);
 	buf.hiseccountlo=((paragraphs>>16)&0xff);
 	buf.hiseccounthi=((paragraphs>>24)&0xff);
-	buf.secsizelo=(secsize[disk]&0xff);
-	buf.secsizehi=((secsize[disk]>>8)&0xff);
-	write(diskfd[disk],&buf,16);
+	buf.secsizelo=(disks[disk].secsize&0xff);
+	buf.secsizehi=((disks[disk].secsize>>8)&0xff);
+	write(disks[disk].diskfd,&buf,16);
 }
 
 /*
@@ -783,80 +808,80 @@ static void loaddisk(char *path,int disk)
 		exit(1);
 	}
 
-	if ( blank[disk] ) {
-		diskfd[disk]=open(path,O_RDWR,0644);
-		if ( diskfd[disk]>=0 ) {
+	if ( disks[disk].blank ) {
+		disks[disk].diskfd=open(path,O_RDWR,0644);
+		if ( disks[disk].diskfd>=0 ) {
 			exists=1;
 		}
 		else {
-			diskfd[disk]=open(path,O_RDWR|O_CREAT,0644);
-			seekcode[disk]=atr;
+			disks[disk].diskfd=open(path,O_RDWR|O_CREAT,0644);
+			disks[disk].seekcode=atr;
 		}
 	}
 	else {
-		diskfd[disk]=open(path,(ro[disk]||fakewrite[disk])?O_RDONLY:O_RDWR);
-		if (diskfd[disk]<0 && !ro[disk] && !fakewrite[disk]) {
+		disks[disk].diskfd=open(path,(disks[disk].ro||disks[disk].fakewrite)?O_RDONLY:O_RDWR);
+		if (disks[disk].diskfd<0 && !disks[disk].ro && !disks[disk].fakewrite) {
 			if ( errno == EACCES ) {
-				ro[disk]=1;
-				diskfd[disk]=open(path,O_RDONLY);
+				disks[disk].ro=1;
+				disks[disk].diskfd=open(path,O_RDONLY);
 			}
 			else if ( errno == EISDIR ) {
-				filefd[disk]= -1;
-				afileno[disk]= -1;
-				dir[disk]=opendir(path);
-				if ( !dir[disk] ) {
+				disks[disk].filefd = -1;
+				disks[disk].afileno = -1;
+				disks[disk].dir=opendir(path);
+				if ( !disks[disk].dir ) {
 					fprintf(stderr,"Unable to open directory %s; drive %d disabled\n",path,disk);
 					return;
 				}
-				active[disk]=1;
-				secsize[disk]=128;
-				seccount[disk]=720;
-				seekcode[disk]=direct;
-				dirname[disk]=path;
-				printf( "D%d: %s simulated disk (%d %d-byte sectors)\n",disk+1,path,seccount[disk],secsize[disk]);
+				disks[disk].active=1;
+				disks[disk].secsize=128;
+				disks[disk].seccount=720;
+				disks[disk].seekcode=direct;
+				disks[disk].dirname=path;
+				printf( "D%d: %s simulated disk (%d %d-byte sectors)\n",disk+1,path,disks[disk].seccount,disks[disk].secsize);
 				return;
 			}
 		}
 	}
 
-	if (diskfd[disk]<0) {
+	if (disks[disk].diskfd<0) {
 		fprintf(stderr,"Unable to open disk image %s; drive %d disabled\n",path,disk);
 		return;
 	}
-	active[disk]=1;
-	if ( !blank[disk] || exists ) {
+	disks[disk].active=1;
+	if ( !disks[disk].blank || exists ) {
 
 	/*
 	 * Determine the file type based on the size
 	 */
-	secsize[disk]=128;
+	disks[disk].secsize=128;
 	{
 		struct stat buf;
 
-		fstat(diskfd[disk],&buf);
-		seekcode[disk]=atrdd3;
-		if (((buf.st_size-ATRHEAD)%256)==128) seekcode[disk]=atr;
-		if (((buf.st_size)%128)==0) seekcode[disk]=xfd;
-		seccount[disk]=buf.st_size/secsize[disk];
+		fstat(disks[disk].diskfd,&buf);
+		disks[disk].seekcode=atrdd3;
+		if (((buf.st_size-ATRHEAD)%256)==128) disks[disk].seekcode=atr;
+		if (((buf.st_size)%128)==0) disks[disk].seekcode=xfd;
+		disks[disk].seccount=buf.st_size/disks[disk].secsize;
 	}
 
 	/*
 	 * Read disk geometry
 	 */
-	if (seekcode[disk]!=xfd) {
+	if (disks[disk].seekcode!=xfd) {
 		struct atr_head atr;
 		long paragraphs;
 
-		read(diskfd[disk],&atr,sizeof(atr));
-		secsize[disk]=atr.secsizelo+256*atr.secsizehi;
+		read(disks[disk].diskfd,&atr,sizeof(atr));
+		disks[disk].secsize=atr.secsizelo+256*atr.secsizehi;
 		paragraphs=atr.seccountlo+atr.seccounthi*256+
 			atr.hiseccountlo*256*256+atr.hiseccounthi*256*256*256;
-		if (secsize[disk]==128) {
-			seccount[disk]=paragraphs/8;
+		if (disks[disk].secsize==128) {
+			disks[disk].seccount=paragraphs/8;
 		}
 		else {
 			paragraphs+=(3*128/16);
-			seccount[disk]=paragraphs/16;
+			disks[disk].seccount=paragraphs/16;
 		}
 	}
 
@@ -864,7 +889,101 @@ static void loaddisk(char *path,int disk)
 	else {
 		write_atr_head(disk);
 	}
-	printf( "D%d: %s opened%s (%d %d-byte sectors)\n",disk+1,path,ro[disk]?" read-only":"",seccount[disk],secsize[disk]);
+	printf( "D%d: %s opened%s (%d %d-byte sectors)\n",disk+1,path,disks[disk].ro?" read-only":"",disks[disk].seccount,disks[disk].secsize);
+}
+
+/*
+ * firstgood()
+ *
+ * Return the first non-bad sector in the same track.
+ */
+int firstgood(int disk,int sec)
+{
+	int i;
+
+	for(i=TRACKSTART(sec);i<sec;++i) {
+		if ( !disks[disk].track[TRACK18(i)].bad[OFF18(i)] ) return(i);
+	}
+	return(sec);
+}
+
+/*
+ * addtiming()
+ *
+ * We've just seen a read issued to a non-managed disk, so compute the location
+ * of the last sector relative to the one previous to it from the time elapsed
+ * between the reads, assuming that the Atari is reading as fast as it can.
+ *
+ * This is only useful for copy-protected disks, so we can assume 18-sectors per
+ * track.
+ */
+void addtiming(int disk,int sec)
+{
+	struct timeval newtime;
+	int diff;
+	int revs;
+	int secs;
+	int secpct; /* percentage to next sector */
+	int usps;
+	int fgs;
+
+	if ( sec > 720 ) return;
+	gettimeofday(&newtime,NULL);
+	if ( !disks[disk].prevsec || TRACK18(disks[disk].prevsec)!=TRACK18(disks[disk].lastsec) ) {
+		goto done;
+	}
+
+	diff=newtime.tv_sec-disks[disk].lasttime.tv_sec;
+	if ( diff > 1 ) goto done; /* more than a second */
+
+	diff *= 1000000;
+	diff += newtime.tv_usec;
+	diff -= disks[disk].lasttime.tv_usec;
+
+	if ( disks[disk].prevsec==disks[disk].lastsec ) {
+		uspr = diff; /* Observed microsceonds for one revolution */
+		if ( !quiet ) printf(" %d.%03d RPMs ",RPM(uspr),RPM3(uspr));
+		goto done;
+	}
+	usps = uspr/18;
+
+	revs=diff/uspr;
+	secs=(diff-revs*uspr)/usps;
+	secpct = (diff - revs*uspr - secs*usps) * 100 / usps;
+
+	if ( revs>1 ) {
+		if ( !quiet ) printf(" %d revolutions (%d us) [delayed read]",revs,diff);
+		goto done;
+	}
+
+	fgs = firstgood(disk,disks[disk].lastsec);
+	if ( disks[disk].lastsec != fgs ) {
+		/* Not the first good sector on the track */
+		if ( disks[disk].prevsec==fgs ||
+		     disks[disk].track[TRACK18(disks[disk].prevsec)].offset[OFF18(disks[disk].prevsec)]) {
+			/* We can measure directly or indirectly from the first good sector */
+			disks[disk].track[TRACK18(disks[disk].lastsec)].offset[OFF18(disks[disk].lastsec)] =
+				( disks[disk].track[TRACK18(disks[disk].prevsec)].offset[OFF18(disks[disk].prevsec)] + secs*100 + secpct ) % 1800;
+			if ( !quiet ) printf(" sec %d is %d.%02d sectors after sec %d [RECORDED]",
+					     disks[disk].lastsec,
+					     disks[disk].track[TRACK18(disks[disk].lastsec)].offset[OFF18(disks[disk].lastsec)]/100,
+					     disks[disk].track[TRACK18(disks[disk].lastsec)].offset[OFF18(disks[disk].lastsec)]%100,
+					     fgs
+					     );
+			goto done;
+		}
+	}
+
+	if ( !quiet ) {
+		printf(" sec %d is %d.%02d sectors after sec %d", disks[disk].lastsec, secs, secpct, disks[disk].prevsec );
+		printf(" fgs:%d",fgs);
+	}
+
+
+ done:
+	disks[disk].prevsec = disks[disk].lastsec;
+	disks[disk].lastsec = sec;
+	disks[disk].lasttime = newtime;
 }
 
 /*
@@ -904,16 +1023,23 @@ static void decode(unsigned char *buf)
 	    case 0x53: if ( !quiet) printf( "R4: " ); rs = 3; break;
 	    default: if ( !quiet) printf( "???: ignored\n");return;
 	}
-	if (disk>=0&&!active[disk]) { if ( !quiet) printf( "[no image] " ); }
+	if (disk>=0&&!disks[disk].active) { if ( !quiet) printf( "[no image] " ); }
 	if (printer>=0) {if ( !quiet) printf("[Printers not supported]\n"); return; }
 	if (rs>=0) {if ( !quiet) printf("[Serial ports not supported]\n"); return; }
 
 	sec = buf[2] + 256*buf[3];
 
 	switch( buf[1] ) {
+	    case 'B':
+		;
+		if ( !disks[disk].active ) {
+			disks[disk].track[TRACK18(sec)].bad[OFF18(sec)]=1;
+			if ( !quiet ) printf("announce bad sector %d: ",sec);
+		}
 	    case 'R':
 		if ( !quiet) printf("read sector %d: ",sec);
-		if ( !active[disk] ) {
+		if ( !disks[disk].active ) {
+			addtiming(disk,sec);
 			if ( snoop ) snoopread(disk,sec);
 			break;
 		}
@@ -926,9 +1052,9 @@ static void decode(unsigned char *buf)
 		break;
 	    case 'W': 
 		if ( !quiet) printf("write sector %d: ",sec);
-		if ( !active[disk] ) break;
+		if ( !disks[disk].active ) break;
 		usleep(ACK1);
-		if (ro[disk]) {
+		if (disks[disk].ro) {
 			ack('N');
 			if ( !quiet) printf("[Read-only image]");
 			break;
@@ -938,9 +1064,23 @@ static void decode(unsigned char *buf)
 		ack('A');
 		ack('C');
 		break;
+	    case 'P': 
+		if ( !quiet) printf("put sector %d: ",sec); 
+		if ( !disks[disk].active ) break;
+		usleep(ACK1);
+		if (disks[disk].ro) {
+			ack('N');
+			if ( !quiet) printf("[Read-only image]");
+			break;
+		}
+		ack('A');
+		recvdata(disk, sec);
+		ack('A');
+		ack('C');
+		break;
 	    case 'S': 
 		if ( !quiet) printf( "status:" ); 
-		if ( !active[disk] ) break;
+		if ( !disks[disk].active ) break;
 		usleep(ACK1);
 		ack('A');
 		{
@@ -962,9 +1102,9 @@ static void decode(unsigned char *buf)
 			 * are in DD. OK?
 			 */
 			static char status[] = { 0x10, 0x00, 1, 0 };
-			status[0]=(secsize[disk]==128?0x10:0x60);
-			if (secsize[disk]==128 && seccount[disk]>720) status[0]=0x80;
-			if (ro[disk]) {
+			status[0]=(disks[disk].secsize==128?0x10:0x60);
+			if (disks[disk].secsize==128 && disks[disk].seccount>720) status[0]=0x80;
+			if (disks[disk].ro) {
 				status[0] |= 8;
 			}
 			else {
@@ -976,23 +1116,9 @@ static void decode(unsigned char *buf)
 			sendrawdata(status,sizeof(status));
 		}
 		break;
-	    case 'P': 
-		if ( !quiet) printf("put sector %d: ",sec); 
-		if ( !active[disk] ) break;
-		usleep(ACK1);
-		if (ro[disk]) {
-			ack('N');
-			if ( !quiet) printf("[Read-only image]");
-			break;
-		}
-		ack('A');
-		recvdata(disk, sec);
-		ack('A');
-		ack('C');
-		break;
 	    case 'N':
 		if ( !quiet) printf("815 configuration block read");
-		if ( !active[disk] ) break;
+		if ( !disks[disk].active ) break;
 		/* We get 19 of these from DOS 2.0 when you hit reset */
 		usleep(ACK1);
 		ack('A');
@@ -1003,17 +1129,17 @@ static void decode(unsigned char *buf)
 			memset(status,0,sizeof(status));
 			status[0]=1; /* 1 big track */
 			status[1]=1; /* Why not? */
-			status[2]=seccount[disk]>>8;
-			status[3]=seccount[disk]&0xff;
-			status[5]=((secsize[disk]==256)?4:0);
-			status[6]=secsize[disk]>>8;
-			status[7]=secsize[disk]&0xff;
+			status[2]=disks[disk].seccount>>8;
+			status[3]=disks[disk].seccount&0xff;
+			status[5]=((disks[disk].secsize==256)?4:0);
+			status[6]=disks[disk].secsize>>8;
+			status[7]=disks[disk].secsize&0xff;
 			sendrawdata(status,sizeof(status));
 		}
 		break;
 	    case 'O':
 		if ( !quiet) printf("815 configuration block write (ignored)");
-		if ( !active[disk] ) break;
+		if ( !disks[disk].active ) break;
 		ack('A');
 		{
 			int i;
@@ -1035,7 +1161,7 @@ static void decode(unsigned char *buf)
 		break;
 	    case '"':
 		if ( !quiet) printf( "format enhanced " ); 
-		if ( !active[disk] ) break;
+		if ( !disks[disk].active ) break;
 		/*** FIXME *** Acknowledge and zero disk image ***/
 		usleep(ACK1);
 		ack('A');
@@ -1046,7 +1172,7 @@ static void decode(unsigned char *buf)
 		break;
 	    case '!':
 		if ( !quiet) printf( "format " ); 
-		if ( !active[disk] ) break;
+		if ( !disks[disk].active ) break;
 		/*** FIXME *** Acknowledge and zero disk image ***/
 		usleep(ACK1);
 		ack('A');
@@ -1055,27 +1181,27 @@ static void decode(unsigned char *buf)
 		break;
 	    case 0x20: 
 		if ( !quiet) printf( "download " ); 
-		if ( !active[disk] ) break;
+		if ( !disks[disk].active ) break;
 		break;
 	    case 0x54: 
 		if ( !quiet) printf( "readaddr " ); 
-		if ( !active[disk] ) break;
+		if ( !disks[disk].active ) break;
 		break;
 	    case 0x51: 
 		if ( !quiet) printf( "readspin " ); 
-		if ( !active[disk] ) break;
+		if ( !disks[disk].active ) break;
 		break;
 	    case 0x55: 
 		if ( !quiet) printf( "motoron " ); 
-		if ( !active[disk] ) break;
+		if ( !disks[disk].active ) break;
 		break;
 	    case 0x56: 
 		if ( !quiet) printf( "verify " ); 
-		if ( !active[disk] ) break;
+		if ( !disks[disk].active ) break;
 		break;
 	    default:
 		if ( !quiet) printf( "??? " );
-		if ( !active[disk] ) break;
+		if ( !disks[disk].active ) break;
 		break;
 	}
 	if ( !quiet) printf( "\n" );
