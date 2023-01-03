@@ -1,0 +1,26 @@
+This is a collection of Atari 8-bit utilities that I've written, mostly back in the 90s, for managing files for an Atari on a Linux system.  Whether you're using a real Atari or an emulator, these can be handy tools.
+
+SIO2Linux
+
+Pavel Machek made an initial attempt at communicating with the Atari through an SIO2PC cable using Linux's serial port drivers. He came up with a simple floppy emulator he called "femul.c"
+
+I rewrote that to add a bunch of features:
+* No kernel modules.
+  Unlike the AtariSIO project, this is just a simple user-space program that uses a serial port device.
+* Create new dynamically sized images
+  Each image starts as a 3-sector image file, but grows to accomodate the highest-numbered sector written.
+* Mount your native file system as an Atari disk
+  It's read-only for now, and it doesn't support subdirectories, but each file is mapped to a different starting sector, and as that sector is read, it automatically maps in the rest of the file.
+
+Binary load file analyzer
+
+This program will tell you all about your binary-load format Atari files, and even clean them up if there are specific problems. It runs under DOS and Unix.  It includes the option to dump the 6502 assembly.
+
+Disk image format conversions
+
+Want to convert between DCM and ATR? Want to turn an ATR disk image into individual files on your native file system (even creating subdirectories for MyDos images!)? Or convert a directory full of files back into a disk image? Well, check out these programs:
+
+* atr2unix
+* unix2atr
+* dcmtoatr
+
