@@ -3,11 +3,11 @@
  * Copyrights are held by the respective authors listed below.
  * Licensed for distribution under the GNU Public License version 2.0 or later.
  *
- * You need to use sio2pc cable to run this
+ * You need to use a sio2pc cable to run this.
  *
  *
  * Compilation:
- *	gcc -W -Wall -o sio2linux sio2linux-2.0.c
+ *	gcc -W -Wall -o sio2linux sio2linux-3.1.0.c
  *
  * Currently, this does not support the 'format' or 'verify' SIO
  * commands.
@@ -32,9 +32,41 @@
  *        Support for more than one file open at a time could be added.
  *
  *	* Add support for cassette transfers, allowing BASIC programming with
- *	  fast I/O, but without the memory cost of DOS.
+ *	  fast I/O, but without the memory cost of DOS, as well as support for
+ *	  the few programs that required a cassette drive, or for loading cassette
+ *        images.  The 410 recorded at 600 baud, and apparently worked in a raw
+ *	  streaming mode instead of the normal SIO command-frame mode.  My SIO2PC
+ *	  cable does not forward the signal from pin 8 (cassette motor control), so
+ *	  it would be difficult at best to get it to work correctly.  In any
+ *	  case, emulating the raw 600 baud signal would require a significant
+ *	  programming effort, which is not something I'm likely to do anytime
+ *	  soon.
+ *
+ *	* Add support for printers
+ *
+ *	* Add 850 R: emulation
+ *	  Loading of the R: handler by the 850 worked by having the 850
+ *        act as D1: if it first saw ignored status requests for D1:.  The 850
+ *        then sends a 3-sector boot program that sends 3 comands to the R1:
+ *        device.  Apparently the boot program loads and installs the R: handler
+ *        and then goes away.
+ *
+ *	* Add 1030 T: emulation
+ *        The boot process is probably quite similar to the 850 mechanism.
  *
  * Version History:
+ *
+ * Version 3.1.0 13 Oct 2010    Preston Crow
+ *
+ *	Add support for ignoring the ring line, as some USB-to-serial converters
+ *      don't handle this correctly.  Timings for Ack/Completion were adjusted to
+ *      account for buffered writes.
+ *
+ * Version 3.0.1 22 Nov 2008    Preston Crow
+ *
+ *      Clear RTS before listening for a command.  This has no effect with an
+ *      original SIO2PC cable, but it enables compatibility mode in some other
+ *      cables so that they will behave as expected.
  *
  * Version 2.0.1 5 Sep 2005	Preston Crow
  *
@@ -248,9 +280,9 @@ int afnamecpy(char *an,const char *n);
  *	Time before COMPLETE:	  255us
  *	Time after COMPLETE:	  425us
  */
-#define ACK1 85
-#define ACK2 1020
-#define COMPLETE1 255
+#define ACK1 2000 /* Atari may wait 650-950us to raise the command line; device permitted 0-16ms */
+#define ACK2 1020 /* 850ms min */
+#define COMPLETE1 500 /* 250 is the min, but add more for transmission delays */
 #define COMPLETE2 425
 
 /*
@@ -261,8 +293,10 @@ int atari; /* fd of the serial port hooked up to the SIO2PC cable */
 /* Config options */
 int snoop; /* If true, display detailed data on unmapped drives */
 int quiet; /* If true, don't display per-I/O data */
+int noring; /* If true, the serial port ring detect doesn't work */
 char *serial;
 int uspr=208333; /* microseconds per revolution, default for 288 RPM */
+int speed=19200; /* Baud rate */
 
 /*
  * main()
@@ -288,6 +322,7 @@ int main(int argc,char *argv[])
 	"  -b     next parameter is blank single-density image to create\n" \
 	"  -B     next parameter is blank double-density image to create\n" \
 	"  -x     skip next drive image\n" \
+	"  -n     no ring detect on serial port (some USB converters)\n" \
 	"  <file> disk image to mount as next disk (D1 through D8 in order)\n" \
         "  <dir>  directory to mount as next disk\n"
 
@@ -315,6 +350,9 @@ int main(int argc,char *argv[])
 			    case 'x':
 				++numdisks;
 				break;
+                           case 'n':
+                              noring=1;
+                              break;
 			    case 'B': /* double-density blank disk */
 				disks[numdisks].secsize=128;
 				/* fall through */
@@ -422,7 +460,7 @@ static void ack(unsigned char c)
 void senddirdata(int disk,int sec)
 {
 	int size;
-	char buf[256];
+	unsigned char buf[256];
 	int total;
 	int free;
 	int i;
@@ -559,7 +597,7 @@ void senddirdata(int disk,int sec)
 
 static void senddata(int disk,int sec)
 {
-	char buf[256];
+	unsigned char buf[256];
 	int size;
 	off_t check,to;
 	int i;
@@ -597,24 +635,51 @@ static void sendrawdata(unsigned char *buf,int size)
 {
 	int i, sum = 0;
 	int c=0;
+        struct timeval t1,t2;
+        int usecs,expected;
 
+        /*
+         * Compute checksum
+         */
 	for( i=0; i<size; i++ ) {
-		c=write(atari,&buf[i],1);
-		if (c!=1) {
-			if (errno) perror("write");
-			fprintf(stderr,"write failed\n");
-			exit(1);
-		}
 		sum+=buf[i];
 		sum = (sum&0xff) + (sum>>8);
+        }
+
+
+        gettimeofday(&t1,NULL);
+        /*
+         * Send buffer; let the port queue as much as it can handle
+         */
+	for( i=0; i<size; ) {
+		c=write(atari,&buf[i],size-i);
+		if (c<0) {
+			if (errno) perror("write");
+			fprintf(stderr,"write failed after %d bytes\n",i);
+			exit(1);
+		}
+                i+=c;
 	}
-	write( atari, &sum, 1 );
+        gettimeofday(&t2,NULL);
+
+        usecs=(t2.tv_sec-t1.tv_sec)*1000*1000;
+        usecs += t2.tv_usec;
+        usecs -= t1.tv_usec;
+
+        expected=(1000 * 1000 * 10 * size ) / speed; // 8 bits per byte, plus start/stop bits
+
+        if ( usecs < expected )
+        {
+                usleep(expected - usecs); // Don't write faster than the port can send
+        }
+
+	c=write( atari, &sum, 1 );
 	if (c!=1) {
 		if (errno) perror("write");
 		fprintf(stderr,"write failed\n");
 		exit(1);
 	}
-	if ( !quiet) printf("-%d bytes+sum-",size);
+	if ( !quiet ) printf("-%d bytes+sum-",size);
 }
 
 static void recvdata(int disk,int sec)
@@ -748,29 +813,47 @@ void getcmd(unsigned char *buf)
 {
 	int i,r;
 
+	/*
+	 * Clear RTS (override hw flow control)
+	 * [Necessary to get some of the cables to work.]
+	 * See: http://www.atarimax.com/flashcart/forum/viewtopic.php?p=2426
+	 */
+	i = TIOCM_RTS;
+	if ( ioctl(atari, TIOCMBIC, &i) < 0 )
+        {
+                perror("ioctl(TIOCMBIC) failed");
+        }
+        
+        /*
+         * Wait for a command
+         */
+        if ( !noring && ioctl(atari,TIOCMIWAIT,TIOCM_RNG) < 0 ) /* Wait for a command */
+        {
+                perror("ioctl(TIOCMIWIAT,TIOCM_RNG) failed");
+        }
 
-	while (1) {
-		/*
-		 * Wait for a command
-		 */
-		ioctl(atari,TIOCMIWAIT,TIOCM_RNG); /* Wait for a command */
-		tcflush(atari,TCIFLUSH); /* Clear out pre-command garbage */
+        if ( tcflush(atari,TCIFLUSH) < 0 ) /* Clear out pre-command garbage */
+        {
+                perror("tcflush(TCIFLUSH) failed");
+        }
 
-		/*
-		 * Read 5 bytes
-		 * This should take 2.6ms.  *** FIXME *** set an alarm
-		 * Use setitimer(ITIMER_REAL,(struct itimerval),NULL)
-		 */
-		i=0;
-		while (i<5) {
-			r=read(atari,buf+i,5-i);
-			if (r>0) i+=r;
-			else {
-				perror("read from serial port failed");
-				fprintf(stderr,"read returned %d\n",r);
-				exit(1);
-			}
-		}
+        /*
+         * Read 5 bytes
+         * This should take 2.6ms.  *** FIXME *** set an alarm
+         * Use setitimer(ITIMER_REAL,(struct itimerval),NULL)
+         */
+        i=0;
+        while (1) {
+                for ( ; i<5; ++i )
+                {
+                        r=read(atari,buf+i,1);
+                        if ( r <=0 )
+                        {
+                                perror("read from serial port failed");
+                                fprintf(stderr,"read returned %d\n",r);
+                                exit(1);
+                        }
+                }
 
 		/*
 		 * Compute the checksum
@@ -790,8 +873,13 @@ void getcmd(unsigned char *buf)
 		/*
 		 * Error -- bad checksum
 		 */
-		if ( !quiet) printf("%02x %02x %02x %02x %02x Bad checksum\n",buf[0],buf[1],buf[2],buf[3],buf[4]);
-	}
+                if ( !quiet ) printf("%02x garbage\n",buf[0]);
+                buf[0]=buf[1];
+                buf[1]=buf[2];
+                buf[2]=buf[3];
+                buf[3]=buf[4];
+                i=4; // Read one more byte and recompute checksum
+        }
 }
 
 /*
@@ -1061,7 +1149,9 @@ static void decode(unsigned char *buf)
 		}
 		ack('A');
 		recvdata(disk,sec);
+		usleep(ACK2);
 		ack('A');
+		usleep(COMPLETE1);
 		ack('C');
 		break;
 	    case 'P': 
@@ -1075,7 +1165,9 @@ static void decode(unsigned char *buf)
 		}
 		ack('A');
 		recvdata(disk, sec);
+		usleep(ACK2);
 		ack('A');
+		usleep(COMPLETE1);
 		ack('C');
 		break;
 	    case 'S': 
@@ -1101,7 +1193,7 @@ static void decode(unsigned char *buf)
 			 * first byte if you want the OS to think you
 			 * are in DD. OK?
 			 */
-			static char status[] = { 0x10, 0x00, 1, 0 };
+			static unsigned char status[] = { 0x10, 0x00, 1, 0 };
 			status[0]=(disks[disk].secsize==128?0x10:0x60);
 			if (disks[disk].secsize==128 && disks[disk].seccount>720) status[0]=0x80;
 			if (disks[disk].ro) {
@@ -1122,9 +1214,10 @@ static void decode(unsigned char *buf)
 		/* We get 19 of these from DOS 2.0 when you hit reset */
 		usleep(ACK1);
 		ack('A');
+		usleep(COMPLETE1);
 		ack('C');
 		{
-			char status[12];
+			unsigned char status[12];
 
 			memset(status,0,sizeof(status));
 			status[0]=1; /* 1 big track */
@@ -1140,6 +1233,7 @@ static void decode(unsigned char *buf)
 	    case 'O':
 		if ( !quiet) printf("815 configuration block write (ignored)");
 		if ( !disks[disk].active ) break;
+		usleep(ACK1);
 		ack('A');
 		{
 			int i;
@@ -1156,7 +1250,9 @@ static void decode(unsigned char *buf)
 			if ((s & 0xff) != (sum & 0xff)) if ( !quiet) printf( "[BAD SUM %02x]",sum );
 			if ( !quiet) printf(" ");
 		}
+		usleep(ACK2);
 		ack('A');
+		usleep(COMPLETE1);
 		ack('C');
 		break;
 	    case '"':
