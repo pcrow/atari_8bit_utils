@@ -13,6 +13,8 @@
 /*	      Ported to MS-DOS machines					*/
 /* 10 Feb 98  Version 1.2   Preston Crow <crow@cs.dartmouth.edu>	*/
 /*	      Expanded 256-byte sector support				*/
+/*  2 Jan 22  Version 1.3   Preston Crow				*/
+/*            Enhanced debugging                                        */
 /************************************************************************/
 
 /************************************************************************/
@@ -32,6 +34,7 @@
 #include <ctype.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <string.h>
 
 #ifdef MSDOS
 #include <dir.h>
@@ -44,9 +47,14 @@
 /* Macros and Constants                                                 */
 /************************************************************************/
 #define ATRHEAD 16
-#define USAGE "atr2unix [-dlm-] atarifile.atr\n    Flags:\n\t-l Convert f" \
-"ilenames to lower case\n\t-m MyDOS format disk image\n\t-- Next argument" \
-" is not a flag\n\t-d debugging\n"
+#define USAGE "atr2unix [-dlmr-] atarifile.atr\n"                       \
+        "    Flags:\n"                                                  \
+        "\t-l Convert filenames to lower case\n"                        \
+        "\t-m MyDOS format disk image\n"                                \
+        "\t-- Next argument is not a flag\n"                            \
+        "\t-d debugging\n"                                              \
+        "\t-r={sector} Use non-standard root directory number\n"        \
+        "\t-f Fake run; do not create any files\n"
 
 #ifndef SEEK_SET
 #define SEEK_SET 0 /* May be missing from stdio.h */
@@ -68,6 +76,18 @@ struct atari_dirent {
 	char namehi[3];
 };
 
+struct atr_head {
+	unsigned char h0; /* 0x96 */
+	unsigned char h1; /* 0x02 */
+	unsigned char seccountlo;
+	unsigned char seccounthi;
+	unsigned char secsizelo;
+	unsigned char secsizehi;
+	unsigned char hiseccountlo;
+	unsigned char hiseccounthi;
+	unsigned char unused[8];
+};
+
 /************************************************************************/
 /* Function Prototypes                                                  */
 /************************************************************************/
@@ -78,10 +98,11 @@ void read_file(char *name,FILE *in,FILE *out,int sector,int count,int filenum);
 /* Global variables                                                     */
 /************************************************************************/
 int ddshortinit=0; /* True indicates double density with first 3 sectors 128 bytes */
-int secsize;
+int secsize,seccount;
 int mydos=0;
 int lowcase=0;
 int debug=0;
+int fake=0;
 
 /************************************************************************/
 /* main()                                                               */
@@ -92,7 +113,8 @@ int debug=0;
 int main(int argc,char *argv[])
 {
 	FILE *in;
-	unsigned char head[16];
+	struct atr_head head;
+        int root=361;
 
 	--argc; ++argv; /* Skip program name */
 
@@ -113,9 +135,18 @@ int main(int argc,char *argv[])
 				      case 'l': /* strlwr names */
 					lowcase=1;
 					break;
+				      case 'f': /* fake */
+					fake=1;
+					break;
 				      case 'd': /* debugging */
 					debug=1;
 					break;
+                                      case 'r': /* root directory sector */
+                                        ++*argv;
+                                        while ( **argv && !isdigit(**argv) ) ++*argv;
+                                        root=atoi(*argv);
+                                        while ( argv[0][1] ) ++*argv;
+                                        break;
 				      default:
 					fprintf(stderr,USAGE);
 					exit(1);
@@ -145,19 +176,61 @@ int main(int argc,char *argv[])
 		}
 	}
 
-	fread(head,ATRHEAD,1,in);
-	secsize=head[4]+256*head[5];
+	fread(&head,sizeof(head),1,in);
+        if ( head.h0 != 0x96 || head.h1 != 0x02 )
+        {
+           if ( debug ) printf("File does not have ATR signature\n");
+           return 1;
+        }
+	secsize=head.secsizelo+256*head.secsizehi;
+        seccount=head.seccountlo+256*head.seccounthi;
+        if ( debug ) printf("ATR image: %d sectors, %d bytes each\n",seccount,secsize);
 	{
 		struct stat buf;
+                size_t expected;
 		fstat(fileno(in),&buf);
 		if (((buf.st_size-ATRHEAD)%256)==128) ddshortinit=1;
 		if (debug) {
 			if (ddshortinit && secsize==256) printf("DD, but first 3 sectors SD\n");
 			else if (secsize==256) printf("DD, including first 3 sectors\n");
 		}
+                expected = sizeof(head) + seccount * secsize - ((secsize - 128) * 3 * ddshortinit);
+                if ( (size_t)buf.st_size != expected ) {
+                        if ( debug ) {
+                                int seccount_real;
+                                printf("File size wrong; expected %u bytes, observed %u bytes\n",(unsigned int)expected,(unsigned int)buf.st_size);
+                                seccount_real = (buf.st_size - sizeof(head)) / secsize;
+                                if ( ddshortinit )
+                                {
+                                        if ( (size_t)buf.st_size <= sizeof(head) + 3 * 128 ) seccount_real = (buf.st_size - sizeof(head)) / 128;
+                                        else seccount_real = 3 + (buf.st_size - sizeof(head) - 3*128)/secsize;
+                                }
+                                printf("Sectors expected: %d, observed: %d\n",seccount,seccount_real);
+                        }
+                }
 	}
-	read_dir(in,361);
+	read_dir(in,root);
 	return(0);
+}
+
+/************************************************************************/
+/* display_entry()                                                      */
+/* Display the contents of one directory entry for debugging            */
+/************************************************************************/
+void display_entry(int i,struct atari_dirent *f)
+{
+        struct atari_dirent empty;
+        memset(&empty,0,sizeof(empty));
+        if ( memcmp(&empty,f,sizeof(empty)) == 0 )
+        {
+                printf("%2d: [entry is all zeros]\n",i);
+                return;
+        }
+        unsigned count = f->countlo + 256 * f->counthi;
+        unsigned start = f->startlo + 256 * f->starthi;
+        printf("%2d: %4d %4d %c%c%c%c%c%c%c%c.%c%c%c\n",i,count,start,
+               f->namelo[0],f->namelo[1],f->namelo[2],f->namelo[3],f->namelo[4],f->namelo[5],f->namelo[6],f->namelo[7],
+               f->namehi[0],f->namehi[1],f->namehi[2]);
 }
 
 /************************************************************************/
@@ -172,11 +245,23 @@ void read_dir(FILE *in,int sector)
 	FILE *out;
 	char name[13];
 
+        if ( debug ) printf("Parsing directory sector %d\n",sector);
+
 	for(i=0;i<64;++i) {
 		fseek(in,(long)SEEK(sector)+i*sizeof(f)+(secsize-128)*(i/8),SEEK_SET);
 		fread(&f,sizeof(f),1,in);
-		if (!f.flag) return; /* No more entries */
-		if (f.flag&128) continue; /* Deleted file */
+                if ( debug ) display_entry(i,&f);
+                if ( fake ) continue;
+		if (!f.flag) /* No more entries */
+                {
+                        if ( debug ) printf("Directory entry %d: zero indicates end of entries\n",i);
+                        return;
+                }
+		if (f.flag&128) /* Deleted file */
+                {
+                        if ( debug ) printf("Directory entry %d: deleted flag\n",i);
+                        continue;
+                }
 		for(j=0;j<8;++j) {
 			name[j]=f.namelo[j];
 			if (name[j]==' ') break;
