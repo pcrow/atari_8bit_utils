@@ -16,6 +16,10 @@ Binary load file analyzer
 
 This program will tell you all about your binary-load format Atari files, and even clean them up if there are specific problems. It runs under DOS and Unix.  It includes the option to dump the 6502 assembly.
 
+BASIC analyzer
+
+This program will parse the structure of a BASIC program.  The most common use would be to check if a file is a valid BASIC file, in which case, just redirect the output to /dev/null and it's BASIC if the program returns success.  It will parse down the the line level.  Parsing out the individual tokens could be done in the future.
+
 Disk image format conversions
 
 Want to convert between DCM and ATR? Want to turn an ATR disk image into individual files on your native file system (even creating subdirectories for MyDos images!)? Or convert a directory full of files back into a disk image? Well, check out these programs:
@@ -23,4 +27,3 @@ Want to convert between DCM and ATR? Want to turn an ATR disk image into individ
 * atr2unix
 * unix2atr
 * dcmtoatr
-
