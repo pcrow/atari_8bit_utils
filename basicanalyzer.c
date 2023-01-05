@@ -158,7 +158,7 @@ int basic_parse(char *filename)
          diff=1;
       }
    }
-   if ( !diff && vvc )
+   if ( !diff && ( vvc > 1 || s > 2 ) )
    {
       printf("%s: VNT is wiped with all values set to $%02x\n",filename,buf[0]);
    }
