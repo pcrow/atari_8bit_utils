@@ -123,7 +123,7 @@ int basic_parse(char *filename)
    }
    if ( h.vnt > 0x0100 )
    {
-      printf("%s: VNT starts at 0100, found %04x (wasted memory)\n",filename,h.vnt);
+      printf("%s: VNT should start at 0100, found %04x (wasted memory)\n",filename,h.vnt);
    }
    if ( h.vvt != h.vnte + 1 )
    {
