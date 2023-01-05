@@ -15,6 +15,11 @@
  *
  * Questions this raised while I was writing this:
  *
+ * Normally the VNT offset is 0100 from LOMEM.  Sometimes it's higher.
+ * It can't be lower, as this memory is used by BASIC as a stack.
+ * Is this the rev-B bug that adds 16 bytes?  Or is this a hack to reserve
+ * memory for assembly routines?  Or maybe both?
+ *
  * Some programs have a bit of data at the start of the STARP area.  This
  * is just garbage as far as I can tell.  Where does that come from?
  * Since this memory will be used for dimed variables, I suppose you could
@@ -24,6 +29,7 @@
  * The STMCUR area doesn't look to be useful, but it does save the command
  * used to save the program, which may be intersting.  Would there be any harm
  * in setting STARP to STMCUR and cutting those bytes from the end of the file?
+ * Is saving this area in the first place arguably a bug?
  *
  * I believe the VVT (variable value table) is wiped on load.  Can you put
  * just anything in that memory?  Are the variable type and index number needed?
@@ -92,17 +98,32 @@ int basic_parse(char *filename)
    for ( unsigned int i=0; i<sizeof(head); i+=2 )
    {
       ((unsigned short *)&h)[i/2] = ((unsigned char *)&head)[i] + 256 * ((unsigned char *)&head)[i+1];
+      // printf("%04x\n",((unsigned short *)&h)[i/2]);
    }
 
    for ( unsigned int i=1; i<sizeof(head)/2; ++i )
    {
-      if ( ((unsigned short *)&h)[i] <= ((unsigned short *)&h)[i-1] )
+      if ( ((unsigned short *)&h)[i] < ((unsigned short *)&h)[i-1] )
       {
-         // I suppose it's possible for a zero-length VNT or VVT if there are no variables.
-         // To-do: Test this
-         printf("%s: Header offset fields aren't increasing\n",filename);
-         return -1;
+         // It's possible for a zero-length VNT or VVT if there are no variables.
+         // It's possible for the STMTAB to be empty if there are no lines of code
+         // It's possible for STMCUR to be empty if it was manually removed.
+         printf("%s: Header offset fields decreasing\n",filename);
       }
+   }
+   if ( h.lomem )
+   {
+      printf("%s: Does not start with LOMEM of 0000, found %04x\n",filename,h.lomem);
+      return -1;
+   }
+   if ( h.vnt < 0x0100 )
+   {
+      printf("%s: VNT starts at at least 0100 to reserve argument stack space, found %04x\n",filename,h.vnt);
+      return -1;
+   }
+   if ( h.vnt > 0x0100 )
+   {
+      printf("%s: VNT starts at 0100, found %04x (wasted memory)\n",filename,h.vnt);
    }
    if ( h.vvt != h.vnte + 1 )
    {
@@ -137,7 +158,7 @@ int basic_parse(char *filename)
          diff=1;
       }
    }
-   if ( !diff )
+   if ( !diff && vvc )
    {
       printf("%s: VNT is wiped with all values set to $%02x\n",filename,buf[0]);
    }
