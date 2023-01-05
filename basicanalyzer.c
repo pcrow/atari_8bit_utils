@@ -324,6 +324,7 @@ int basic_parse(char *filename)
    if ( b )
    {
       printf("%s: %d bytes past end of immediate area\n",filename,b);
+      fflush(stdout);
       FILE *hd = popen("hexdump -C","w");
       fwrite(buf,b,1,hd);
       pclose(hd);
