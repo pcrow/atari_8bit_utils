@@ -1,0 +1,23 @@
+"MyDos Binary Menu"
+
+Preston Crow
+1994
+
+Public Domain
+
+This program displays a menu of files and allows you to select one by
+moving the highlighted bar with the joystick and firing on the
+selected entry.  If the file is a MyDos subdirectory, a menu for
+that directory is displayed.  If the file is a drive specification
+(D1: through D3: are displayed as the first three entries), then
+the root directory is used to display a menu.
+
+Whatever directory is displayed is used as the default directory
+when the program is loaded.
+
+The '.exe' file is the result of compiling the BASIC program using
+the ABC compiler.  This means that you can select DOS by hitting
+break (you may have to move the joystick before the program
+notices the keypress) and then using the ABC menu.
+
+--PC

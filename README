@@ -31,3 +31,7 @@ Want to convert between DCM and ATR? Want to turn an ATR disk image into individ
 Disk manager (Atari-side sector editor and much more)
 
 Back in the mid 80's, I wrote a sector editor in BASIC. Over several years, I incorporated additional features and tools, as well as re-wrote various routines in assembly language for speed. I should have released it back then, but now I've gone back through it and added a few extra features. I also re-worked all of the assembly language code.
+
+MyDOS Binary Load Menu
+
+There are plenty of menu programs that let you select from a list of programs and execute one, but this one goes a step further.  It supports MyDOS subdirectories and is driven by the joystick, so it's ideal for a huge disk image of games.  I wrote this in 1994 in BASIC and compiled it with ABC.
