@@ -27,3 +27,7 @@ Want to convert between DCM and ATR? Want to turn an ATR disk image into individ
 * atr2unix
 * unix2atr
 * dcmtoatr
+
+Disk manager (Atari-side sector editor and much more)
+
+Back in the mid 80's, I wrote a sector editor in BASIC. Over several years, I incorporated additional features and tools, as well as re-wrote various routines in assembly language for speed. I should have released it back then, but now I've gone back through it and added a few extra features. I also re-worked all of the assembly language code.
