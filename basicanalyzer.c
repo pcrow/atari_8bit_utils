@@ -152,6 +152,7 @@ struct basic_program {
    int token_use_count[256];
    int operand_use_count[128];
    int var_use_count[128];
+   int merge_minus_count;
 };
 
 /*
@@ -599,6 +600,7 @@ int scan_and_validate_token(struct basic_program *prog,struct token *token)
 
    unsigned char *next=token->operands;
    int len=token->tokenlen-2;
+   int minus=0;
 
    while ( len )
    {
@@ -607,6 +609,7 @@ int scan_and_validate_token(struct basic_program *prog,struct token *token)
          ++prog->var_use_count[*next & 0x7f];
          ++next;
          --len;
+         minus=0;
          continue;
       }
       ++prog->operand_use_count[*next];
@@ -614,14 +617,19 @@ int scan_and_validate_token(struct basic_program *prog,struct token *token)
       {
          next += 7;
          len -= 7;
+         if ( minus ) ++prog->merge_minus_count;
+         minus=0;
          continue;
       }
       if ( *next == 0x0f && len >= 2 && len >= 2 + next[1] ) // string
       {
          len -= 2+next[1];
          next+= 2+next[1];
+         minus=0;
          continue;
       }
+      minus=0;
+      if ( *next == 0x36 ) minus=1; // unary minus
       ++next;
       --len;
    }
@@ -1105,6 +1113,13 @@ void display_program(struct basic_program *prog)
       }
    }
 
+   // Report on possible optimizations
+   if ( prog->merge_minus_count )
+   {
+      // This is due to the parser being very unoptimized
+      printf("%s: unary minus before a scaler %d instances could be merged\n",prog->filename,prog->merge_minus_count);
+   }
+
    // Report non-standard opcodes/operands
    {
       int weird_opcode=0;
@@ -1219,7 +1234,10 @@ int modify_program(struct basic_program *prog)
 
    if ( merge_minus )
    {
-      ; // FIXME: To-do, but this is a good bit of work for saving a few stupid bytes
+      if ( prog->merge_minus_count )
+      {
+         printf("%s: unary minus merging not yet implemented\n",prog->filename); // FIXME
+      }
    }
 
    if ( remove_unreferenced_variables )
@@ -1241,12 +1259,26 @@ int modify_program(struct basic_program *prog)
          prog->vnt.vnt_entry_count = 128;
          regen_vnt=1; // Need to update vnt_raw for writing out.
       }
-      for ( int i=0;i<prog->vvt.vvt_entry_count && i<128;++i )
+      int referenced=0;
+      for ( int i=prog->vvt.vvt_entry_count - 1;i>=0;--i )
       {
-         if ( prog->var_use_count[i] == 0 )
+         if ( i>=128 ) i=127;
+         if ( prog->var_use_count[i] ) ++referenced;
+         if ( prog->var_use_count[i] == 0 && !referenced ) // easy to remove at the end
          {
-            ; // FIXME: To-do, but this requires editing all the references, so probably not
-            printf("%s: Variable %s is unreferenced\n",prog->filename,prog->vnt.vname[i]);
+            printf("%s: Variable %s is unreferenced; removed\n",prog->filename,prog->vnt.vname[i]);
+            prog->vvt.vvt_entry_count = i;
+            int minus = prog->vvt.vvt_size - 8 * prog->vvt.vvt_entry_count;
+            prog->vvt.vvt_size -= minus;
+            prog->head.stmtab -= minus;
+            prog->head.stmcur -= minus;
+            prog->head.starp -= minus;
+            modified=1;
+            regen_vnt=1; // Need to update vnt_raw for writing out.
+         }
+         else if ( prog->var_use_count[i] == 0 )
+         {
+            printf("%s: Variable %s is unreferenced; removal not implemented yet\n",prog->filename,prog->vnt.vname[i]); // FIXME
          }
       }
    }
