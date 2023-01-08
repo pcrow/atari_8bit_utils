@@ -845,8 +845,6 @@ void detect_compatibility(struct basic_program *prog)
    }
    if ( prog->compatibility == unknown || prog->compatibility == atari_basic ) also_turbo = 0;
    prog->turbo_basic_compatibility = also_turbo;
-
-   // FIXME: Check immdiate command for SAVE at 19 or 1E to detect BASIC A+
 }
 
 /*
