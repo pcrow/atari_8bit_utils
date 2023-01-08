@@ -49,6 +49,28 @@
  * do anything with this now other than run this program to check the integrity
  * of files they have laying around.
  *
+ *
+ * Hack for getting opcodes and operands:
+ *
+ * H1.SAV: change LET which is 06
+ * O1.SAV: change PEEK which is 46
+ */
+#if 0 // can't use a comment block due to sed expressions
+for ((X=0;X<112;++X)); do echo $X ; done | LC_ALL=C awk '{printf("%d LET OP%03dH%02X=OP%03dH%02X%c",$1+1024+128,$1,$1,$1,$1,155)}' > H1.LST
+for ((X=0;X<100;++X)); do echo $X ; done | LC_ALL=C awk '{printf("%d LET OP%03dH%02X=PEEK(OP%03dH%02X)%c",$1+1024+128,$1,$1,$1,$1,155)}' > O1.LST
+
+# Use Atari BASIC to ENTER files above and save them
+
+X=H1.SAV ; V=06
+X=O1.SAV ; V=46
+STMTAB=$(basicanalyzer $X | grep STMTAB | sed -e 's/.* /0x/' | awk --non-decimal-data '{printf("%d\n",$1 - 1)}')
+dd if=$X of=${X/1/2}a bs=1 count=$((STMTAB - 257))
+dd if=$X of=${X/1/2}b bs=1 skip=$((STMTAB - 257))
+sed -i -e "s/\x$V/\xff/g" ${X/1/2}b
+hexdump -C ${X/1/2}b | sed -e 's/^[^ ]* *//' -e 's/ *|.*//' -e 's/ /\n/g' | grep . | awk '{if ( $1 == "ff" ) {printf("%02x\n",X);X=X+1} else print }' | sed -e 's/^/0x/' | LC_ALL=C awk --non-decimal-data '{printf("%c",$1)}' > ${X/1/2}c
+cat ${X/1/2}a ${X/1/2}c > ${X/1/2}
+#endif
+/*
  */
 
 #include <stdlib.h>
@@ -137,6 +159,17 @@ struct token_table {
    struct codeline *lines;
 };
 
+enum basic_mode {
+   auto_detect,
+   atari_basic,
+   turbo_basic_xl,
+   altirra_basic,
+   basic_xl,
+   basic_xe,
+   basic_ap, // BASIC A+ (opcodes/operands in different order)
+   unknown, // opcodes or operands outside of any known implementation
+};
+ 
 struct basic_program {
    char *filename;
    int fd;
@@ -153,7 +186,15 @@ struct basic_program {
    int operand_use_count[128];
    int var_use_count[128];
    int merge_minus_count;
+   enum basic_mode compatibility;
+   int turbo_basic_compatibility; // True if 'compatibility' could also be Turbo
+   int hex_constant_out_of_range;
+   int highest_token;
+   int highest_operand;
+   int basic_a_plus_save;
+   int normal_save;
 };
+  
 
 /*
  * Global variables
@@ -170,6 +211,7 @@ int display_full_lines=0; // Full listing, not just per-line summary
 int display_full_lines_with_nonascii=0; // If a string has embedded assembly, display it as-is (otherwise use hex)
 int display_immediate_command=1;
 int display_post_junk_hexdump=1;
+enum basic_mode display_mode=auto_detect;
 
 // Options for modifying the file
 int fix_pointer_rev_b_bug=0; // If non-zero, adjust pointers for the VNT to start at 0100 from LOMEM
@@ -198,6 +240,7 @@ int parse_lines(struct basic_program *prog);
 int parse_immediate(struct basic_program *prog);
 int parse_line(struct basic_program *prog,struct token_table *table,int immediate);
 int parse_line_into_tokens(struct basic_program *prog,struct codeline *line);
+void detect_compatibility(struct basic_program *prog);
 void display_program(struct basic_program *prog);
 int modify_program(struct basic_program *prog);
 int save_program(struct basic_program *prog,int modified);
@@ -229,6 +272,8 @@ int parse_file(struct basic_program *prog)
    r=parse_immediate(prog);
    if ( r ) return r;
 
+   detect_compatibility(prog);
+   
    return 0;
 }
 
@@ -568,6 +613,7 @@ int parse_line(struct basic_program *prog,struct token_table *table,int immediat
       next+=next[2];
    }
    // Pass 3: Parse lines into tokens
+   int save_19=prog->token_use_count[0x19],save_1d=prog->token_use_count[0x1d];
    for (int i=0; i<table->linecount; ++i)
    {
       int r;
@@ -579,6 +625,19 @@ int parse_line(struct basic_program *prog,struct token_table *table,int immediat
             printf("%s: Immediate area corrupte\n",prog->filename);
          }
          else return r;
+      }
+   }
+   if ( immediate )
+   {
+      if ( save_19 != prog->token_use_count[0x19] && save_1d == prog->token_use_count[0x1d] )
+      {
+         // Immdiate SAVE command detected with regular opcode, not BASIC A+
+         prog->normal_save=1;
+      }
+      else if ( save_19 == prog->token_use_count[0x19] && save_1d != prog->token_use_count[0x1d] )
+      {
+         // Immediate SAVE command detect with BASIC A+ opcode.
+         prog->basic_a_plus_save=1;
       }
    }
 
@@ -700,6 +759,96 @@ int parse_immediate(struct basic_program *prog)
    return r;
 }
 
+void detect_compatibility(struct basic_program *prog)
+{
+   int also_turbo = 1; // Clear if something found not compatible (also implied by 'unknown')
+   prog->compatibility = atari_basic; // This is the starting point
+   prog->highest_token=0;
+   prog->highest_operand=0;
+   for ( int i=0x0;i<256;++i) if ( prog->token_use_count[i] ) prog->highest_token = i;
+   for ( int i=0x0;i<128;++i) if ( prog->operand_use_count[i] ) prog->highest_operand = i;
+
+   for ( int i=0;i<0x11;++i)
+   {
+      if ( !prog->operand_use_count[i] ) continue;
+      if ( i==0xd || i==0xe || i==0xf ) continue; // legal
+      prog->compatibility = unknown; // Illegal operand
+      prog->turbo_basic_compatibility = 0;
+      return;      
+   }
+   if ( prog->basic_a_plus_save && prog->highest_token <= 53 && prog->highest_operand <= 61 && !prog->operand_use_count[0x0d] )
+   {
+      prog->compatibility = basic_ap;
+      prog->turbo_basic_compatibility = 0;
+      return;
+   }
+   
+   for ( int i=0x38;i<256;++i)
+   {
+      if ( prog->token_use_count[i] )
+      {
+         if ( i >= 0x66 )
+         {
+            prog->compatibility = unknown;  // No known BASIC uses opcodes 0x66 and above
+         }
+         else if ( i >= 0x64 ) { also_turbo = 0; prog->compatibility = basic_xe; } // 'END' token in BASIC XE
+         else if ( i >= 0x59 ) { prog->compatibility = basic_xe; } // both XE and turbo
+         else if ( i >= 0x52 || i == 0x45 || i == 0x42 || i == 0x41 || i == 0x40 || i <= 0x3b )
+         {
+            prog->compatibility = basic_xl;
+         }
+         else
+         {
+            prog->compatibility = altirra_basic;
+         }
+      }
+   }
+   for ( int i=0x55;i<127;++i)
+   {
+      if ( prog->operand_use_count[i] )
+      {
+         if ( i >= 0x6E )
+         {
+            prog->compatibility = unknown;  // No known BASIC uses operands 0x6E and above
+         }
+         else if ( i >= 0x69 ) prog->compatibility = turbo_basic_xl; // Only Turbo BASIC XL uses these
+         else switch (i) {
+               case 0x55:
+               case 0x56:
+               case 0x59:
+               case 0x5B:
+               case 0x5D:
+               case 0x5F:
+               case 0x64:
+               case 0x65:
+               case 0x66:
+               case 0x67:
+               case 0x68: // These are not in Altirra
+                  if ( prog->compatibility == atari_basic || prog->compatibility == altirra_basic )
+                  {
+                     prog->compatibility = basic_xl;
+                  }
+                  break;
+               default: // These are in all extended BASICS
+                  if ( prog->compatibility == atari_basic )
+                  {
+                     prog->compatibility = altirra_basic;
+                  }
+                  break;
+            }
+      }
+   }
+   if ( prog->operand_use_count[0x0d] ) // hex constant
+   {
+      also_turbo = 0;
+      if ( prog->compatibility == atari_basic ) prog->compatibility = altirra_basic;
+   }
+   if ( prog->compatibility == unknown || prog->compatibility == atari_basic ) also_turbo = 0;
+   prog->turbo_basic_compatibility = also_turbo;
+
+   // FIXME: Check immdiate command for SAVE at 19 or 1E to detect BASIC A+
+}
+
 /*
  * display_program()
  *
@@ -720,7 +869,7 @@ void print_atari_string(unsigned char *str,int count)
    }
 }
 
-char *print_atari_float(struct bcd_float *f)
+char *print_atari_float(struct basic_program *prog,struct bcd_float *f,int hex)
 {
    static char buf[32];
    char *b = buf;
@@ -761,6 +910,19 @@ char *print_atari_float(struct bcd_float *f)
    /*
     * Number is now 'man' * 10^'exp'
     */
+   // Conver to integer if appropriate
+   if ( hex && exp < 4 && !(f->atarifloat[0]&0x80) )
+   {
+      unsigned long m=man; // Don't modify 'man' in case we don't print
+      for (int i=0;i<exp;++i) m *=10;
+      if ( m <= 0xffff )
+      {
+         b+=sprintf(b,"$%04lX",m);
+         return buf;
+      }
+   }
+
+   if ( hex ) ++prog->hex_constant_out_of_range; // Hex constant isn't $0000 through $ffff
 
    // Add a small number (possibly zero) of zeros
    if ( exp >= 0 && exp < 7 )
@@ -809,6 +971,13 @@ char *print_atari_float(struct bcd_float *f)
 }
 void print_token(struct basic_program *prog,struct token *token)
 {
+   enum basic_mode mode = display_mode;
+   if ( mode == auto_detect )
+   {
+      mode = prog->compatibility;
+      if ( mode == unknown ) mode = basic_xe; // Seems like the best guess
+   }
+   
    char *command_name[] = {
       "REM",
       "DATA",
@@ -865,16 +1034,176 @@ void print_token(struct basic_program *prog,struct token *token)
       "CSAVE",
       "CLOAD",
       "", // implied LET
-      "ERROR-  ",
+      "ERROR-  ", // 37
    };
+   char *command_name_turbo_basic_xl[] = {
+      // https://github.com/rossumur/esp_8_bit/blob/master/atr_image_explorer.htm
+      // Verified with direct testing
+      "DPOKE", // 38
+      "MOVE","-MOVE","*F",
+      "REPEAT", // 3C
+      "UNTIL","WHILE","WEND",
+      "ELSE","ENDIF","BPUT","BGET","FILLTO","DO","LOOP","EXIT",
+      "DIR","LOCK","UNLOCK","RENAME","DELETE","PAUSE","TIME$=","PROC",
+      "  EXEC", // 50 (yes, it has two leading spaces)
+      "ENDPROC","FCOLOR",
+      "*L", // 53
+      "------------------------------", // 54 (30 dashes, ignores operands; enter two or more dashes and this is produced)
+      "RENUM","DEL","DUMP",
+      "TRACE","TEXT","BLOAD","BRUN","GO#","#", "*B","PAINT",
+      "CLS","DSOUND","CIRCLE",
+      "%PUT", // 63
+      // 64 on up are garbage
+   };
+   // BASIC XL 1.03 is mostly a subset of BASIC XE except for NUM and END
+   char *command_name_basic_xe[] = {
+      // https://www.virtualdub.org/downloads/Altirra%20BASIC%20Reference%20Manual.pdf
+      // I created a file a sequence of extended opcodes, then did a list to see what they were for BASIC XE and BASIC XL 1.03
+      "WHILE",    // 38, not in Altirra (with two spaces at the start in XL but not XE)
+      "ENDWHILE", // 39, not in Altirra (with two spaces at the start in XL but not XE)
+      "TRACEOFF", // 3A, not in Altirra
+      "TRACE", // 3B, not in Altirra
+      "ELSE", // 3C
+      "ENDIF",
+      "DPOKE",
+      "LOMEM", // 3F
+      "DEL",  // 40, not in Altirra
+      "RPUT", // 41, not in Altirra
+      "RGET", // 42, not in Altirra
+      "BPUT",
+      "BGET",
+      "TAB",  // 45, not in Altirra
+      "CP",
+      "ERASE",
+      "PROTECT",
+      "UNPROTECT",
+      "DIR",
+      "RENAME",
+      "MOVE",
+      "MISSILE",
+      "PMCLR",
+      "PMCOLOR",
+      "PMGRAPHICS",
+      "PMMOVE", // 51, last command also in Altirra
+      "PMWIDTH",
+      "SET",
+      "LVAR",
+      "RENUM", // 55
+      "FAST",  // 56 last one that is the same on BASIC XL (1.03)
+      "LOCAL", // 57 BASIC XL has this as "NUM"
+      "EXTEND", // 58 BASIC XL has this as "END"
+      "PROCEDURE", // 59 BASIC XL displays garbage ("-?")
+      " ", // 5A Listing displays as two spaces (intentional indentation?) // BASIC XL generates error 100 when listing
+      "", // 5B Listing displays as one space
+      "", // 5C Listing displays as one space
+      "", // 5D Listing displays as one space
+      "EXIT",
+      "NUM",
+      "HITCLR",
+      "INVERSE",
+      "NORMAL",
+      "BLOAD",
+      "END", // Are these real?  Two new contexts for END?
+      "END", // yes, same as previous, not sure if this is real
+      // 0x66 displays garbage
+      // 0x67 generates error 100 when listing
+      
+   };
+   char *command_name_basic_a_plus[] = {
+      "REM",
+      "DATA",
+      "INPUT",
+      "LIST",
+      "ENTER",
+      "LET",
+      "IF",
+      "FOR",
+      "  NEXT",
+      "GOTO",
+      "RENUM",
+      "GOSUB",
+      "TRAP",
+      "BYE",
+      "CONT",
+      "CLOSE",
+      "CLR", // 10
+      "DEG",
+      "DIM",
+      "WHILE",
+      "  ENDWHILE",
+      "TRACEOFF",
+      "TRACE",
+      "ELSE",
+      "ENDIF",
+      "END", // 19
+      "NEW",
+      "OPEN",
+      "LOAD",
+      "SAVE", // 1D
+      "STATUS",
+      "NOTE",
+      "POINT", //20
+      "XIO",
+      "ON",
+      "POKE",
+      "DPOKE",
+      "PRINT",
+      "RAD",
+      "READ",
+      "RESTORE",
+      "RETURN",
+      "RUN",
+      "STOP",
+      "POP",
+      "?",
+      "GET",
+      "PUT",
+      "LOMEM", // 30
+      "DEL",
+      "RPUT", // 32
+      "RGET",
+      "BPUT",
+      "BGET",
+      "TAB",
+      "CP",
+      "DOS",
+      "ERASE",
+      "PROTECT",
+      "UNPROTECT",
+      "DIR",
+      "RENAME",
+      "MOVE",
+      "COLOR",
+      "GRAPHICS",
+      "PLOT",
+      "POSITION",
+      "DRAWTO",
+      "SETCOLOR",
+      "LOCATE",
+      "SOUND",
+      "LPRINT",
+      "CSAVE", // 48
+      "CLOAD",
+      "MISSILE",
+      "PMCLR",
+      "PMCOLOR",
+      "PMGRAPHICS",
+      "PMMOVE",
+      "PMWIDTH", // 4F
+      "SET",
+      "LVAR",
+      "", // 52 (implied let?)
+      "ERROR-  ", // 53 last opcode
+   };
+
    char *operand_name[] = {
       ",", // starting at 0x12
       "$",
       ":", // statement end
       ";",
       "", // line end
-      "GOTO",
-      "GOSUB",
+      " GOTO ",
+      " GOSUB ",
       " TO ",
       " STEP ",
       " THEN ",
@@ -890,9 +1219,9 @@ void print_token(struct basic_program *prog,struct token *token)
       "+",
       "-",
       "/",
-      "NOT",
-      "OR",
-      "AND",
+      " NOT ",
+      " OR ",
+      " AND ",
       "(",
       ")",
       "=", // numeric assign
@@ -934,12 +1263,150 @@ void print_token(struct basic_program *prog,struct token *token)
       "PADDLE",
       "STICK",
       "PTRIG",
-      "STRIG",
+      "STRIG", // 54
    };
-   if ( token->token < sizeof(command_name)/sizeof(command_name[0]) )
+   char *operand_name_turbo_basic_xl[] = {
+      // https://github.com/rossumur/esp_8_bit/blob/master/atr_image_explorer.htm
+      // verified and corrected spaces with manual testing
+      "DPEEK", // 55
+      "&","!","INSTR","INKEY$"," EXOR ","HEX$","DEC",
+      " DIV ","FRAC","TIME$","TIME"," MOD "," EXEC ","RND","RAND",
+      "TRUNC","%0","%1","%2","%3"," GO# ","UINSTR","ERR",
+      "ERL", // 6D
+   };
+   char *operand_name_basic_xe[] = { // A subset of BASIC XL/XE
+      // https://www.virtualdub.org/downloads/Altirra%20BASIC%20Reference%20Manual.pdf
+      // manual testing in BASIC XL/XE; both are the same for opcodes
+      " USING", // 55, not in Altirra
+      "%", // 56
+      "!",
+      "&",
+      ";", // 59, not in Altirra
+      "BUMP(",
+      "FIND(", // 5B, not in Altirra
+      "HEX$",
+      "RANDOM(", // 5D, not in Altirra
+      "DPEEK",
+      "SYS", // 5F, not in Altirra
+      "VSTICK",
+      "HSTICK",
+      "PMADR",
+      "ERR", // 63, last one in Altirra
+      "TAB", // 64
+      "PEN",
+      "LEFT$(",
+      "RIGHT$(",
+      "MID$(", // 68
+      // opcode 69 causes BASIC XE to hang when listing
+   };
+   char *operand_name_basic_a_plus[] = {
+      ",", // starting at 0x12
+      "$",
+      ":", // statement end
+      ";",
+      "", // line end
+      " GOTO ",
+      " GOSUB ",
+      " TO ",
+      " STEP ",
+      " THEN ",
+      " USING ", // 1C
+      "#",
+      "<=",
+      "<>",
+      ">=",
+      "<",
+      ">",
+      "=",
+      "^", // 24
+      "*",
+      "+",
+      "-",
+      "/",
+      " NOT ",
+      " OR ",
+      " AND ",
+      "!", // 2C
+      "&", // 2D
+      "(",
+      ")",
+      "=", // numeric assign
+      "=", // string assign
+      "<=", // string
+      "<>", // 33
+      ">=",
+      "<",
+      ">",
+      "=",
+      "+", // unary
+      "-",
+      "(", // string
+      "", // array
+      "", // dim array
+      "(", // function
+      "(", // dim string
+      ",", // array
+      "STR$",
+      "CHR$",
+      "USR",
+      "ASC",
+      "VAL",
+      "LEN",
+      "ADR",
+      "BUMP", // 47
+      "FIND",
+      "DPEEK", //49
+      "ATN",
+      "COS",
+      "PEEK",
+      "SIN",
+      "RND",
+      "FRE",
+      "EXP(", // 50
+      "LOG(",
+      "CLOG(",
+      "SQR(",
+      "SGN(",
+      "ABS(",
+      "INT(",
+      "SYS(",
+      "PADDLE(",
+      "STICK(",
+      "PTRIG(",
+      "STRIG(",
+      "VSTICK(",
+      "HSTICK(",
+      "PMADR(",
+      "ERR(", // 5F
+      "TAB(", // 60
+      "PEN(", // 61 last opcode
+   };
+
+   if ( mode == basic_ap && token->token < sizeof(command_name_basic_a_plus)/sizeof(command_name_basic_a_plus[0])  )
+   {
+      printf("%s",command_name_basic_a_plus[token->token]);
+      if ( *command_name_basic_a_plus[token->token] ) printf(" "); // no space after implied let
+   }
+   else if ( token->token < sizeof(command_name)/sizeof(command_name[0]) )
    {
       printf("%s",command_name[token->token]);
       if ( *command_name[token->token] ) printf(" "); // no space after implied let
+   }
+   else if ( mode == basic_xl && token->token == 0x57 )
+   {
+      printf("NUM"); // "LOCAL" in BASIC XE
+   }
+   else if ( mode == basic_xl && token->token == 0x58 )
+   {
+      printf("END"); // "EXTEND" in BASIC XE
+   }
+   else if ( ( mode == altirra_basic || mode == basic_xl || mode == basic_xe ) && token->token - sizeof(command_name)/sizeof(command_name[0]) < sizeof(command_name_basic_xe)/sizeof(command_name_basic_xe[0]) )
+   {
+      printf("%s",command_name_basic_xe[token->token - sizeof(command_name)/sizeof(command_name[0])]);
+   }
+   else if ( ( mode == turbo_basic_xl ) && token->token - sizeof(command_name)/sizeof(command_name[0]) < sizeof(command_name_turbo_basic_xl)/sizeof(command_name_turbo_basic_xl[0]) )
+   {
+      printf("%s",command_name_turbo_basic_xl[token->token - sizeof(command_name)/sizeof(command_name[0])]);
    }
    else
    {
@@ -948,7 +1415,7 @@ void print_token(struct basic_program *prog,struct token *token)
 
    // Print operands
    // REM, DATA, and ERROR are special
-   if ( token->token == 0x00 || token->token == 0x01 || token->token == 0x37 ) // rem, data, error
+   if ( token->token == 0x00 || token->token == 0x01 || (token->token == 0x37 && mode != basic_ap) || (token->token == 0x53 && mode == basic_ap) ) // rem, data, error
    {
       print_atari_string(token->operands,token->tokenlen-3);
       return;
@@ -972,9 +1439,9 @@ void print_token(struct basic_program *prog,struct token *token)
          ++next;
          --len;
       }
-      else if ( *next == 0x0e && len >= 7 )
+      else if ( (*next == 0x0e || *next == 0x0d) && len >= 7 ) // 0D is a float displayed as hex in Altirra, XL, and XE BASICS
       {
-         printf("%s",print_atari_float((void *)next+1));
+         printf("%s",print_atari_float(prog,(void *)next+1,(*next == 0x0d)) );
          next += 7;
          len -= 7;
       }
@@ -986,9 +1453,27 @@ void print_token(struct basic_program *prog,struct token *token)
          len -= 2+next[1];
          next+= 2+next[1];
       }
+      else if ( mode == basic_ap &&  *next - (unsigned)0x12 < sizeof(operand_name_basic_a_plus)/sizeof(operand_name_basic_a_plus[0]) )
+      {
+         printf("%s",operand_name_basic_a_plus[*next-0x12]);
+         ++next;
+         --len;
+      }
       else if ( *next - (unsigned)0x12 < sizeof(operand_name)/sizeof(operand_name[0]) )
       {
          printf("%s",operand_name[*next-0x12]);
+         ++next;
+         --len;
+      }
+      else if ( ( mode == altirra_basic || mode == basic_xl || mode == basic_xe ) && *next - sizeof(operand_name)/sizeof(operand_name[0]) < sizeof(operand_name_basic_xe)/sizeof(operand_name_basic_xe[0]) )
+      {
+         printf("%s",operand_name_basic_xe[*next - 0x12 - sizeof(operand_name)/sizeof(operand_name[0])]);
+         ++next;
+         --len;
+      }
+      else if ( ( mode == turbo_basic_xl ) && *next - sizeof(operand_name)/sizeof(operand_name[0]) < sizeof(operand_name_turbo_basic_xl)/sizeof(operand_name_turbo_basic_xl[0]) )
+      {
+         printf("%s",operand_name_turbo_basic_xl[*next - 0x12 - sizeof(operand_name)/sizeof(operand_name[0])]);
          ++next;
          --len;
       }
@@ -1047,7 +1532,7 @@ void display_program(struct basic_program *prog)
          {
          case 0:
             printf("%s: Var %3d is scalar:             %s: %s",prog->filename,i,
-                   print_atari_float(&prog->vvt.var[i].var_data.scalar),
+                   print_atari_float(prog,&prog->vvt.var[i].var_data.scalar,0),
                    varname);
             break;
          case 0x40:
@@ -1121,27 +1606,90 @@ void display_program(struct basic_program *prog)
    }
 
    // Report non-standard opcodes/operands
+   if ( prog->compatibility != atari_basic )
    {
-      int weird_opcode=0;
-      int weird_operand=0;
-      for ( int i=0x38;i<256;++i)
+      int match_display=0;
+      switch ( prog->compatibility )
       {
-         if ( prog->token_use_count[i] )
+         case basic_ap:
+            if( display_mode == basic_ap ) match_display=1;
+            break;
+         case altirra_basic:
+            if ( display_mode == altirra_basic || display_mode == basic_xl || display_mode == basic_xe ) match_display=1;
+            break;
+         case basic_xl:
+            if ( display_mode == basic_xl || display_mode == basic_xe ) match_display=1;
+            break;
+         case basic_xe:
+            if ( display_mode == basic_xl || display_mode == basic_xe ) match_display=1;
+            break;
+         default: break;
+      }
+      if ( display_mode == turbo_basic_xl && prog->turbo_basic_compatibility ) match_display=1;
+
+      if ( !match_display )
+      {
+         printf("%s: WARNING: File opcodes/operands do not match display setting\n",prog->filename);
+         printf("%s: Detected compatibility: ",prog->filename);
+         switch(prog->compatibility)
          {
-            ++weird_opcode;
-            printf("%s: WARNING: non-standard opcode %02x used %d times; alternate BASIC implementation suspected\n",prog->filename,i,prog->token_use_count[i]);
+            case basic_ap:
+               printf("BASIC A+");
+               break;
+            case altirra_basic:
+               printf("Altirra BASIC, "); // fall through
+            case basic_xl:
+               printf("BASIC XL, "); // fall through
+            case basic_xe:
+               printf("BASIC XE");
+               break;
+            case turbo_basic_xl:
+               printf("Turbo BASIC XL");
+               break;
+            default: // Shouldn't hit this
+            case unknown:
+               printf("unknown");
+         }
+         if ( prog->turbo_basic_compatibility ) printf(", Turbo BASIC XL");
+         printf("\n");
+         
+         int weird_opcode=0;
+         int weird_operand=0;
+         for ( int i=0x38;i<256;++i)
+         {
+            if ( display_mode == turbo_basic_xl && i <= 0x63 ) continue;
+            if ( display_mode == basic_xl && i <= 0x58 ) continue;
+            if ( display_mode == basic_xe && i <= 0x65 ) continue;
+            if ( display_mode == altirra_basic && i <= 0x51 &&
+                 i!=0x38 && i!=0x39 && i!=0x3A && i!=0x3B && i!=0x41 && i!=0x42 && i!=0x45
+               ) continue;
+            if ( prog->token_use_count[i] )
+            {
+               ++weird_opcode;
+               printf("%s: WARNING: non-standard opcode %02x used %d times; alternate BASIC implementation suspected\n",prog->filename,i,prog->token_use_count[i]);
+            }
+         }
+         for ( int i=0;i<128;++i)
+         {
+            if ( i==0xd && ( display_mode == altirra_basic || display_mode == basic_xl || display_mode == basic_xe ) ) continue; // hex constant
+            if ( i==0xe || i==0xf ) continue; // constant float or string
+            if ( i >=0x12 && i <= 0x54 ) continue; // standard operands
+            if ( display_mode == turbo_basic_xl && i >= 0x55 && i <= 0x6D ) continue;
+            if ( (display_mode == basic_xl || display_mode == basic_xe) && i >= 0x55 && i <= 0x68 ) continue;
+            if ( display_mode == altirra_basic && i >= 0x55 && i <= 0x63 &&
+                 i!=0x55 && i!=0x59 && i!=0x5B && i!=0x5D && i!=0x5F
+               ) continue;
+            if ( prog->operand_use_count[i] )
+            {
+               ++weird_operand;
+               printf("%s: WARNING: non-standard operand %02x used %d times; alternate BASIC implementation suspected\n",prog->filename,i,prog->operand_use_count[i]);
+            }
          }
       }
-      for ( int i=0;i<128;++i)
-      {
-         if ( i==0xe || i==0xf ) continue; // constant float or string
-         if ( i >=0x12 && i <= 0x54 ) continue; // standard operands
-         if ( prog->operand_use_count[i] )
-         {
-            ++weird_operand;
-            printf("%s: WARNING: non-standard operand %02x used %d times; alternate BASIC implementation suspected\n",prog->filename,i,prog->operand_use_count[i]);
-         }
-      }
+   }
+   if ( prog->hex_constant_out_of_range )
+   {
+      printf("%s: WARNING: hex constants outside of $0000-$FFFF used %d times\n",prog->filename,prog->hex_constant_out_of_range);
    }
    
    if ( display_post_junk_hexdump && prog->junk_size )
@@ -1469,6 +2017,7 @@ int process_one_file(struct basic_program *prog)
    " --display-nonascii=[0|1]    Print non-ASCII as-is (default: 0)\n"  \
    " --display-immediate=[0|1]   Print the command used to save the program (default: 1)\n" \
    " --display-junk=[0|1]        Hex dump any extra data at the end (default: 1)\n" \
+   " --parse=[auto,atari,ap,turbo,altirra,xl,xe] Set of opcodes/operands to use (default: auto)\n" \
    "\n"                                                                 \
    "Output options\n"                                                   \
    " --out=[filename]  Write the file out\n"                            \
@@ -1537,6 +2086,23 @@ int main(int argc,char *argv[])
       if ( strncmp(argv[1],"--out=",sizeof("--out=")-1)==0 )
       {
          prog.outfilename = argv[1]+sizeof("--out=")-1;
+         goto next_arg;
+      }
+      if ( strncmp(argv[1],"--mode=",sizeof("--mode=")-1)==0 )
+      {
+         char *m = argv[1]+sizeof("--mode=")-1;
+         if ( 0 == strcmp(m,"auto") ) display_mode=auto_detect;
+         else if ( 0 == strcmp(m,"atari") ) display_mode=atari_basic;
+         else if ( 0 == strcmp(m,"turbo") ) display_mode=turbo_basic_xl;
+         else if ( 0 == strcmp(m,"altirra") ) display_mode=altirra_basic;
+         else if ( 0 == strcmp(m,"xl") ) display_mode=basic_xl;
+         else if ( 0 == strcmp(m,"xe") ) display_mode=basic_xe;
+         else if ( 0 == strcmp(m,"a+") ) display_mode=basic_ap;
+         else
+         {
+            printf("Invalid display mode: %s\n",m);
+            return 1;
+         }
          goto next_arg;
       }
       if ( strcmp(argv[1],"--")==0 )
