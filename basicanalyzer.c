@@ -169,7 +169,7 @@ enum basic_mode {
    basic_ap, // BASIC A+ (opcodes/operands in different order)
    unknown, // opcodes or operands outside of any known implementation
 };
- 
+
 struct basic_program {
    char *filename;
    int fd;
@@ -194,7 +194,7 @@ struct basic_program {
    int basic_a_plus_save;
    int normal_save;
 };
-  
+
 
 /*
  * Global variables
@@ -273,7 +273,7 @@ int parse_file(struct basic_program *prog)
    if ( r ) return r;
 
    detect_compatibility(prog);
-   
+
    return 0;
 }
 
@@ -650,11 +650,12 @@ int scan_and_validate_token(struct basic_program *prog,struct token *token)
    ++prog->token_use_count[token->token];
    if ( token->token == 0x00 || token->token == 0x01 || token->token == 0x37 ) // rem, data, error
    {
+      // 0x37 is wrong for BASIC A+ where it's the 'CP' opcode and 0x53 is 'ERROR-  '
       return 0;
    }
    if ( token->token > 0x37 ) // nonstandard command
    {
-      ; // Not sure how to parse this, but probably like any other, so give it a try
+      ; // All other BASICs seem to use the same parsing for these
    }
 
    unsigned char *next=token->operands;
@@ -674,9 +675,9 @@ int scan_and_validate_token(struct basic_program *prog,struct token *token)
       ++prog->operand_use_count[*next];
       if ( *next == 0x0e && len >= 7 ) // scalar
       {
+         if ( minus ) ++prog->merge_minus_count;
          next += 7;
          len -= 7;
-         if ( minus ) ++prog->merge_minus_count;
          minus=0;
          continue;
       }
@@ -688,7 +689,7 @@ int scan_and_validate_token(struct basic_program *prog,struct token *token)
          continue;
       }
       minus=0;
-      if ( *next == 0x36 ) minus=1; // unary minus
+      if ( *next == 0x36 ) minus=1; // unary minus, 39 in BASIC A+, but 36 there is a string comparison, so we're safe
       ++next;
       --len;
    }
@@ -774,7 +775,7 @@ void detect_compatibility(struct basic_program *prog)
       if ( i==0xd || i==0xe || i==0xf ) continue; // legal
       prog->compatibility = unknown; // Illegal operand
       prog->turbo_basic_compatibility = 0;
-      return;      
+      return;
    }
    if ( prog->basic_a_plus_save && prog->highest_token <= 53 && prog->highest_operand <= 61 && !prog->operand_use_count[0x0d] )
    {
@@ -782,7 +783,7 @@ void detect_compatibility(struct basic_program *prog)
       prog->turbo_basic_compatibility = 0;
       return;
    }
-   
+
    for ( int i=0x38;i<256;++i)
    {
       if ( prog->token_use_count[i] )
@@ -975,7 +976,7 @@ void print_token(struct basic_program *prog,struct token *token)
       mode = prog->compatibility;
       if ( mode == unknown ) mode = basic_xe; // Seems like the best guess
    }
-   
+
    char *command_name[] = {
       "REM",
       "DATA",
@@ -1105,7 +1106,7 @@ void print_token(struct basic_program *prog,struct token *token)
       "END", // yes, same as previous, not sure if this is real
       // 0x66 displays garbage
       // 0x67 generates error 100 when listing
-      
+
    };
    char *command_name_basic_a_plus[] = {
       "REM",
@@ -1163,7 +1164,7 @@ void print_token(struct basic_program *prog,struct token *token)
       "BPUT",
       "BGET",
       "TAB",
-      "CP",
+      "CP", // 37
       "DOS",
       "ERASE",
       "PROTECT",
@@ -1231,7 +1232,7 @@ void print_token(struct basic_program *prog,struct token *token)
       ">",
       "=",
       "+", // unary
-      "-",
+      "-", // 36
       "(", // string
       "(", // array
       "(", // dim array
@@ -1337,7 +1338,7 @@ void print_token(struct basic_program *prog,struct token *token)
       ">",
       "=",
       "+", // unary
-      "-",
+      "-", // 39
       "(", // string
       "", // array
       "", // dim array
@@ -1650,7 +1651,7 @@ void display_program(struct basic_program *prog)
          }
          if ( prog->turbo_basic_compatibility ) printf(", Turbo BASIC XL");
          printf("\n");
-         
+
          int weird_opcode=0;
          int weird_operand=0;
          for ( int i=0x38;i<256;++i)
@@ -1689,7 +1690,7 @@ void display_program(struct basic_program *prog)
    {
       printf("%s: WARNING: hex constants outside of $0000-$FFFF used %d times\n",prog->filename,prog->hex_constant_out_of_range);
    }
-   
+
    if ( display_post_junk_hexdump && prog->junk_size )
    {
       printf("%s: %d bytes past end of immediate area\n",prog->filename,prog->junk_size);
