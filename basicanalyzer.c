@@ -282,6 +282,11 @@ int read_and_parse_head(struct basic_program *prog)
    struct basic_header head;
 
    int b=read(prog->fd,&head,sizeof(head));
+   if ( b < 0 )
+   {
+      printf("%s: Read failed; is it a directory?\n",prog->filename);
+      return -1;
+   }      
    if ( b != sizeof(head) )
    {
       printf("%s: Too short for header: %u bytes\n",prog->filename,b);
@@ -293,6 +298,21 @@ int read_and_parse_head(struct basic_program *prog)
       ((unsigned short *)&(prog->head))[i/2] = ((unsigned char *)&head)[i] + 256 * ((unsigned char *)&head)[i+1];
    }
 
+   if ( prog->head.lomem == 0xffff )
+   {
+      printf("%s: Starts with $FFFF; this is probably a binload file, not BASIC\n",prog->filename);
+      return -1;
+   }
+   if ( prog->head.lomem == 0x0296 )
+   {
+      printf("%s: Starts with $0296; this is probably a ATR disk image file, not BASIC\n",prog->filename);
+      return -1;
+   }
+   if ( prog->head.lomem )
+   {
+      printf("%s: Does not start with LOMEM of 0000, found %04x\n",prog->filename,prog->head.lomem);
+      return -1;
+   }
    for ( unsigned int i=1; i<sizeof(head)/2; ++i )
    {
       if ( ((unsigned short *)&prog->head)[i] < ((unsigned short *)&prog->head)[i-1] )
@@ -303,11 +323,6 @@ int read_and_parse_head(struct basic_program *prog)
          printf("%s: Header offset fields decreasing\n",prog->filename);
          return -1;
       }
-   }
-   if ( prog->head.lomem )
-   {
-      printf("%s: Does not start with LOMEM of 0000, found %04x\n",prog->filename,prog->head.lomem);
-      return -1;
    }
    if ( prog->head.vnt < 0x0100 )
    {
