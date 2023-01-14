@@ -396,7 +396,7 @@ void write_dir(int sector)
 	for(i=0;i<8*256;++i) ((char *)dir)[i]=0;
 
 	rootdir=(sector==361);
-	i=scandir(".",&d,NULL,mydirsort);
+	i=scandir(".",&d,NULL,(void *)mydirsort);
 	used=0;
 	while (i) {
 		/* Process **d */
@@ -439,7 +439,7 @@ void write_dir(int sector)
 				break;
 			}
 			subdir=0;
-			if (!sbuf.st_mode&(S_IFDIR|S_IFREG)) {
+			if (!(sbuf.st_mode&(S_IFDIR|S_IFREG))) {
 				printf("Warning:  %s:  Not a normal file or directory\n",(*d)->d_name);
 				break;
 			}
@@ -465,7 +465,7 @@ void write_dir(int sector)
 			}
 			else {
 				dir[e].flag=0x46;
-				if (!sbuf.st_mode&0000200) dir[e].flag &=32; /* locked */
+				if (!(sbuf.st_mode&0000200)) dir[e].flag &=32; /* locked */
 				count=(sbuf.st_size+(secsize-3)-1)/(secsize-3);
 				start=use_sector();
 			}
