@@ -303,9 +303,34 @@ int read_and_parse_head(struct basic_program *prog)
       printf("%s: Starts with $FFFF; this is probably a binload file, not BASIC\n",prog->filename);
       return -1;
    }
+   if ( ((char *)&head)[0] == 'C' &&
+        ((char *)&head)[1] == 'A' &&
+        ((char *)&head)[2] == 'R' &&
+        ((char *)&head)[3] == 'T' )
+   {
+      // https://a8cas.sourceforge.net/format-cas.html
+      printf("%s: Starts with 'CART'; this is probably a cartrdige dump file, not BASIC\n",prog->filename);
+      return -1;
+   }
+   if ( ((char *)&head)[0] == 'F' &&
+        ((char *)&head)[1] == 'U' &&
+        ((char *)&head)[2] == 'J' &&
+        ((char *)&head)[3] == 'I' )
+   {
+      printf("%s: Starts with 'FUJI'; this is probably a CAS cassette image file, not BASIC\n",prog->filename);
+      return -1;
+   }
+   if ( ((char *)&head)[0] == 'A' &&
+        ((char *)&head)[1] == 'T' &&
+        ((char *)&head)[2] == '8' &&
+        ((char *)&head)[3] == 'X' )
+   {
+      printf("%s: Starts with 'AT8X'; this is probably an ATX disk image file, not BASIC\n",prog->filename);
+      return -1;
+   }
    if ( prog->head.lomem == 0x0296 )
    {
-      printf("%s: Starts with $0296; this is probably a ATR disk image file, not BASIC\n",prog->filename);
+      printf("%s: Starts with $0296; this is probably an ATR disk image file, not BASIC\n",prog->filename);
       return -1;
    }
    if ( prog->head.lomem )
