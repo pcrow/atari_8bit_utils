@@ -521,7 +521,7 @@ int read_block(FILE *fin,FILE *fout,char *name)
       return(1);
    }
    if (end<start) {
-      printf("%s:  Start:  %u\tEnd:  %u\tLength  %u\n",name,start,end,length);
+      printf("%s:  Start:  %u\tEnd:  %u\tLength  %d (invalid garbage)\n",name,start,end,(signed int)length);
       printf("%s:  Error:  %ld bytes in file after invalid load range\n",name,flen-ftell(fin));
       return(1);
    }
