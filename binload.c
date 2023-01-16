@@ -522,12 +522,12 @@ int read_block(FILE *fin,FILE *fout,char *name)
       return(1);
    }
    if (end<start) {
-      printf("%s:  Start:  %u\tEnd:  %u\tLength  %d (invalid garbage)\n",name,start,end,(signed int)length);
+      printf("%s:  Load memory: $%04X-$%04X (%u-%u)\tLength  $%04X (%d) (invalid garbage)\n",name,start,end,start,end,(signed int)length,(signed int)length);
       printf("%s:  Error:  %ld bytes in file after invalid load range\n",name,flen-ftell(fin));
       return(1);
    }
    if (flen<ftell(fin)+length) {
-      printf("%s:  Start:  %u\tEnd:  %u\tLength  %u\n",name,start,end,length);
+      printf("%s:  Load memory: $%04X-$%04X (%u-%u)\tLength  $%04X (%d)\n",name,start,end,start,end,length,length);
       printf("\t\tTruncated file:  missing data in load block (%ld bytes missing)\n",ftell(fin)+length-flen);
       return(1);
    }
@@ -542,7 +542,7 @@ int read_block(FILE *fin,FILE *fout,char *name)
       }
       if (run) printf("%s:  Unexpected second run address\n",name);
       run=1;
-      printf("%s:  Run at:  %u\n",name,data[0x02e0]+256*data[0x02e1]);
+      printf("%s:  Run at:  $%04X (%u)\n",name,data[0x02e0]+256*data[0x02e1],data[0x02e0]+256*data[0x02e1]);
       if (start>=0x02e0 && end<=0x02e1) return(0);
       /* Other data in this block */
       if (start==0x02e0 || start==0x02e1) {
@@ -557,7 +557,7 @@ int read_block(FILE *fin,FILE *fout,char *name)
       }
       else {
          /* Run address in the middle of the block */
-         printf("%s:  Start:  %u\tEnd:  %u\tLength  %u\n",name,start,0x02df,0x02df-start+1);
+         printf("%s:  Load memory: $%04X-$%04X (%u-%u)\tLength  $%04X (%d)\n",name,start,0x02df,start,0x02df,0x02df-start+1,0x02df-start+1);
          insert_block(start,0x02df);
          start=0x02e2;
          length=end-start+1;
@@ -571,11 +571,11 @@ int read_block(FILE *fin,FILE *fout,char *name)
       if (start==0x02e3 || start+length==0x02e2) {
          printf("%s:  Warning:  Partial init address\n",name);
       }
-      printf("%s:  Init at:  %u\n",name,data[0x02e2]+256*data[0x02e3]);
+      printf("%s:  Init at:  $%04X (%u)\n",name,data[0x02e2]+256*data[0x02e3],data[0x02e2]+256*data[0x02e3]);
       /* Other data in this block? */
       if (end > 0x02e3) {
          /* More stuff past init--split */
-         printf("%s:  Start:  %u\tEnd:  %u\tLength  %u\n",name,0x02e4,end,length);
+         printf("%s:  Load memory: $%04X-$%04X (%u-%u)\tLength  $%04X (%d)\n",name,0x02e4,end,0x02e4,end,length,length);
          insert_block(0x02e4,end);
          end=0x02e3;
          length=end-start+1;
@@ -588,7 +588,7 @@ int read_block(FILE *fin,FILE *fout,char *name)
    }
 
    /* Print data block load message */
-   printf("%s:  Start:  %u\tEnd:  %u\tLength  %u\n",name,start,end,length);
+   printf("%s:  Load memory: $%04X-$%04X (%u-%u)\tLength  $%04X (%d)\n",name,start,end,start,end,length,length);
 
    /* Warn if it overwrites DOS */
    /*
