@@ -17,6 +17,8 @@
 /*            Enhanced debugging                                        */
 /* 13 Aug 23  Version 2.0   Preston Crow                                */
 /*            SpartDOS support                                          */
+/* 14 Aug 23  Version 2.1   Preston Crow                                */
+/*            Atari DOS 3 support                                       */
 /************************************************************************/
 
 /************************************************************************/
@@ -54,6 +56,7 @@
         "\t-l Convert filenames to lower case\n"                        \
         "\t-m MyDOS format disk image\n"                                \
         "\t-s SpartaDOS format disk image\n"                            \
+        "\t-3 Atari DOS 3 format disk image\n"                          \
         "\t-- Next argument is not a flag\n"                            \
         "\t-d debugging\n"                                              \
         "\t-r={sector} Use non-standard root directory number\n"        \
@@ -150,15 +153,27 @@ struct sparta_dir_entry {
         unsigned char file_time[3]; // hh/mm/ss
 };
 
+struct dos3_dir_entry {
+        unsigned char status; // Bit 7 valid, bit 6 exists, bit 1 locked, bit 0 open
+        unsigned char file_name[8];
+        unsigned char file_ext[3];
+        unsigned char blocks;
+        unsigned char start;
+        unsigned char file_size[2]; // Low bytes of size for computing EOF in final block
+};
+
 
 /************************************************************************/
 /* Function Prototypes                                                  */
 /************************************************************************/
+void read_dir(FILE *in,int sector);
+void read_file(char *name,FILE *in,FILE *out,int sector,int count,int filenum);
 int sparta_sanity(FILE *in,int verbose);
 void read_sparta_dir(FILE *in,int sector);
 void read_sparta_file(char *name,FILE *in,FILE *out,int sector,int file_size);
-void read_dir(FILE *in,int sector);
-void read_file(char *name,FILE *in,FILE *out,int sector,int count,int filenum);
+int dos3_sanity(FILE *in,int verbose);
+void read_dos3_dir(FILE *in);
+void read_dos3_file(char *name,FILE *in,FILE *out,int start,int blocks,int file_size);
 
 /************************************************************************/
 /* Global variables                                                     */
@@ -167,6 +182,7 @@ int ddshortinit=0; /* True indicates double density with first 3 sectors 128 byt
 int secsize,seccount;
 int mydos=0;
 int sparta=0;
+int dos3=0;
 int lowcase=0;
 int debug=0;
 int fake=0;
@@ -199,6 +215,9 @@ int main(int argc,char *argv[])
 					break;
                                       case 's':
                                         sparta=1;
+                                        break;
+                                      case '3':
+                                        dos3=1;
                                         break;
 				      case '-': /* Last option */
 					done=1;
@@ -296,6 +315,15 @@ int main(int argc,char *argv[])
                         for (int i=0;i<8;++i) printf("%c",sec1.volume_name[i]&0x7f); // Remove inverse video
                         printf("\n");
                         read_sparta_dir(in,BYTES2(sec1.dir));
+                        return(0);
+                }
+                return 1;
+        }
+        if ( dos3 )
+        {
+                if ( dos3_sanity(in,1) )
+                {
+                        read_dos3_dir(in);
                         return(0);
                 }
                 return 1;
@@ -850,4 +878,126 @@ void read_sparta_file(char *name,FILE *in,FILE *out,int sector,int file_size)
 	fclose(out);
         free(map);
         free(buf);
+}
+
+/************************************************************************/
+/* dos3_sanity()                                                        */
+/* Return true if the image is compatible with Atari DOS 3 format       */
+/************************************************************************/
+int dos3_sanity(FILE *in,int verbose)
+{
+        if ( read_sector(in,1,sizeof(sec1),&sec1) != 1 )
+        {
+                fprintf(stderr,"Failed to read initial sector header\n");
+                return 0;
+        }
+        if ( secsize != 128 )
+        {
+                if ( verbose ) printf("DOS 3 only supports 128-byte sectors, not %d\n",secsize);
+                return 0;
+        }
+        if ( sec1.boot_sectors != 9 )
+        {
+                if ( verbose ) printf("DOS 3 expects 9 boot sectors, not %d\n",sec1.boot_sectors);
+                return 0;
+        }
+        return 1;
+}
+
+/************************************************************************/
+/* read_dos3_dir()                                                      */
+/* Read the entries in a directory                                      */
+/* Call read_dos3_file() for files                                      */
+/************************************************************************/
+void read_dos3_dir(FILE *in)
+{
+        struct dos3_dir_entry entries[8];
+
+        for (int sector=0;sector<8;++sector)
+        {
+                if ( read_sector(in,sector+16,sizeof(entries),entries) != 1 )
+                {
+                        fprintf(stderr,"Failed to director sector %d\n",sector+16);
+                        return;
+                }
+                for (int e=0;e<8;++e)
+                {
+                        if ( !e && !sector ) continue; // First entry is blank
+                        if ( !(entries[e].status&0x80) ) return; // No more valid entries
+                        if ( !(entries[e].status & (1<<6)) ) continue; // deleted file
+                        char name[13];
+                        int j;
+                        for(j=0;j<8;++j) {
+                                name[j]=entries[e].file_name[j];
+                                if (name[j]==' ') break;
+                        }
+                        name[j]='.';
+                        ++j;
+                        for(int k=0;k<3;++k,++j) {
+                                name[j]=entries[e].file_ext[k];
+                                if (name[j]==' ') break;
+                        }
+                        name[j]=0;
+
+			FILE *out=fopen(name,"wb");
+			if (!out) {
+				fprintf(stderr,"Unable to create file:  %s\n",name);
+				exit(2);
+			}
+			if (debug) printf("readfile %s (start %d,blocks %d,bytes %d,flags %x);\n",name,entries[e].start,entries[e].blocks,BYTES2(entries[e].file_size),entries[e].status);
+                        read_dos3_file(name,in,out,entries[e].start,entries[e].blocks,BYTES2(entries[e].file_size));
+                }
+        }
+}
+
+/************************************************************************/
+/* read_dos3_file()                                                     */
+/************************************************************************/
+void read_dos3_file(char *name,FILE *in,FILE *out,int start,int blocks,int file_size)
+{
+        unsigned char map[128];
+
+        if ( read_sector(in,24,sizeof(map),map) != 1 )
+        {
+                fprintf(stderr,"Failed to block map sector %d\n",24);
+                fclose(out);
+                return;
+        }
+
+        while (blocks)
+        {
+                unsigned char buf[1024];
+                int out_size;
+
+                if ( read_sector(in,start*8+25,sizeof(buf),buf) != 1 )
+                {
+                        fprintf(stderr,"%s: Failed to block %d (sectors %d-%d)\n",name,start,start*8+25,start*8+25+7);
+                        fclose(out);
+                        return;
+                }
+                --blocks;
+                out_size=1024;
+                if ( !blocks ) out_size = file_size % 1024;
+                fwrite(buf,out_size,1,out);
+                if ( blocks )
+                {
+                        if ( map[start] >= 0x80 )
+                        {
+                                fprintf(stderr,"%s: Invalid next block: %d->%d\n",name,start,map[start]);
+                                fclose(out);
+                                return;
+                        }
+                }
+                else
+                {
+                        if ( map[start] != 0xFD )
+                        {
+                                fprintf(stderr,"%s: Last block is not EOF in map: %d->%d\n",name,start,map[start]);
+                                fclose(out);
+                                return;
+                        }
+                }
+                start=map[start];
+        }
+        fclose(out);
 }
