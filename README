@@ -1,5 +1,14 @@
 This is a collection of Atari 8-bit utilities that I've written, mostly back in the 90s, for managing files for an Atari on a Linux system.  Whether you're using a real Atari or an emulator, these can be handy tools.
 
+ATRFS
+
+Want to mount an ATR image as a native file system in Linux?
+Now you can!
+
+This uses FUSE to create a user-space file system that allows reading and writing of Atari file systems in ATR image files.  This requires no special root privileges.
+
+The framework is designed to be modular, making it relatively simple to add support for new Atari file systems.
+
 SIO2Linux
 
 Pavel Machek made an initial attempt at communicating with the Atari through an SIO2PC cable using Linux's serial port drivers. He came up with a simple floppy emulator he called "femul.c"
