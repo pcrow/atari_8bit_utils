@@ -100,6 +100,12 @@ but with DOS 2.5, the extended VTOC sector is incompatible with MyDOS.
 Note: DOS 2.0d is detected as MyDOS, as it's a proper subset.  The only
 difference between the two is the code in the boot sectors is different.
 
+The boot sector code from each version of DOS is embedded in the code, so
+the correct boot sectors are used when you create a file system.  Also, if
+you write DOS.SYS to the main directory, it will update the boot sectors to
+match that version of DOS (if possible) and set the flag and sector
+pointers in the boot sector so that the image should boot.
+
 Coding notes:
 
 Handling the file numbers in the last three bytes of each sector can be a
@@ -112,11 +118,7 @@ use file numbers for newly created files.
 
 Bugs:
 
-This has had only minimal testing.  When creating file systems, it doesn't
-write the correct boot code, as the code doesn't embed the full boot
-sectors.  If you want to make a bootable image, then before using a newly
-created image, load it in an emulator, format it with the correct DOS, and
-write the DOS files to the disk.  Then mount it again with atrfs.
+This has had only minimal testing.
 
 
 SpartaDOS:

@@ -48,6 +48,7 @@ const struct fs_ops *fs_ops[ATR_MAXFSTYPE] = {
    [ATR_SPECIAL] = &special_ops,
    [ATR_DOS1] = &dos1_ops,
    [ATR_DOS2] = &dos2_ops,
+   [ATR_DOS20D] = &dos20d_ops,
    [ATR_DOS25] = &dos25_ops,
    [ATR_MYDOS] = &mydos_ops,
    //[ATR_SPARTA] = &sparta_ops,

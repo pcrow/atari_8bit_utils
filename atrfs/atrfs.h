@@ -33,7 +33,7 @@ enum atrfstype {
    ATR_DOS1, // Mostly DOS 2
    ATR_DOS2, // subset of MyDOS
    ATR_DOS25, // enhanced density: bitmaps different from MyDOS
-   // ATR_DOS2D // detected as MyDOS; behaviour is identical
+   ATR_DOS20D, // detected as MyDOS; behaviour is identical
    ATR_MYDOS, // Also Atari DOS 2.0d
    ATR_SPARTA,
    ATR_DOS3,
@@ -126,6 +126,7 @@ extern const struct fs_ops *fs_ops[ATR_MAXFSTYPE];
 extern const struct fs_ops special_ops;
 extern const struct fs_ops dos1_ops;
 extern const struct fs_ops dos2_ops;
+extern const struct fs_ops dos20d_ops;
 extern const struct fs_ops dos25_ops;
 extern const struct fs_ops mydos_ops;
 extern const struct fs_ops sparta_ops;
