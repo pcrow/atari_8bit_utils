@@ -123,7 +123,17 @@ This has had only minimal testing.
 
 SpartaDOS:
 
-Not implemented yet
+This is implemented based on documentation I've found for SpartaDOS 1.1.  I
+could use some help finding differences between SpartaDOS versions,
+including boot sectors.
+
+Note that file time stamps are preserved.  They are interpreted as being
+from the current time zone.  SpartaDOS uses one byte for the last two digits of the year.  I don't know if there's a standard, but I arbitrarily decided that years 78 and up should have 1900 added, and years 00 though 77 are 2000 through 2077.  Writing files will use this convention, too, never using years > 100.
+
+Bugs:
+
+Much of this hasn't been implemented yet.
+
 
 DOS XE:
 

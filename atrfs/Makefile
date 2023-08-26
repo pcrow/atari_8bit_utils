@@ -1,7 +1,7 @@
 
 HEADERS = atrfs.h
-CFLAGS = -g -O2 -W -Wall
-OBJ = atrfs.o special.o info.o mydos.o
+CFLAGS = -g -O0 -W -Wall # -g and -O0 for easier gdb debugging
+OBJ = atrfs.o special.o info.o mydos.o sparta.o
 atrfs: $(OBJ)
 	gcc -o $@ $(OBJ) -lfuse3
 
