@@ -544,12 +544,13 @@ int mydos_trace_file(int sector,int fileno,int dos1,int *size,int **sectors)
          }
       }
       // If it's DOS 1, the last byte is the sector sequence of the file starting with zero
+      // Verified with testing: Large files mask off the high bit, so it can wrap
       if ( dos1 )
       {
          if ( next )
          {
             *size += 125;
-            if ( s[atrfs.sectorsize-1] != (block & 0xff) )
+            if ( s[atrfs.sectorsize-1] != (block & 0x7f) )
             {
                if ( options.debug ) fprintf(stderr,"DEBUG: %s: DOS 1 sector chain error: sector %d sequence number %d but expected %d\n",__FUNCTION__,sector,s[atrfs.sectorsize-1],block);
             }
@@ -1450,7 +1451,7 @@ int mydos_write(const char *path, const char *buf, size_t size, off_t offset, st
          int len = BYTES2(dirent->sectors);
          if ( !(dirent->flags & FLAGS_DOS2) )
          {
-            s[atrfs.sectorsize-1]=BYTES2(dirent->sectors)-1; // DOS 1; byte holds sector sequence number
+            s[atrfs.sectorsize-1]=(BYTES2(dirent->sectors)-1)&0x7f; // DOS 1; byte holds sector sequence number in low 7 bits
          }
          // Will fix up sector chain later
          s=SECTOR(sector);
