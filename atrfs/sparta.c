@@ -500,6 +500,85 @@ int sparta_path(const char *path,int *inode,int *parent_dir_inode,int *size,int 
 }
 
 /*
+ * sparta_info()
+ *
+ * Return the buffer containing information specific to this file.
+ *
+ * The pointer returned should be 'free()'d after use.
+ */
+char *sparta_info(const char *path,int parent_dir_inode,int entry,int inode,int filesize)
+{
+   char *buf,*b;
+   int r;
+
+   struct sparta_dir_entry dir_entry;
+   r = sparta_get_dirent(&dir_entry,parent_dir_inode,entry);
+   if ( r < 0 ) return NULL;
+
+   buf = malloc(64*1024);
+   b = buf;
+   *b = 0;
+   b+=sprintf(b,"File information and analysis\n\n  %.*s\n  %d bytes\n\n",(int)(strrchr(path,'.')-path),path,filesize);
+   b+=sprintf(b,
+              "Directory entry internals:\n"
+              "  Entry %d in directory with sector map at %d\n"
+              "  Status: $%02x\n"
+              "  Sector Map at: %d\n\n",
+              entry,parent_dir_inode,
+              dir_entry.status,BYTES2(dir_entry.sector_map));
+   b+=sprintf(b,
+              "  Date (d/m/y): %d/%d/%d\n",dir_entry.file_date[0],dir_entry.file_date[1],dir_entry.file_date[2]);
+   b+=sprintf(b,
+              "  Time: %d:%02d:%02d\n",dir_entry.file_time[0],dir_entry.file_time[1],dir_entry.file_time[2]);
+
+   b+=sprintf(b,"\nSector chain:\n");
+   int s;
+   int prev = -1,pprint = -1;
+   for ( int i=0;(s=sparta_get_sector(inode,i))>0;++i )
+   {
+      if ( s == prev+1 )
+      {
+         ++prev;
+         continue;
+      }
+      if ( prev > 0 )
+      {
+         if ( pprint != prev )
+         {
+            b+=sprintf(b," -- %d",prev);
+         }
+         b+=sprintf(b,"\n");
+      }
+      b+=sprintf(b,"  %d",s);
+      prev = s;
+      pprint = s;
+   }
+   if ( prev > 0 && pprint != prev )
+   {
+      b+=sprintf(b," -- %d",prev);
+   }
+   b+=sprintf(b,"\n\n");
+
+   // Generic info for the file type, but only if it's not a directory
+   if ( !(dir_entry.status & FLAGS_DIR) )
+   {
+      char *moreinfo;
+      moreinfo = atr_info(path,filesize);
+      if ( moreinfo )
+      {
+         int off = b - buf;
+         buf = realloc(buf,strlen(buf)+1+strlen(moreinfo));
+         b = buf+off; // In case it moved
+         b+=sprintf(b,"%s",moreinfo);
+         free(moreinfo);
+      }
+   }
+
+   buf = realloc(buf,strlen(buf)+1);
+   return buf;
+}
+
+/*
  * sparta_getattr()
  */
 int sparta_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
@@ -542,9 +621,7 @@ int sparta_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *
       stbuf->st_mode = MODE_RO(stbuf->st_mode); // These files are never writable
       stbuf->st_ino = inode + 0x10000;
 
-      // FIXME
-      // char *info = sparta_info(path,dirent,parent_dir_inode,entry,inode,sectors,filesize);
-      char *info = strdup("Detailed file information not available for SpartaDOS yet\n");
+      char *info = sparta_info(path,parent_dir_inode,entry,inode,size);
       stbuf->st_size = strlen(info);
       free(info);
       if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s info\n",__FUNCTION__,path);
@@ -631,11 +708,7 @@ int sparta_read(const char *path, char *buf, size_t size, off_t offset, struct f
 
    if ( isinfo )
    {
-#if 0 // FIXME
-      char *info = sparta_info(path,&dir_entry,parent_dir_inode,entry,inode,filesize);
-#else
-      char *info = strdup("File info not implemented yet for SpartaDOS\n");
-#endif
+      char *info = sparta_info(path,parent_dir_inode,entry,inode,filesize);
       char *i = info;
       int bytes = strlen(info);
       if ( offset >= bytes )
