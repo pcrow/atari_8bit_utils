@@ -374,7 +374,7 @@ int atr_mkdir(const char *path,mode_t mode)
    {
       return (fs_ops[atrfs.fstype]->fs_mkdir)(path,mode);
    }
-   return -EACCES; // Seems like the right error for not supported
+   return -EPERM; // mkdir(2) man page says EPERM if directory creation not supported
 }
 
 int atr_rmdir(const char *path)
@@ -403,6 +403,7 @@ int atr_rename(const char *path1, const char *path2, unsigned int flags)
 {
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( atrfs.readonly ) return -EROFS;
+
    if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_rename )
    {
       return (fs_ops[atrfs.fstype]->fs_rename)(path1,path2,flags);
@@ -450,14 +451,32 @@ int atr_truncate(const char *path, off_t size, struct fuse_file_info *fi)
 }
 int atr_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi)
 {
-   if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( atrfs.readonly ) return -EROFS;
    
+   if ( options.debug )
+   {
+      fprintf(stderr,"DEBUG: %s: Times in seconds: ",__FUNCTION__);
+      if ( tv[0].tv_nsec == UTIME_NOW ) fprintf(stderr,"NOW, ");
+      else if ( tv[0].tv_nsec == UTIME_OMIT ) fprintf(stderr,"OMIT, ");
+      else fprintf(stderr,"%lu, ",tv[0].tv_sec);
+      if ( tv[1].tv_nsec == UTIME_NOW ) fprintf(stderr,"NOW, ");
+      else if ( tv[1].tv_nsec == UTIME_OMIT ) fprintf(stderr,"OMIT, ");
+      else fprintf(stderr,"%lu, ",tv[1].tv_sec);
+   }
    if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_utimens )
    {
       return (fs_ops[atrfs.fstype]->fs_utimens)(path,tv,fi);
    }
    return 0; // Fake success on file systems that don't have time stamps
+}
+
+int atr_chown(const char *path, uid_t uid, gid_t gid, struct fuse_file_info *fi)
+{
+   (void)path;
+   (void)uid;
+   (void)gid;
+   (void)fi;
+   return 0; // Fake it to avoid stupid not-supported error messages
 }
 
 static const struct fuse_operations atr_oper = {
@@ -474,6 +493,7 @@ static const struct fuse_operations atr_oper = {
         .create         = atr_create,
         .truncate       = atr_truncate,
         .utimens        = atr_utimens,
+        .chown          = atr_chown,
         .statfs         = atr_statfs,
 };
 
@@ -494,6 +514,7 @@ const struct fuse_opt option_spec[] = {
    OPTION("--sectors=%u", sectors),
    OPTION("--mydos", mydos),
    OPTION("--sparta", sparta),
+   OPTION("--volname=%s", volname),
    FUSE_OPT_END
 };
 
@@ -532,6 +553,7 @@ int main(int argc,char *argv[])
              "    --sectors=<#> (number of sectors in image; default 720)\n"
              "    --mydos       (create MyDOS image)\n"
              "    --sparta      (create SpartDOS image)\n"
+             "    --volname=<>  (set volume name for new SpartaDOS image)\n"
          );
       return 0;
    }

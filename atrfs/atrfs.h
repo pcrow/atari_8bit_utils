@@ -20,7 +20,7 @@
 // SECTOR(n): return a pointer to sector 'n' or NULL if out of range
 #define SECTOR(n)       ((void *)((n>0 && n<=atrfs.sectors)?( ( (n<4)&&atrfs.shortsectors ) ? atrfs.mem+(n-1)*128: atrfs.mem + (n-1)*atrfs.sectorsize-atrfs.ssbytes ):NULL))
 // Adjust mode to match needs
-#define MODE_DIR(m)     (((m) | S_IFDIR | 0111) & ~S_IFREG) // Add dir bits to mode
+#define MODE_DIR(m)     (((m)&0777) | S_IFDIR | 0111) // Add dir bits to mode
 #define MODE_FILE(m)    (((m) & ~S_IFDIR & ~0111) | S_IFREG) // Regular file, not dir
 #define MODE_RO(m)      ((m) & ~000222) // Remove write bits
 
@@ -69,6 +69,7 @@ struct options {
    unsigned int secsize;
    int mydos;
    int sparta;
+   const char *volname;
 };
 
 struct sector1 {

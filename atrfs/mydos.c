@@ -378,7 +378,8 @@ int mydos_sanity(void)
    else vtoc_sectors=vtoc_sectors-1;
    int reserved_sectors = 3+vtoc_sectors+8;
    if ( atrfs.sectors >= 720 ) ++reserved_sectors;
-   
+
+   if ( !BYTES2(vtoc->total_sectors) ) return 1; // Must have some sectors
    if ( BYTES2(vtoc->total_sectors) != atrfs.sectors - reserved_sectors )
    {
       fprintf(stderr,"Warning: MyDOS total sectors reported %d; should be %d - %d = %d\n",BYTES2(vtoc->total_sectors), atrfs.sectors, reserved_sectors, atrfs.sectors - reserved_sectors);
@@ -408,6 +409,7 @@ int dos1_sanity(void)
    if ( vtoc->vtoc_sectors != 1 ) return 1; // Code is 1 for DOS 1
    int reserved_sectors = 2+1+8+1;
    
+   if ( !BYTES2(vtoc->total_sectors) ) return 1; // Must have some sectors
    if ( BYTES2(vtoc->total_sectors) != atrfs.sectors - reserved_sectors )
    {
       fprintf(stderr,"Warning: DOS total sectors reported %d; should be %d - %d = %d\n",BYTES2(vtoc->total_sectors), atrfs.sectors, reserved_sectors, atrfs.sectors - reserved_sectors);
@@ -444,6 +446,7 @@ int dos2_sanity(void)
    int reserved_sectors = 4+1+8+1; // sector 0; boot; vtoc; dir(8); 720
    if ( options.debug ) fprintf(stderr,"DEBUG: %s.%d\n",__FUNCTION__,__LINE__);
    
+   if ( !BYTES2(vtoc->total_sectors) ) return 1; // Must have some sectors
    if ( BYTES2(vtoc->total_sectors) != atrfs.sectors - reserved_sectors )
    {
       fprintf(stderr,"Warning: DOS total sectors reported %d; should be %d - %d = %d\n",BYTES2(vtoc->total_sectors), atrfs.sectors, reserved_sectors, atrfs.sectors - reserved_sectors);
@@ -480,6 +483,7 @@ int dos25_sanity(void)
    if ( vtoc->vtoc_sectors != 2 ) return 1; // Code is 2 for DOS 2
    int reserved_sectors = 4+1+8+1;
    
+   if ( !BYTES2(vtoc->total_sectors) ) return 1; // Must have some sectors
    if ( BYTES2(vtoc->total_sectors) != atrfs.sectors - reserved_sectors )
    {
       fprintf(stderr,"Warning: DOS total sectors reported %d; should be %d - %d = %d\n",BYTES2(vtoc->total_sectors), atrfs.sectors, reserved_sectors, atrfs.sectors - reserved_sectors);
@@ -687,6 +691,7 @@ int mydos_path(const char *path,int *sector,int *parent_dir_sector,int *count,in
    *isdir=0;
    *isinfo=0;
    *fileno = -1;
+   *locked=0;
    while ( *path )
    {
       while ( *path == '/' ) ++path;
