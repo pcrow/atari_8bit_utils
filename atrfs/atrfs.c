@@ -55,6 +55,7 @@ const struct fs_ops *fs_ops[ATR_MAXFSTYPE] = {
    //[ATR_DOS3] = &dos3_ops,
    //[ATR_DOS4] = &dos4_ops,
    //[ATR_DOSXE] = &dosxe_ops,
+   [ATR_UNKNOWN] = &unknown_ops,
 };
 char *cwd; // FUSE sets working director to '/' before we open the ATR file
 
@@ -257,8 +258,9 @@ if ( !valid_atr_file(atrfs.atrmem) ) return 1;
          }
       }
    }
-   fprintf(stderr,"Unable to determine file system type\n");
-   return 1;
+   fprintf(stderr,"Unable to determine file system type; expose raw non-zero sectors\n");
+   atrfs.fstype = ATR_UNKNOWN;
+   return 0;
 }
 
 /*
@@ -300,6 +302,7 @@ int atr_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
 
 int atr_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags)
 {
+#if 0 // Have FUSE call getattr() for stat information
    // No subdirectories yet
    struct stat st;
    memcpy(&st,&atrfs.atrstat,sizeof(st)); // Default values are to match image file
@@ -310,9 +313,10 @@ int atr_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offse
    st.st_size = 0; // Fill in below
    st.st_blksize = atrfs.sectorsize;
    st.st_blocks = 0; // Fill in below
+   st.st_mode = MODE_DIR(atrfs.atrstat.st_mode); // dir; adjust below
+#endif
 
    // Standard directories
-   st.st_mode = MODE_DIR(atrfs.atrstat.st_mode); // dir; adjust below
    filler(buf, ".", NULL, 0, 0);
    filler(buf, "..", NULL, 0, 0);
 

@@ -39,6 +39,7 @@ enum atrfstype {
    ATR_DOS3,
    ATR_DOS4, // 1450 XLD DOS: Not planning to implement
    ATR_DOSXE,
+   ATR_UNKNOWN, // Just do the special files
    ATR_MAXFSTYPE
 };
 
@@ -134,3 +135,4 @@ extern const struct fs_ops sparta_ops;
 extern const struct fs_ops dos3_ops;
 extern const struct fs_ops dos4_ops;
 extern const struct fs_ops dosxe_ops;
+extern const struct fs_ops unknown_ops;
