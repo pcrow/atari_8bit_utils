@@ -74,7 +74,7 @@ struct options {
 };
 
 struct sector1 {
-   unsigned char pad_zero; // Usually 00, could be 0x53 for 'S' for SD
+   unsigned char pad_zero; // Usually 00, could be 0x53 for 'S' for SD, 'X' for DOS XE
    unsigned char boot_sectors; // Usually 3
    unsigned char boot_addr[2]; // Where to load the boot sectors in memory
    unsigned char dos_ini[2]; // I think this is a JSR address after loading boot sectors

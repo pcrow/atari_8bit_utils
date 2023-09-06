@@ -359,6 +359,7 @@ int mydos_sanity(void)
    if ( atrfs.sectorsize > 256 ) return 1; // No support for 512-byte sectors
    struct sector1 *sec1 = SECTOR(1);
    if ( sec1->boot_sectors != 3 ) return 1; // Must have 3 boot sectors
+   if ( sec1->pad_zero == 'X' || sec1->pad_zero == 'S' ) return 1; // Flagged as DOS XE or SpartaDOS
    struct mydos_vtoc *vtoc = SECTOR(360);
    if ( BYTES2(vtoc->total_sectors) < BYTES2(vtoc->free_sectors) ) return 1; // free must not exceed total
 
@@ -392,9 +393,9 @@ int mydos_sanity(void)
 }
 
 /*
- * dos2_sanity()
+ * dos1_sanity()
  *
- * Return 0 if this is a valid DOS 2.0s file system
+ * Return 0 if this is a valid DOS 1 file system
  */
 int dos1_sanity(void)
 {
@@ -437,6 +438,7 @@ int dos2_sanity(void)
    struct sector1 *sec1 = SECTOR(1);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s.%d %d\n",__FUNCTION__,__LINE__,sec1->boot_sectors);
    if ( sec1->boot_sectors != 3 ) return 1; // Must have 3 boot sectors
+   if ( sec1->pad_zero == 'X' || sec1->pad_zero == 'S' ) return 1; // Flagged as DOS XE or SpartaDOS
    if ( options.debug ) fprintf(stderr,"DEBUG: %s.%d\n",__FUNCTION__,__LINE__);
    struct mydos_vtoc *vtoc = SECTOR(360);
    if ( BYTES2(vtoc->total_sectors) < BYTES2(vtoc->free_sectors) ) return 1; // free must not exceed total
@@ -477,6 +479,7 @@ int dos25_sanity(void)
    if ( atrfs.sectorsize > 128 ) return 1; // No DD support
    struct sector1 *sec1 = SECTOR(1);
    if ( sec1->boot_sectors != 3 ) return 1; // Must have 3 boot sectors
+   if ( sec1->pad_zero == 'X' || sec1->pad_zero == 'S' ) return 1; // Flagged as DOS XE or SpartaDOS
    struct mydos_vtoc *vtoc = SECTOR(360);
    if ( BYTES2(vtoc->total_sectors) < BYTES2(vtoc->free_sectors) ) return 1; // free must not exceed total
 
