@@ -78,7 +78,7 @@ int special_getattr(const char *path, struct stat *stbuf, struct fuse_file_info 
          if ( strcmp(files[i].name,path+1)==0 )
          {
             stbuf->st_mode = MODE_RO(stbuf->st_mode); // These files are never writable
-            stbuf->st_ino = 0x20000 + i;
+            stbuf->st_ino = 0x100000000 + i;
             // file-specific getattr
             // If this gets any more complicated, use a table of functions
             if ( i == 1 )

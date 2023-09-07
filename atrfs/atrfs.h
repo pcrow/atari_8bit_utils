@@ -62,7 +62,6 @@ struct atrfs {
 struct options {
    const char *filename;
    int nodotfiles; // True if special dotfiles are to be created
-   int noinfofiles; // True if adding .info to any file will give analysis of it
    int help;
    int debug;
    int create;

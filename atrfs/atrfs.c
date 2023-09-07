@@ -52,7 +52,7 @@ const struct fs_ops *fs_ops[ATR_MAXFSTYPE] = {
    [ATR_DOS25] = &dos25_ops,
    [ATR_MYDOS] = &mydos_ops,
    [ATR_SPARTA] = &sparta_ops,
-   //[ATR_DOS3] = &dos3_ops,
+   [ATR_DOS3] = &dos3_ops,
    //[ATR_DOS4] = &dos4_ops,
    [ATR_DOSXE] = &dosxe_ops,
    [ATR_UNKNOWN] = &unknown_ops,
@@ -288,6 +288,20 @@ int atr_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
    stbuf->st_nlink = 1;
    stbuf->st_mode = MODE_FILE(atrfs.atrstat.st_mode & 0777);
 
+   // Magic ".sector###" files
+   if ( strncmp(path,"/.sector",sizeof("/.sector")-1) == 0 )
+   {
+      int sec = atoi(path+sizeof("/.sector")-1);
+      if ( sec > 0 && sec <= atrfs.sectors )
+      {
+         stbuf->st_mode = MODE_RO(stbuf->st_mode);
+         stbuf->st_size = 128;
+         stbuf->st_ino = sec;
+         if ( !atrfs.ssbytes || sec > 3 ) stbuf->st_size = atrfs.sectorsize;
+         return 0; // Good, can read this sector
+      }
+   }
+
    if ( fs_ops[ATR_SPECIAL] && fs_ops[ATR_SPECIAL]->fs_getattr )
    {
       int r = (fs_ops[ATR_SPECIAL]->fs_getattr)(path, stbuf, fi);
@@ -336,6 +350,24 @@ int atr_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
 {
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s %ld bytes at %lu\n",__FUNCTION__,path,size,offset);
 
+   // Magic .sector### files: Read a raw sector
+   if ( strncmp(path,"/.sector",sizeof("/.sector")-1) == 0 )
+   {
+      int sec = atoi(path+sizeof("/.sector")-1);
+      if ( sec <= 0 || sec > atrfs.sectors ) return -ENOENT;
+
+      int bytes = 128;
+      if ( !atrfs.ssbytes || sec > 3 ) bytes = atrfs.sectorsize;
+
+      if (offset >= bytes ) return -EOF;
+      unsigned char *s = SECTOR(sec);
+      bytes -= offset;
+      s += offset;
+      if ( (size_t)bytes > size ) bytes = size;
+      memcpy(buf,s,bytes);
+      return bytes;
+   }
+ 
    if ( fs_ops[ATR_SPECIAL] && fs_ops[ATR_SPECIAL]->fs_read )
    {
       int r;
@@ -509,7 +541,6 @@ static const struct fuse_operations atr_oper = {
 const struct fuse_opt option_spec[] = {
    OPTION("--name=%s", filename),
    OPTION("--nodotfiles", nodotfiles),
-   OPTION("--noinfofiles", noinfofiles),
    OPTION("--atrdebug", debug),
    OPTION("-h", help),
    OPTION("--help", help),
@@ -551,7 +582,6 @@ int main(int argc,char *argv[])
       printf("atrfs options:\n"
              "    --name=<atr file path>\n"
              "    --nodotfiles  (no special dot files in root directory)\n"
-             "    --noinfofiles (no implicit .info files for each file)\n"
              "    --create      (create new image)\n"
              "    --secsize=<#> (sector size if creating; default 128)\n"
              "    --sectors=<#> (number of sectors in image; default 720)\n"

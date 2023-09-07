@@ -708,7 +708,7 @@ int mydos_path(const char *path,int *sector,int *parent_dir_sector,int *count,in
             ++path;
          }
       }
-      if ( !options.noinfofiles && strncmp(path,".info",5)==0 )
+      if ( strncmp(path,".info",5)==0 )
       {
          *isinfo=1;
          path += 5;

@@ -38,6 +38,18 @@
  *   physical sectors 4-7: blank and unused
  *   physical sectors 8-9: cluster 4, VTOC
  *   physical sectors 10-11: cluster 5, main directory
+ *
+ * On other file systems, it's easy to identify a file or directory with a
+ * single unique number.  For DOS 2/MyDOS, the starting sector number works
+ * great.  For Sparta DOS, there's the sector number of the first map
+ * sector.  But here, you need the directory entry that points to them, as
+ * that's where you find the list of sector maps.  So you need the cluster
+ * number of the start of the directory and the entry number within that
+ * directory.  So for inodes, use cccceeee for the cluster number and the
+ * entry number within that directory.  We could use the cluster number
+ * where the entry is found, so the entry number would be 0-4, but that's
+ * probably less useful.  In the code, we'll probably just be passing
+ * pointers to the entry around.
  */
 
 #define FUSE_USE_VERSION 30
@@ -63,6 +75,7 @@
 #define DATE_TO_DAY(n)       (((n)[1])&0x1f)
 #define DATE_PRINT_FORMAT    "%d/%d/%d"
 #define DATE_PRINT_FIELDS(n) DATE_TO_MONTH(n),DATE_TO_DAY(n),DATE_TO_4YEAR(n)
+
 /*
  * File System Structures
  */
@@ -191,7 +204,7 @@ char *dosxe_fsinfo(void);
  * Global variables
  */
 const struct fs_ops dosxe_ops = {
-   .name = "DOS XE Disk Format",
+   .name = "Atari DOS XE",
    .fs_sanity = dosxe_sanity,
    .fs_getattr = dosxe_getattr,
    .fs_readdir = dosxe_readdir,
@@ -230,7 +243,7 @@ int dosxe_bitmap_status(int cluster)
 /*
  * dosxe_sanity()
  *
- * Return 0 if this is a valid Dosxe file system
+ * Return 0 if this is a valid DOS XE file system
  */
 int dosxe_sanity(void)
 {
@@ -267,7 +280,6 @@ int dosxe_truncate(const char *path, off_t size, struct fuse_file_info *fi);
 int dosxe_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi);
 int dosxe_statfs(const char *path, struct statvfs *stfsbuf);
 int dosxe_newfs(void);
-char *dosxe_fsinfo(void);
 
 /*
  * dosxe_fsinfo()
@@ -427,23 +439,30 @@ int dosxe_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t off
 int dosxe_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
    (void)fi;
-   if ( strncmp(path,"/.cluster",sizeof("/.cluster")-1) != 0 ) return -ENOENT;
 
-   int sec = atoi(path+sizeof("/.cluster")-1);
-   int maxcluster = atrfs.sectors;
-   if ( atrfs.sectorsize == 128 )
+   // Magic /.cluster### files
+   if ( strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
    {
-      maxcluster--;
-      maxcluster /= 2;
-   }
-   if ( sec <= 3 || sec > maxcluster ) return -ENOENT;
+      int sec = atoi(path+sizeof("/.cluster")-1);
+      int maxcluster = atrfs.sectors;
+      if ( atrfs.sectorsize == 128 )
+      {
+         maxcluster--;
+         maxcluster /= 2;
+      }
+      if ( sec <= 3 || sec > maxcluster ) return -ENOENT;
 
-   int bytes = 256;
-   if (offset >= bytes ) return -EOF;
-   unsigned char *s = CLUSTER(sec);
-   bytes -= offset;
-   s += offset;
-   if ( (size_t)bytes > size ) bytes = size;
-   memcpy(buf,s,bytes);
-   return bytes;
+      int bytes = 256;
+      if (offset >= bytes ) return -EOF;
+      unsigned char *s = CLUSTER(sec);
+      bytes -= offset;
+      s += offset;
+      if ( (size_t)bytes > size ) bytes = size;
+      memcpy(buf,s,bytes);
+      return bytes;
+   }
+
+   // Regular files
+   // FIXME
+   return -ENOENT;
 }

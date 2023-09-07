@@ -35,7 +35,6 @@
  */
 int unknown_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi);
 int unknown_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags);
-int unknown_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 
 /*
  * Global variables
@@ -45,7 +44,7 @@ const struct fs_ops unknown_ops = {
    // .fs_sanity = unknown_sanity,
    .fs_getattr = unknown_getattr,
    .fs_readdir = unknown_readdir,
-   .fs_read = unknown_read,
+   // .fs_read = unknown_read,
    // .fs_write = unknown_write,
    // .fs_mkdir = unknown_mkdir,
    // .fs_rmdir = unknown_rmdir,
@@ -75,18 +74,7 @@ int unknown_getattr(const char *path, struct stat *stbuf, struct fuse_file_info 
       stbuf->st_mode = MODE_RO(stbuf->st_mode);
       return 0;
    }
-   if ( strncmp(path,"/.sector",sizeof("/.sector")-1) == 0 )
-   {
-      int sec = atoi(path+sizeof("/.sector")-1);
-      if ( sec > 0 && sec <= atrfs.sectors )
-      {
-         stbuf->st_mode = MODE_RO(stbuf->st_mode);
-         stbuf->st_size = 128;
-         stbuf->st_ino = sec;
-         if ( !atrfs.ssbytes || sec > 3 ) stbuf->st_size = atrfs.sectorsize;
-         return 0; // Good, can read this sector
-      }
-   }
+   // Presumably the dummy files, but who cares?
    stbuf->st_ino = 0x10001;
    stbuf->st_size = 0;
    return 0; // Whatever, don't really care
@@ -120,24 +108,4 @@ int unknown_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t o
    free(zero);
 #endif
    return 0;
-}
-
-int unknown_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
-{
-   (void)fi;
-   if ( strncmp(path,"/.sector",sizeof("/.sector")-1) != 0 ) return -ENOENT;
-
-   int sec = atoi(path+sizeof("/.sector")-1);
-   if ( sec <= 0 || sec > atrfs.sectors ) return -ENOENT;
-
-   int bytes = 128;
-   if ( !atrfs.ssbytes || sec > 3 ) bytes = atrfs.sectorsize;
-
-   if (offset >= bytes ) return -EOF;
-   unsigned char *s = SECTOR(sec);
-   bytes -= offset;
-   s += offset;
-   if ( (size_t)bytes > size ) bytes = size;
-   memcpy(buf,s,bytes);
-   return bytes;
 }

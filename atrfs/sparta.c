@@ -510,7 +510,7 @@ int sparta_path(const char *path,int *inode,int *parent_dir_inode,int *size,int 
             ++path;
          }
       }
-      if ( !options.noinfofiles && strncmp(path,".info",5)==0 )
+      if ( strncmp(path,".info",5)==0 )
       {
          *isinfo=1;
          path += 5;
