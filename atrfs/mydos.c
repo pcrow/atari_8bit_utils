@@ -436,17 +436,13 @@ int dos2_sanity(void)
    if ( atrfs.sectors > 720 ) return 1;
    if ( atrfs.sectorsize > 128 ) return 1; // DOS 2.0d separate
    struct sector1 *sec1 = SECTOR(1);
-   if ( options.debug ) fprintf(stderr,"DEBUG: %s.%d %d\n",__FUNCTION__,__LINE__,sec1->boot_sectors);
    if ( sec1->boot_sectors != 3 ) return 1; // Must have 3 boot sectors
    if ( sec1->pad_zero == 'X' || sec1->pad_zero == 'S' ) return 1; // Flagged as DOS XE or SpartaDOS
-   if ( options.debug ) fprintf(stderr,"DEBUG: %s.%d\n",__FUNCTION__,__LINE__);
    struct mydos_vtoc *vtoc = SECTOR(360);
    if ( BYTES2(vtoc->total_sectors) < BYTES2(vtoc->free_sectors) ) return 1; // free must not exceed total
-   if ( options.debug ) fprintf(stderr,"DEBUG: %s.%d\n",__FUNCTION__,__LINE__);
 
    if ( vtoc->vtoc_sectors != 2 ) return 1; // Code is 2 for DOS 2
    int reserved_sectors = 4+1+8+1; // sector 0; boot; vtoc; dir(8); 720
-   if ( options.debug ) fprintf(stderr,"DEBUG: %s.%d\n",__FUNCTION__,__LINE__);
    
    if ( !BYTES2(vtoc->total_sectors) ) return 1; // Must have some sectors
    if ( BYTES2(vtoc->total_sectors) != atrfs.sectors - reserved_sectors )
@@ -454,14 +450,10 @@ int dos2_sanity(void)
       fprintf(stderr,"Warning: DOS total sectors reported %d; should be %d - %d = %d\n",BYTES2(vtoc->total_sectors), atrfs.sectors, reserved_sectors, atrfs.sectors - reserved_sectors);
       // return 1;
    }
-   if ( options.debug ) fprintf(stderr,"DEBUG: %s.%d\n",__FUNCTION__,__LINE__);
    if ( vtoc->bitmap[0]&0xf0 ) return 1; // sectors 0-4 are always used
-   if ( options.debug ) fprintf(stderr,"DEBUG: %s.%d\n",__FUNCTION__,__LINE__);
    for (int i=360;i<=368;++i) if ( BITMAP(vtoc->bitmap,i) ) return 1; // VTOC and directory used
 
-   if ( options.debug ) fprintf(stderr,"DEBUG: %s.%d\n",__FUNCTION__,__LINE__);
    if ( sec1->drive_bits == 0xff ) return 1; // Support for all 8 drives suggests MyDOS
-   if ( options.debug ) fprintf(stderr,"DEBUG: %s.%d\n",__FUNCTION__,__LINE__);
 
    // We could scan the directory for MyDOS subdirectories
    return 0;
