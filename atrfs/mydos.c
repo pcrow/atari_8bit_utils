@@ -479,9 +479,11 @@ int dos25_sanity(void)
    int reserved_sectors = 4+1+8+1;
    
    if ( !BYTES2(vtoc->total_sectors) ) return 1; // Must have some sectors
-   if ( BYTES2(vtoc->total_sectors) != atrfs.sectors - reserved_sectors )
+   int total_sec = atrfs.sectors;
+   if ( total_sec > 1024 ) total_sec = 1024;
+   if ( BYTES2(vtoc->total_sectors) != total_sec - reserved_sectors )
    {
-      fprintf(stderr,"Warning: DOS total sectors reported %d; should be %d - %d = %d\n",BYTES2(vtoc->total_sectors), atrfs.sectors, reserved_sectors, atrfs.sectors - reserved_sectors);
+      fprintf(stderr,"Warning: DOS total sectors reported %d; should be %d - %d = %d\n",BYTES2(vtoc->total_sectors), total_sec, reserved_sectors, total_sec - reserved_sectors);
       // return 1;
    }
    if ( vtoc->bitmap[0]&0xf0 ) return 1; // sectors 0-4 are always used
@@ -576,6 +578,16 @@ int mydos_trace_file(int sector,int fileno,int dos1,int *size,int **sectors)
       }
       if ( next==0 ) break;
       sector = next;
+      if ( block > atrfs.sectorsize )
+      {
+         fprintf(stderr,"Corrupted file number %d has a circular list of sectors\n",fileno);
+         if ( sectors )
+         {
+            free(*sectors);
+            *sectors=NULL;
+         }
+         return -EIO;
+      }
    }
    return r;
 }
