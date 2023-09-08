@@ -53,7 +53,7 @@ const struct fs_ops *fs_ops[ATR_MAXFSTYPE] = {
    [ATR_MYDOS] = &mydos_ops,
    [ATR_SPARTA] = &sparta_ops,
    [ATR_DOS3] = &dos3_ops,
-   //[ATR_DOS4] = &dos4_ops,
+   [ATR_DOS4] = &dos4_ops,
    [ATR_DOSXE] = &dosxe_ops,
    [ATR_UNKNOWN] = &unknown_ops,
 };

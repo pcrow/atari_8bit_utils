@@ -84,7 +84,14 @@ int special_getattr(const char *path, struct stat *stbuf, struct fuse_file_info 
             if ( i == 1 )
             {
                struct sector1 *sec1=SECTOR(1);
-               stbuf->st_size = sec1->boot_sectors * atrfs.sectorsize - atrfs.ssbytes;
+               if ( sec1->boot_sectors < 3 && atrfs.ssbytes )
+               {
+                  stbuf->st_size = sec1->boot_sectors * 128;
+               }
+               else
+               {
+                  stbuf->st_size = sec1->boot_sectors * atrfs.sectorsize - atrfs.ssbytes;
+               }
             }
             else if ( i == 0 )
             {
@@ -118,7 +125,7 @@ int special_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t o
 int special_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
    (void)fi; //not used
-   if ( !options.nodotfiles && *path == '/' )
+   if ( *path == '/' )
    {
       for (int i=0;(long unsigned)i<sizeof(files)/sizeof(files[0]);++i)
       {
