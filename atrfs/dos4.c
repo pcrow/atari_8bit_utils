@@ -542,7 +542,7 @@ int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
       filler(buf, name, NULL, 0, 0);
    }
 
-#if 1 // Data clusters
+#if 0 // Data clusters
    // Create .cluster000 ... .cluster255 as appropriate
    {
       unsigned char *zero = calloc(1,CLUSTER_BYTES);
