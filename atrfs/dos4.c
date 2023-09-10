@@ -60,6 +60,19 @@
  *
  *  It seems that using DOS 4 with anything other than the four formats
  *  would be difficult.
+ *
+ *
+ * Note that the field in the directory saying how many bytes are valid in
+ * the last sector is not a count of bytes, but is saying that bytes are
+ * valid through that index.  So a value of '0' still has one byte valid.
+ * This makes it impossible to represent a zero-length file.
+ *
+ * Not supporting zero-length files makes adding write support here
+ * difficult.  It wouldn't be impossible, but would present challenges.  It
+ * might be necessary to leave the entry deleted in the directory until
+ * something is written and just keep an array in memory of flags for
+ * deleted entries that represent zero-length files.  They would be deleted on
+ * unmount, which is valid as the file system doesn't support them.
  */
 
 #define FUSE_USE_VERSION 30
@@ -107,9 +120,11 @@
      (atrfs.sectors <= 720 ? 1 :                        \
       /* DS/DD: 1 */                                    \
       1 )))
+#define DIR_START ((struct dos4_dir_entry *)CLUSTER(VTOC_CLUSTER))
 #define VTOC_START SECTOR(CLUSTER_TO_SEC(VTOC_CLUSTER+2)-VTOC_SECTOR_COUNT)
 #define MAX_CLUSTER (atrfs.sectors/CLUSTER_SIZE+8)
 #define DIR_ENTRIES ((CLUSTER_BYTES*2-VTOC_SECTOR_COUNT*atrfs.sectorsize)/(int)sizeof(struct dos4_dir_entry))
+#define TOTAL_CLUSTERS (MAX_CLUSTER-7-(atrfs.sectorsize == 256?1:0))
 
 /*
  * File System Structures
@@ -118,7 +133,7 @@
 struct dos4_dir_entry {
    unsigned char status; // Bit 7 valid, bit 6 exists, bit 1 locked, bit 0 open
    unsigned char blocks;
-   unsigned char bytes_in_last_sector; // not last block
+   unsigned char bytes_in_last_sector; // (not last block) Actually: Valid through byte 'n', so add one
    unsigned char start;
    unsigned char reserved;
    unsigned char file_name[8];
@@ -190,23 +205,171 @@ const struct fs_ops dos4_ops = {
    .fs_readdir = dos4_readdir,
    .fs_read = dos4_read,
    // .fs_write = dos4_write,
-   // .fs_mkdir = dos4_mkdir,
-   // .fs_rmdir = dos4_rmdir,
    // .fs_unlink = dos4_unlink,
    // .fs_rename = dos4_rename,
    // .fs_chmod = dos4_chmod,
    // .fs_create = dos4_create,
    // .fs_truncate = dos4_truncate,
-   // .fs_utimens = dos4_utimens,
-   // .fs_statfs = dos4_statfs,
+   .fs_statfs = dos4_statfs,
    // .fs_newfs = dos4_newfs,
-   // .fs_fsinfo = dos4_fsinfo,
+   .fs_fsinfo = dos4_fsinfo,
 };
 
 /*
  * Functions
  */
 
+/*
+ * dos4_get_dir_entry()
+ */
+int dos4_get_dir_entry(const char *path,struct dos4_dir_entry **dirent_found,int *isinfo)
+{
+   struct dos4_dir_entry *junk;
+   if ( !dirent_found ) dirent_found = &junk; // Avoid NULL check later
+   int junkinfo;
+   if ( !isinfo ) isinfo=&junkinfo;
+
+   *dirent_found = NULL;
+   *isinfo = 0;
+   while (*path == '/') ++path;
+   if ( strchr(path,'/') ) return -ENOENT; // No subdirectories alowed
+
+   unsigned char name[8+3+1]; // 8+3+NULL
+   memset(name,' ',8+3);
+
+   int i;
+   for ( i=0;i<8;++i)
+   {
+      if ( *path && *path != '.' )
+      {
+         name[i]=*path;
+         ++path;
+      }
+   }
+   if ( strcmp(path,".info")==0 )
+   {
+      *isinfo=1;
+      path += 5;
+   }
+   if ( *path == '.' )
+   {
+      ++path;
+   }
+   for ( i=8;i<8+3;++i)
+   {
+      if ( *path && *path != '.' )
+      {
+         name[i]=*path;
+         ++path;
+      }
+   }
+   if ( strcmp(path,".info")==0 )
+   {
+      *isinfo=1;
+      path += 5;
+   }
+   if ( *path )
+   {
+      return -ENOENT; // Name too long
+   }
+   if ( *path == '/' ) ++path;
+
+   struct dos4_dir_entry *dirent = DIR_START;
+   int firstfree = 0;
+   for ( int i=0; i<DIR_ENTRIES; ++i ) // Entry 0 is info about the file system
+   {
+      if (!dirent[i].status)
+      {
+         if ( !firstfree ) firstfree = i;
+         break;
+      }
+      if ( (dirent[i].status & FLAGS_DELETED) )
+      {
+         if ( !firstfree ) firstfree = i;
+         continue; // Not in use
+      }
+      if ( (dirent[i].status & FLAGS_OPEN) ) continue; // Hidden; incomplete writes
+      if ( memcmp(name,dirent[i].file_name,8+3)!=0 ) continue;
+
+      *dirent_found = &dirent[i];
+      return 0;
+   }
+   if ( firstfree ) *dirent_found = &dirent[firstfree];
+   return -ENOENT;
+}
+
+/*
+ * dos4_get_file_size()
+ *
+ * This requires tracing the cluster chain
+ */
+int dos4_get_file_size(struct dos4_dir_entry *dirent)
+{
+   unsigned char *vtoc = VTOC_START;
+   int clusters = 0;
+   int c = dirent->start;
+   while ( clusters < 0xff )
+   {
+      if ( vtoc[c] < 0x08 )
+      {
+         return clusters * CLUSTER_BYTES + atrfs.sectorsize * vtoc[c] + dirent->bytes_in_last_sector+1;
+      }
+      if ( vtoc[c] > MAX_CLUSTER ) break;
+      ++clusters;
+      c=vtoc[c];
+   }
+   fprintf(stderr,"Corrupted file: %.8s.%.3s: Bad cluster chain\n",dirent->file_name,dirent->file_ext);
+   return -EIO;
+}
+
+/*
+ * dos4_info()
+ *
+ * Return the buffer containing information specific to this file.
+ *
+ * This could be extended to do a full analysis of binary load files,
+ * BASIC files, or any other recognizable file type.
+ *
+ * The pointer returned should be 'free()'d after use.
+ */
+char *dos4_info(const char *path,struct dos4_dir_entry *dirent)
+{
+   char *buf,*b;
+
+   int filesize = dos4_get_file_size(dirent);
+   if ( filesize < 0 ) return NULL;
+
+   buf = malloc(64*1024);
+   b = buf;
+   *b = 0;
+   b+=sprintf(b,"File information and analysis\n\n  %.*s\n  %d bytes\n\n",(int)(strrchr(path,'.')-path),path,filesize);
+   b+=sprintf(b,
+              "Directory entry internals:\n"
+              "  Entry %ld\n"
+              "  Flags: $%02x\n"
+              "  Cluster size: %d bytes, %d sectors\n"
+              "  Clusters: %d\n"
+              "  Starting cluster: %d\n\n",
+              dirent - DIR_START,
+              dirent->status,CLUSTER_BYTES,CLUSTER_SIZE,dirent->blocks,dirent->start);
+
+   // Generic info for the file type
+   {
+      char *moreinfo;
+      moreinfo = atr_info(path,filesize);
+      if ( moreinfo )
+      {
+         int off = b - buf;
+         buf = realloc(buf,strlen(buf)+1+strlen(moreinfo));
+         b = buf+off; // In case it moved
+         b+=sprintf(b,"%s",moreinfo);
+         free(moreinfo);
+      }
+   }
+
+   buf = realloc(buf,strlen(buf)+1);
+   return buf;
+}
 
 /*
  * dos4_sanity()
@@ -216,7 +379,7 @@ const struct fs_ops dos4_ops = {
 int dos4_sanity(void)
 {
    if ( atrfs.sectorsize != 128 &&  atrfs.sectorsize != 256 ) return 1; // Must be SD
-   struct dos4_dir_entry *dirent = CLUSTER(VTOC_CLUSTER);
+   struct dos4_dir_entry *dirent = DIR_START;
    struct dos4_vtoc *vtoc = VTOC_START;
    unsigned char *map = VTOC_START;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: Cluster size: %d  VTOC Clusters: %d-%d (sectors %d-%d)  VTOC Sector count: %d  First VTOC sector: %d Max DIR entries: %d Max Cluster: %d\n",__FUNCTION__,CLUSTER_SIZE,VTOC_CLUSTER,VTOC_CLUSTER+1,CLUSTER_TO_SEC(VTOC_CLUSTER),CLUSTER_TO_SEC(VTOC_CLUSTER+2)-1,VTOC_SECTOR_COUNT,CLUSTER_TO_SEC(VTOC_CLUSTER+2)-VTOC_SECTOR_COUNT,DIR_ENTRIES,MAX_CLUSTER);
@@ -290,28 +453,9 @@ int dos4_sanity(void)
    return 0;
 }
 
-
-// Implement these
-int dosxe_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi);
-int dosxe_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags);
-int dosxe_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
-int dosxe_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
-int dosxe_mkdir(const char *path,mode_t mode);
-int dosxe_rmdir(const char *path);
-int dosxe_unlink(const char *path);
-int dosxe_rename(const char *path1, const char *path2, unsigned int flags);
-int dosxe_chmod(const char *path, mode_t mode, struct fuse_file_info *fi);
-int dosxe_create(const char *path, mode_t mode, struct fuse_file_info *fi);
-int dosxe_truncate(const char *path, off_t size, struct fuse_file_info *fi);
-int dosxe_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi);
-int dosxe_statfs(const char *path, struct statvfs *stfsbuf);
-int dosxe_newfs(void);
-char *dosxe_fsinfo(void);
-
 /*
- * Temporary
+ * dos4_getattr()
  */
-
 int dos4_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
 {
    (void)fi;
@@ -335,12 +479,30 @@ int dos4_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi
          return 0; // Good, can read this sector
       }
    }
-   // Presumably the dummy files, but who cares?
-   stbuf->st_ino = 0x10001;
-   stbuf->st_size = 0;
-   return 0; // Whatever, don't really care
+   // Real or info files
+   struct dos4_dir_entry *dirent;
+   int isinfo;
+   int r;
+   r = dos4_get_dir_entry(path,&dirent,&isinfo);
+   if ( r ) return r;
+   stbuf->st_ino = CLUSTER_TO_SEC(dirent->start);
+   if ( isinfo ) stbuf->st_ino += 0x10000;
+   if ( isinfo )
+   {
+      char *info = dos4_info(path,dirent);
+      stbuf->st_size = strlen(info);
+      free(info);
+   }
+   else
+   {
+      stbuf->st_size = dos4_get_file_size(dirent);
+   }
+   return 0;
 }
 
+/*
+ * dos4_readdir()
+ */
 int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags)
 {
    (void)path; // Always "/"
@@ -349,9 +511,36 @@ int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
    (void)flags;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
-   filler(buf, "DOS_4_DISK_IMAGE", NULL, 0, 0);
-   filler(buf, "NOT_YET_SUPPORTED", NULL, 0, 0);
-   filler(buf, "USE_.cluster#_for_raw_nonzero_clusters", NULL, 0, 0);
+
+   struct dos4_dir_entry *dirent = DIR_START;
+   for ( int i=0; i<DIR_ENTRIES; ++i )
+   {
+      if ( options.debug ) fprintf(stderr,"DEBUG: %s: entry %d, status %02x: %.8s.%.3s\n",__FUNCTION__,i,dirent[i].status,dirent[i].file_name,dirent[i].file_ext);
+      if (!dirent[i].status) break;
+      if ( (dirent[i].status & FLAGS_DELETED) ) continue;
+      if ( (dirent[i].status & FLAGS_OPEN) ) continue; // Hidden; incomplete writes
+      char name[8+1+3+1];
+      char *n = name;
+      for (int j=0;j<8;++j)
+      {
+         if ( dirent[i].file_name[j] == ' ' ) break;
+         *n = dirent[i].file_name[j];
+         ++n;
+      }
+      if ( dirent[i].file_ext[0] != ' ' )
+      {
+         *n = '.';
+         ++n;
+         for (int j=0;j<3;++j)
+         {
+            if ( dirent[i].file_ext[j] == ' ' ) break;
+            *n=dirent[i].file_ext[j];
+            ++n;
+         }
+      }
+      *n=0;
+      filler(buf, name, NULL, 0, 0);
+   }
 
 #if 1 // Data clusters
    // Create .cluster000 ... .cluster255 as appropriate
@@ -375,6 +564,9 @@ int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
    return 0;
 }
 
+/*
+ * dos4_read()
+ */
 int dos4_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
    (void)fi;
@@ -396,7 +588,124 @@ int dos4_read(const char *path, char *buf, size_t size, off_t offset, struct fus
       return bytes;
    }
 
+   // Look up file
+   struct dos4_dir_entry *dirent;
+   int isinfo;
+   int r;
+   r = dos4_get_dir_entry(path,&dirent,&isinfo);
+   if ( r ) return r;
+
+   // Info files
+   if ( isinfo )
+   {
+      char *info = dos4_info(path,dirent);
+      char *i = info;
+      int bytes = strlen(info);
+      if ( offset >= bytes )
+      {
+         free(info);
+         return -EOF;
+      }
+      bytes -= offset;
+      i += offset;
+      if ( (size_t)bytes > size ) bytes = size;
+      memcpy(buf,i,bytes);
+      free(info);
+      return bytes;
+   }
+
    // Regular files
-   // FIXME
-   return -ENOENT;
+   unsigned char *vtoc = VTOC_START;
+   int cluster = dirent->start;
+   int bytes_read = 0;
+   while ( size )
+   {
+      int bytes = CLUSTER_BYTES;
+      if ( vtoc[cluster] > MAX_CLUSTER ) return -EIO; // Bad chain
+      if ( vtoc[cluster] < 0x08 )
+      {
+         bytes = atrfs.sectorsize * vtoc[cluster] + dirent->bytes_in_last_sector + 1;
+      }
+      if ( offset < bytes )
+      {
+         bytes -= offset;
+         offset = 0;
+      }
+      if ( offset > bytes )
+      {
+         offset -= bytes;
+         bytes = 0;
+      }
+      if ( (size_t)bytes > size ) bytes = size;
+      unsigned char *s=CLUSTER(cluster);
+      if ( !s ) return -EIO; // Invalid CLUSTER
+      s+=offset;
+      if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s read %d bytes from cluster %d offset %ld\n",__FUNCTION__,path,bytes,cluster,offset);
+      if ( bytes )
+      {
+         memcpy(buf,s,bytes);
+         buf += bytes;
+         bytes_read += bytes;
+         size -= bytes;
+      }
+      
+      // Next cluster
+      if ( !size ) break;
+      if ( vtoc[cluster] < 0x08 ) break; // EOF
+      cluster=vtoc[cluster];
+   }
+   if ( bytes_read ) return bytes_read;
+   return -EOF;
+}
+
+// Implement these for read-write support
+int dos4_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
+int dos4_unlink(const char *path);
+int dos4_rename(const char *path1, const char *path2, unsigned int flags);
+int dos4_chmod(const char *path, mode_t mode, struct fuse_file_info *fi);
+int dos4_create(const char *path, mode_t mode, struct fuse_file_info *fi);
+int dos4_truncate(const char *path, off_t size, struct fuse_file_info *fi);
+int dos4_newfs(void);
+
+/*
+ * dos4_statfs()
+ */
+int dos4_statfs(const char *path, struct statvfs *stfsbuf)
+{
+   (void)path; // meaningless
+   stfsbuf->f_bsize = CLUSTER_BYTES;
+   stfsbuf->f_frsize = CLUSTER_BYTES;
+   stfsbuf->f_blocks = TOTAL_CLUSTERS;
+   struct dos4_vtoc *vtoc = VTOC_START;
+   stfsbuf->f_bfree = vtoc->free;
+   stfsbuf->f_bavail = stfsbuf->f_bfree;
+   stfsbuf->f_files = DIR_ENTRIES;
+   stfsbuf->f_ffree = 0;
+   struct dos4_dir_entry *dirent = DIR_START;
+   for (int i=0;i<DIR_ENTRIES;++i)
+   {
+      if ( (dirent[i].status & FLAGS_DELETED) || (dirent[i].status == 0x00) )
+      {
+         ++stfsbuf->f_ffree;
+      }
+   }
+   stfsbuf->f_namemax = 12; // 8.3 including '.'
+   // stfsbuf->f_namemax += 5; // Don't report this for ".info" files; not needed by FUSE
+   return 0;
+}
+
+/*
+ * dos4_fsinfo()
+ */
+char *dos4_fsinfo(void)
+{
+   char *buf=malloc(16*1024);
+   if ( !buf ) return NULL;
+   char *b = buf;
+   
+   struct dos4_vtoc *vtoc = VTOC_START;
+   b+=sprintf(b,"Cluster size:        %d bytes, %d sectors\n",CLUSTER_BYTES,CLUSTER_SIZE);
+   b+=sprintf(b,"Total data clusters: %d\n",TOTAL_CLUSTERS);
+   b+=sprintf(b,"Free clusters:       %d\n",vtoc->free);
+   return buf;
 }

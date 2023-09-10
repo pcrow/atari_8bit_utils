@@ -308,7 +308,13 @@ int dos3_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi
    stbuf->st_ino = CLUSTER_TO_SECTOR(dirent->start);
    if ( isinfo ) stbuf->st_ino += 0x10000;
    stbuf->st_size = (dirent->blocks-1)*1024 + BYTES2(dirent->file_size)%1024;
-   
+   if ( isinfo )
+   {
+      char *info = dos3_info(path,dirent);
+      stbuf->st_size = strlen(info);
+      free(info);
+   }
+
    return 0; // Whatever, don't really care
 }
 
