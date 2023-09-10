@@ -2136,6 +2136,7 @@ int mydos_newfs(void)
 char *mydos_fsinfo(void)
 {
    char *buf=malloc(16*1024);
+   if ( !buf ) return NULL;
    char *b = buf;
    unsigned char *vtoc = SECTOR(360);
    unsigned char *vtoc2 = SECTOR(1024);
