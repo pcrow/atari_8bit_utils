@@ -9,8 +9,7 @@
  * Released under the GPL version 2.0
  */
 
-#define FUSE_USE_VERSION 30
-#include <fuse3/fuse.h>
+#include FUSE_INCLUDE
 #include <sys/stat.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -266,16 +265,24 @@ if ( !valid_atr_file(atrfs.atrmem) ) return 1;
 /*
  * FUSE file operations
  */
-
+#if (FUSE_USE_VERSION >= 30)
 void *atr_init(struct fuse_conn_info *conn, struct fuse_config *cfg)
 {
    (void)conn; // unused parameter
    cfg->use_ino = 1; // Use sector numbers as inode number
    return NULL;
 }
+#endif
 
-int atr_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
+int atr_getattr(const char *path, struct stat *stbuf
+#if (FUSE_USE_VERSION >= 30)
+                , struct fuse_file_info *fi
+#endif
+   )
 {
+#if (FUSE_USE_VERSION >= 30)
+   (void)fi;
+#endif
    memset(stbuf,0,sizeof(*stbuf));
 
    // Copy time stamps from image file; adjust if SpartaDOS
@@ -304,18 +311,25 @@ int atr_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
 
    if ( fs_ops[ATR_SPECIAL] && fs_ops[ATR_SPECIAL]->fs_getattr )
    {
-      int r = (fs_ops[ATR_SPECIAL]->fs_getattr)(path, stbuf, fi);
+      int r = (fs_ops[ATR_SPECIAL]->fs_getattr)(path, stbuf);
       if ( r == 0 ) return r;
    }
    if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_getattr )
    {
-      return (fs_ops[atrfs.fstype]->fs_getattr)(path, stbuf, fi);
+      return (fs_ops[atrfs.fstype]->fs_getattr)(path, stbuf);
    }
    return -EIO;
 }
 
-int atr_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags)
+int atr_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi
+#if (FUSE_USE_VERSION >= 30)
+                , enum fuse_readdir_flags flags
+#endif
+   )
 {
+#if (FUSE_USE_VERSION >= 30)
+   (void)flags;
+#endif
 #if 0 // Have FUSE call getattr() for stat information
    // No subdirectories yet
    struct stat st;
@@ -331,17 +345,17 @@ int atr_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offse
 #endif
 
    // Standard directories
-   filler(buf, ".", NULL, 0, 0);
-   filler(buf, "..", NULL, 0, 0);
+   filler(buf, ".", FILLER_NULL);
+   filler(buf, "..", FILLER_NULL);
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s\n",__FUNCTION__,path);
    if ( fs_ops[ATR_SPECIAL] && fs_ops[ATR_SPECIAL]->fs_readdir )
    {
-      (fs_ops[ATR_SPECIAL]->fs_readdir)(path, buf, filler,offset,fi,flags);
+      (fs_ops[ATR_SPECIAL]->fs_readdir)(path, buf, filler,offset,fi);
    }
    if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_readdir )
    {
-      return (fs_ops[atrfs.fstype]->fs_readdir)(path, buf, filler,offset,fi,flags);
+      return (fs_ops[atrfs.fstype]->fs_readdir)(path, buf, filler,offset,fi);
    }
    return -ENOENT;
 }
@@ -435,24 +449,41 @@ int atr_unlink(const char *path)
    return -EIO; // Seems like the right error for not supported
 }
 
-int atr_rename(const char *path1, const char *path2, unsigned int flags)
+int atr_rename(const char *path1, const char *path2
+#if (FUSE_USE_VERSION >= 30)
+               , unsigned int flags
+#endif
+   )
 {
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( atrfs.readonly ) return -EROFS;
 
    if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_rename )
    {
-      return (fs_ops[atrfs.fstype]->fs_rename)(path1,path2,flags);
+      return (fs_ops[atrfs.fstype]->fs_rename)(path1,path2,
+#if (FUSE_USE_VERSION >= 30)
+                                               flags
+#else
+                                               0
+#endif
+         );
    }
    return -EIO; // Seems like the right error for not supported
 }
-int atr_chmod(const char *path, mode_t mode, struct fuse_file_info *fi)
+int atr_chmod(const char *path, mode_t mode
+#if (FUSE_USE_VERSION >= 30)
+              , struct fuse_file_info *fi
+#endif
+   )
 {
+#if (FUSE_USE_VERSION >= 30)
+   (void)fi;
+#endif
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( atrfs.readonly ) return -EROFS;
    if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_chmod )
    {
-      return (fs_ops[atrfs.fstype]->fs_chmod)(path,mode,fi);
+      return (fs_ops[atrfs.fstype]->fs_chmod)(path,mode);
    }
    return -EIO; // Seems like the right error for not supported
 }
@@ -475,16 +506,27 @@ int atr_create(const char *path, mode_t mode, struct fuse_file_info *fi)
    }
    return -EIO; // Seems like the right error for not supported
 }
-int atr_truncate(const char *path, off_t size, struct fuse_file_info *fi)
+int atr_truncate(const char *path,
+                 off_t size
+#if (FUSE_USE_VERSION >= 30)
+                 , struct fuse_file_info *fi
+#endif
+   )
 {
+#if (FUSE_USE_VERSION >= 30)
+   (void)fi;
+#endif   
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( atrfs.readonly ) return -EROFS;
    if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_truncate )
    {
-      return (fs_ops[atrfs.fstype]->fs_truncate)(path,size,fi);
+      return (fs_ops[atrfs.fstype]->fs_truncate)(path,size);
    }
    return -EIO; // Seems like the right error for not supported
 }
+
+
+#if (FUSE_USE_VERSION >= 30)
 int atr_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi)
 {
    if ( atrfs.readonly ) return -EROFS;
@@ -505,18 +547,38 @@ int atr_utimens(const char *path, const struct timespec tv[2], struct fuse_file_
    }
    return 0; // Fake success on file systems that don't have time stamps
 }
+#else
+int atr_utime(const char *path, struct utimbuf *utimbuf)
+{
+   if ( atrfs.readonly ) return -EROFS;
 
-int atr_chown(const char *path, uid_t uid, gid_t gid, struct fuse_file_info *fi)
+   if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_utime )
+   {
+      return (fs_ops[atrfs.fstype]->fs_utime)(path,utimbuf);
+   }
+   return 0; // Fake success on file systems that don't have time stamps
+}
+#endif
+
+int atr_chown(const char *path, uid_t uid, gid_t gid
+#if (FUSE_USE_VERSION >= 30)
+              , struct fuse_file_info *fi
+#endif
+   )
 {
    (void)path;
    (void)uid;
    (void)gid;
+#if (FUSE_USE_VERSION >= 30)
    (void)fi;
+#endif
    return 0; // Fake it to avoid stupid not-supported error messages
 }
 
 static const struct fuse_operations atr_oper = {
+#if (FUSE_USE_VERSION >= 30)
         .init           = atr_init,
+#endif
 	.getattr	= atr_getattr,
 	.readdir	= atr_readdir,
 	.read		= atr_read,
@@ -528,7 +590,11 @@ static const struct fuse_operations atr_oper = {
         .chmod          = atr_chmod,
         .create         = atr_create,
         .truncate       = atr_truncate,
+#if (FUSE_USE_VERSION >= 30)
         .utimens        = atr_utimens,
+#else
+        .utime          = atr_utime,
+#endif
         .chown          = atr_chown,
         .statfs         = atr_statfs,
 };
@@ -595,7 +661,11 @@ int main(int argc,char *argv[])
    ret = atr_preinit();
    if ( ret ) return ret;
 
-   ret = fuse_main(args.argc, args.argv, &atr_oper, NULL);
+   ret = fuse_main(args.argc, args.argv, &atr_oper
+#if (FUSE_USE_VERSION >= 30)
+                   , NULL
+#endif
+      );
    fuse_opt_free_args(&args);
    return ret;
 }

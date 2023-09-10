@@ -9,8 +9,7 @@
  * Released under the GPL version 2.0
  */
 
-#define FUSE_USE_VERSION 30
-#include <fuse3/fuse.h>
+#include FUSE_INCLUDE
 #include <sys/stat.h>
 #include <stddef.h>
 #include <stdio.h>

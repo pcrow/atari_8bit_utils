@@ -18,8 +18,7 @@
  *
  */
 
-#define FUSE_USE_VERSION 30
-#include <fuse3/fuse.h>
+#include FUSE_INCLUDE
 #include <sys/stat.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -77,15 +76,15 @@ enum dos3_vtoc_entry {
  * Function prototypes
  */
 int dos3_sanity(void);
-int dos3_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi);
-int dos3_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags);
+int dos3_getattr(const char *path, struct stat *stbuf);
+int dos3_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
 int dos3_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 int dos3_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 int dos3_unlink(const char *path);
 int dos3_rename(const char *path1, const char *path2, unsigned int flags);
 int dos3_chmod(const char *path, mode_t mode, struct fuse_file_info *fi);
 int dos3_create(const char *path, mode_t mode, struct fuse_file_info *fi);
-int dos3_truncate(const char *path, off_t size, struct fuse_file_info *fi);
+int dos3_truncate(const char *path, off_t size);
 int dos3_statfs(const char *path, struct statvfs *stfsbuf);
 int dos3_newfs(void);
 char *dos3_fsinfo(void);
@@ -271,9 +270,8 @@ int dos3_sanity(void)
 /*
  * dos3_getattr()
  */
-int dos3_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
+int dos3_getattr(const char *path, struct stat *stbuf)
 {
-   (void)fi;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
 
    // The only directory option
@@ -321,12 +319,11 @@ int dos3_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi
 /*
  * dos3_readdir()
  */
-int dos3_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags)
+int dos3_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
 {
    (void)path; // Always "/"
    (void)offset;
    (void)fi;
-   (void)flags;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
 
@@ -357,7 +354,7 @@ int dos3_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
          }
       }
       *n=0;
-      filler(buf, name, NULL, 0, 0);
+      filler(buf, name, FILLER_NULL);
    }
 #if 0 // Reserved, DIR, and VTOC sectors
    // Create .sector4 ... .sector24 as appropriate
@@ -372,7 +369,7 @@ int dos3_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
          unsigned char *s = SECTOR(sec);
          if ( memcmp(s,zero,atrfs.sectorsize) == 0 ) continue; // Skip empty sectors
          sprintf(name,".sector%0*d",digits,sec);
-         filler(buf,name,NULL,0,0);
+         filler(buf,name,FILLER_NULL);
       }
       free(zero);
    }
@@ -389,7 +386,7 @@ int dos3_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
          unsigned char *s = CLUSTER(sec);
          if ( memcmp(s,zero,1024) == 0 ) continue; // Skip empty sectors
          sprintf(name,".cluster%0*d",digits,sec);
-         filler(buf,name,NULL,0,0);
+         filler(buf,name,FILLER_NULL);
       }
       free(zero);
    }
@@ -497,7 +494,7 @@ int dos3_unlink(const char *path);
 int dos3_rename(const char *path1, const char *path2, unsigned int flags);
 int dos3_chmod(const char *path, mode_t mode, struct fuse_file_info *fi);
 int dos3_create(const char *path, mode_t mode, struct fuse_file_info *fi);
-int dos3_truncate(const char *path, off_t size, struct fuse_file_info *fi);
+int dos3_truncate(const char *path, off_t size);
 int dos3_newfs(void);
 
 /*

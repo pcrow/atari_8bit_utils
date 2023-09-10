@@ -75,8 +75,7 @@
  * unmount, which is valid as the file system doesn't support them.
  */
 
-#define FUSE_USE_VERSION 30
-#include <fuse3/fuse.h>
+#include FUSE_INCLUDE
 #include <sys/stat.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -179,8 +178,8 @@ struct dos4_vtoc {
  * Function prototypes
  */
 int dos4_sanity(void);
-int dos4_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi);
-int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags);
+int dos4_getattr(const char *path, struct stat *stbuf);
+int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
 int dos4_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 int dos4_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 int dos4_mkdir(const char *path,mode_t mode);
@@ -189,7 +188,7 @@ int dos4_unlink(const char *path);
 int dos4_rename(const char *path1, const char *path2, unsigned int flags);
 int dos4_chmod(const char *path, mode_t mode, struct fuse_file_info *fi);
 int dos4_create(const char *path, mode_t mode, struct fuse_file_info *fi);
-int dos4_truncate(const char *path, off_t size, struct fuse_file_info *fi);
+int dos4_truncate(const char *path, off_t size);
 int dos4_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi);
 int dos4_statfs(const char *path, struct statvfs *stfsbuf);
 int dos4_newfs(void);
@@ -456,9 +455,8 @@ int dos4_sanity(void)
 /*
  * dos4_getattr()
  */
-int dos4_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
+int dos4_getattr(const char *path, struct stat *stbuf)
 {
-   (void)fi;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
    if ( strcmp(path,"/") == 0 )
    {
@@ -503,12 +501,11 @@ int dos4_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi
 /*
  * dos4_readdir()
  */
-int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags)
+int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
 {
    (void)path; // Always "/"
    (void)offset;
    (void)fi;
-   (void)flags;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
 
@@ -539,7 +536,7 @@ int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
          }
       }
       *n=0;
-      filler(buf, name, NULL, 0, 0);
+      filler(buf, name, FILLER_NULL);
    }
 
 #if 0 // Data clusters
@@ -556,7 +553,7 @@ int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
          if ( memcmp(s,zero,CLUSTER_BYTES) == 0 ) continue; // Skip empty sectors
          if ( sec == VTOC_CLUSTER || sec == VTOC_CLUSTER+1 ) note="-dir_vtoc";
          sprintf(name,".cluster%0*d%s",digits,sec,note);
-         filler(buf,name,NULL,0,0);
+         filler(buf,name,FILLER_NULL);
       }
       free(zero);
    }
@@ -664,7 +661,7 @@ int dos4_unlink(const char *path);
 int dos4_rename(const char *path1, const char *path2, unsigned int flags);
 int dos4_chmod(const char *path, mode_t mode, struct fuse_file_info *fi);
 int dos4_create(const char *path, mode_t mode, struct fuse_file_info *fi);
-int dos4_truncate(const char *path, off_t size, struct fuse_file_info *fi);
+int dos4_truncate(const char *path, off_t size);
 int dos4_newfs(void);
 
 /*

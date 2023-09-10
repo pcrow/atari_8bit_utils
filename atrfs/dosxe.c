@@ -52,8 +52,7 @@
  * pointers to the entry around.
  */
 
-#define FUSE_USE_VERSION 30
-#include <fuse3/fuse.h>
+#include FUSE_INCLUDE
 #include <sys/stat.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -184,8 +183,8 @@ struct dosxe_data_cluster {
  * Function prototypes
  */
 int dosxe_sanity(void);
-int dosxe_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi);
-int dosxe_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags);
+int dosxe_getattr(const char *path, struct stat *stbuf);
+int dosxe_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
 int dosxe_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 int dosxe_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 int dosxe_mkdir(const char *path,mode_t mode);
@@ -266,9 +265,6 @@ int dosxe_sanity(void)
 }
 
 // Implement these
-int dosxe_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi);
-int dosxe_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags);
-int dosxe_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 int dosxe_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 int dosxe_mkdir(const char *path,mode_t mode);
 int dosxe_rmdir(const char *path);
@@ -366,9 +362,8 @@ char *dosxe_fsinfo(void)
 /*
  * Temporary
  */
-int dosxe_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
+int dosxe_getattr(const char *path, struct stat *stbuf)
 {
-   (void)fi;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
    if ( strcmp(path,"/") == 0 )
    {
@@ -401,17 +396,16 @@ int dosxe_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *f
    return 0; // Whatever, don't really care
 }
 
-int dosxe_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags)
+int dosxe_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
 {
    (void)path; // Always "/"
    (void)offset;
    (void)fi;
-   (void)flags;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
-   filler(buf, "DOS_XE_DISK_IMAGE", NULL, 0, 0);
-   filler(buf, "NOT_YET_SUPPORTED", NULL, 0, 0);
-   filler(buf, "USE_.cluster#_for_raw_nonzero_clusters", NULL, 0, 0);
+   filler(buf, "DOS_XE_DISK_IMAGE", FILLER_NULL);
+   filler(buf, "NOT_YET_SUPPORTED", FILLER_NULL);
+   filler(buf, "USE_.cluster#_for_raw_nonzero_clusters", FILLER_NULL);
 
 #if 1 // This will work even if we skip the entries
    // Create .cluster4 ... .cluster359 as appropriate
@@ -430,7 +424,7 @@ int dosxe_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t off
       unsigned char *s = CLUSTER(sec);
       if ( memcmp(s,zero,256) == 0 ) continue; // Skip empty sectors
       sprintf(name,".cluster%0*d",digits,sec);
-      filler(buf,name,NULL,0,0);
+      filler(buf,name,FILLER_NULL);
    }
 #endif
    return 0;

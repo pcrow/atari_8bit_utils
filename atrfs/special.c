@@ -9,8 +9,7 @@
  * Released under the GPL version 2.0
  */
 
-#define FUSE_USE_VERSION 30
-#include <fuse3/fuse.h>
+#include FUSE_INCLUDE
 #include <sys/stat.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -38,8 +37,8 @@ struct special_files {
 /*
  * Function prototypes
  */
-int special_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi);
-int special_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags);
+int special_getattr(const char *path, struct stat *stbuf);
+int special_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
 int special_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 char *fsinfo_textdata(void);
 char *bootinfo_textdata(void);
@@ -68,9 +67,8 @@ const struct special_files files[] = {
 /*
  * Functions
  */
-int special_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
+int special_getattr(const char *path, struct stat *stbuf)
 {
-   (void)fi; //not used
    if ( *path == '/' )
    {
       for (int i=0;(long unsigned)i<sizeof(files)/sizeof(files[0]);++i)
@@ -108,15 +106,15 @@ int special_getattr(const char *path, struct stat *stbuf, struct fuse_file_info 
    return -ENOENT; // Continue with regular file system
 }
 
-int special_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags)
+int special_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
 {
-   (void)fi;(void)flags; // Not used
+   (void)fi; // Not used
    (void)offset; // Ignored in our usage mode
    if ( !options.nodotfiles && strcmp(path,"/") == 0 )
    {
       for (int i=0;(long unsigned)i<sizeof(files)/sizeof(files[0]);++i)
       {
-         filler(buf, files[i].name, NULL, 0, 0);
+         filler(buf, files[i].name, FILLER_NULL);
       }
    }
    return 0;

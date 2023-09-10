@@ -9,8 +9,7 @@
  * Released under the GPL version 2.0
  */
 
-#define FUSE_USE_VERSION 30
-#include <fuse3/fuse.h>
+#include FUSE_INCLUDE
 #include <sys/stat.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -33,8 +32,8 @@
 /*
  * Function prototypes
  */
-int unknown_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi);
-int unknown_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags);
+int unknown_getattr(const char *path, struct stat *stbuf);
+int unknown_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
 
 /*
  * Global variables
@@ -62,9 +61,8 @@ const struct fs_ops unknown_ops = {
 /*
  * Functions
  */
-int unknown_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
+int unknown_getattr(const char *path, struct stat *stbuf)
 {
-   (void)fi;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
    if ( strcmp(path,"/") == 0 )
    {
@@ -80,16 +78,15 @@ int unknown_getattr(const char *path, struct stat *stbuf, struct fuse_file_info 
    return 0; // Whatever, don't really care
 }
 
-int unknown_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags)
+int unknown_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
 {
    (void)path; // Always "/"
    (void)offset;
    (void)fi;
-   (void)flags;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
-   filler(buf, "UNKNOWN_DISK_FORMAT", NULL, 0, 0);
-   filler(buf, "USE_.sector#_for_raw_nonzero_sectors", NULL, 0, 0);
+   filler(buf, "UNKNOWN_DISK_FORMAT", FILLER_NULL);
+   filler(buf, "USE_.sector#_for_raw_nonzero_sectors", FILLER_NULL);
 
 #if 1 // This will work even if we skip the entries
    // Create .sector4 ... .sector720 as appropriate
@@ -103,7 +100,7 @@ int unknown_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t o
       unsigned char *s = SECTOR(sec);
       if ( memcmp(s,zero,atrfs.sectorsize) == 0 ) continue; // Skip empty sectors
       sprintf(name,".sector%0*d",digits,sec);
-      filler(buf,name,NULL,0,0);
+      filler(buf,name,FILLER_NULL);
    }
    free(zero);
 #endif

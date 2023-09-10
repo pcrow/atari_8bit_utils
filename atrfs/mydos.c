@@ -9,8 +9,7 @@
  * Released under the GPL version 2.0
  */
 
-#define FUSE_USE_VERSION 30
-#include <fuse3/fuse.h>
+#include FUSE_INCLUDE
 #include <sys/stat.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -105,18 +104,17 @@ int mydos_sanity(void);
 int dos1_sanity(void);
 int dos2_sanity(void);
 int dos25_sanity(void);
-int mydos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags);
-int mydos_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi);
+int mydos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
+int mydos_getattr(const char *path, struct stat *stbuf);
 int mydos_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 int mydos_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 int mydos_mkdir(const char *path,mode_t mode);
 int mydos_rmdir(const char *path);
 int mydos_unlink(const char *path);
 int mydos_rename(const char *path1, const char *path2, unsigned int flags);
-int mydos_chmod(const char *path, mode_t mode, struct fuse_file_info *fi);
+int mydos_chmod(const char *path, mode_t mode);
 int mydos_create(const char *path, mode_t mode, struct fuse_file_info *fi);
-int mydos_truncate(const char *path, off_t size, struct fuse_file_info *fi);
-int mydos_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi);
+int mydos_truncate(const char *path, off_t size);
 int mydos_statfs(const char *path, struct statvfs *stfsbuf);
 int mydos_newfs(void);
 char *mydos_fsinfo(void);
@@ -1092,11 +1090,10 @@ char *mydos_info(const char *path,struct dos2_dirent *dirent,int parent_dir_sect
  *
  * Also use for dos2 and dos25
  */
-int mydos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags)
+int mydos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
 {
    (void)offset; // FUSE will always read directories from the start in our use
    (void)fi;
-   (void)flags;
    int r;
    int sector=0,parent_dir_sector,count,locked,fileno,entry,isdir,isinfo;
 
@@ -1132,7 +1129,7 @@ int mydos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t off
             name[k+l+1]=0;
          }
       }
-      filler(buf, name, NULL, 0, 0);
+      filler(buf, name, FILLER_NULL);
    }
    return 0;
 }
@@ -1141,10 +1138,9 @@ int mydos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t off
  * mydos_getattr()
  */
 
-int mydos_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
+int mydos_getattr(const char *path, struct stat *stbuf)
 {
    // stbuf initialized from atr image stats
-   (void)fi; // Often NULL
 
    int r;
    int sector=0,parent_dir_sector,count,locked,fileno,entry,isdir,isinfo;
@@ -1788,9 +1784,8 @@ int mydos_rename(const char *old, const char *new, unsigned int flags)
    // Should have covered all cases by this point
    return -EIO;
 }
-int mydos_chmod(const char *path, mode_t mode, struct fuse_file_info *fi)
+int mydos_chmod(const char *path, mode_t mode)
 {
-   (void)fi;
    int r;
    int sector=0,parent_dir_sector,count,locked,fileno,entry,isdir,isinfo;
 
@@ -1921,7 +1916,7 @@ int mydos_create(const char *path, mode_t mode, struct fuse_file_info *fi)
    return 0;
 }
 
-int mydos_truncate(const char *path, off_t size, struct fuse_file_info *fi)
+int mydos_truncate(const char *path, off_t size)
 {
    int r,sector=0,parent_dir_sector,count,locked,fileno,entry,filesize,*sectors;
    int isdir,isinfo;
@@ -1960,7 +1955,7 @@ int mydos_truncate(const char *path, off_t size, struct fuse_file_info *fi)
       char *buf = malloc ( size - filesize );
       if ( !buf ) return -ENOMEM;
       memset(buf,0,size-filesize);
-      r = mydos_write(path,buf,size-filesize,filesize,fi);
+      r = mydos_write(path,buf,size-filesize,filesize,NULL /* fi */);
       free(buf);
       free(sectors);
       if ( r == size-filesize ) return 0;
@@ -2012,13 +2007,6 @@ int mydos_truncate(const char *path, off_t size, struct fuse_file_info *fi)
    }
    free(sectors);
    return 0;
-}
-int mydos_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi)
-{
-   (void)path;
-   (void)tv;
-   (void)fi;
-   return 0; // Silently ignore it as we have no timestamps
 }
 
 int mydos_statfs(const char *path, struct statvfs *stfsbuf)

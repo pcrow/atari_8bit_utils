@@ -30,8 +30,7 @@
  * directory entry so that they match.
  */
 
-#define FUSE_USE_VERSION 30
-#include <fuse3/fuse.h>
+#include FUSE_INCLUDE
 #include <sys/stat.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -124,18 +123,22 @@ enum sparta_dir_status {
  */
 int sparta_alloc_any_sector(void);
 int sparta_sanity(void);
-int sparta_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi);
-int sparta_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags);
+int sparta_getattr(const char *path, struct stat *stbuf);
+int sparta_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
 int sparta_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 int sparta_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 int sparta_mkdir(const char *path,mode_t mode);
 int sparta_rmdir(const char *path);
 int sparta_unlink(const char *path);
 int sparta_rename(const char *path1, const char *path2, unsigned int flags);
-int sparta_chmod(const char *path, mode_t mode, struct fuse_file_info *fi);
+int sparta_chmod(const char *path, mode_t mode);
 int sparta_create(const char *path, mode_t mode, struct fuse_file_info *fi);
-int sparta_truncate(const char *path, off_t size, struct fuse_file_info *fi);
+int sparta_truncate(const char *path, off_t size);
+#if (FUSE_USE_VERSION >= 30)
 int sparta_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi);
+#else
+int sparta_utime(const char *path,struct utimbuf *utimbif);
+#endif
 int sparta_statfs(const char *path, struct statvfs *stfsbuf);
 int sparta_newfs(void);
 char *sparta_fsinfo(void);
@@ -157,7 +160,11 @@ const struct fs_ops sparta_ops = {
    .fs_chmod = sparta_chmod,
    .fs_create = sparta_create,
    .fs_truncate = sparta_truncate,
+#if (FUSE_USE_VERSION >= 30)
    .fs_utimens = sparta_utimens,
+#else
+   .fs_utime = sparta_utime,
+#endif
    .fs_statfs = sparta_statfs,
    .fs_newfs = sparta_newfs,
    .fs_fsinfo = sparta_fsinfo,
@@ -1014,9 +1021,8 @@ char *sparta_info(const char *path,int parent_dir_inode,int entry,int inode,int 
 /*
  * sparta_getattr()
  */
-int sparta_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
+int sparta_getattr(const char *path, struct stat *stbuf)
 {
-   (void)fi;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
    int inode=0,parent_dir_inode,size,locked,entry,isdir,isinfo;
    int r;
@@ -1081,11 +1087,10 @@ int sparta_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *
 /*
  * sparta_readdir()
  */
-int sparta_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags)
+int sparta_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
 {
    (void)offset; // FUSE will always read directories from the start in our use
    (void)fi;
-   (void)flags;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
    int sector=0,parent_dir_inode,dir_size,locked,entry,isdir,isinfo;
@@ -1122,7 +1127,7 @@ int sparta_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t of
          }
       }
       if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s %s\n",__FUNCTION__,path,name);
-      filler(buf, name, NULL, 0, 0);
+      filler(buf, name, FILLER_NULL);
    }
    return 0;
 }
@@ -1190,6 +1195,7 @@ int sparta_read(const char *path, char *buf, size_t size, off_t offset, struct f
 
 int sparta_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
+   (void)fi;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s size %lu offset %ld\n",__FUNCTION__,path,size,offset);
    int inode=0,parent_dir_inode,filesize,locked,entry,isdir,isinfo;
    int r;
@@ -1202,7 +1208,7 @@ int sparta_write(const char *path, const char *buf, size_t size, off_t offset, s
    // Quick lazy hack: Extend file if needed first
    if ( offset + size > (size_t)filesize )
    {
-      r = sparta_truncate(path,offset+size,fi);
+      r = sparta_truncate(path,offset+size);
       if ( r<0 ) return r;
    }
 
@@ -1691,9 +1697,8 @@ int sparta_rename(const char *old, const char *new, unsigned int flags)
 /*
  * sparta_chmod()
  */
-int sparta_chmod(const char *path, mode_t mode, struct fuse_file_info *fi)
+int sparta_chmod(const char *path, mode_t mode)
 {
-   (void)fi;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s.%d\n",__FUNCTION__,__LINE__);
 
    int inode=0,parent_dir_inode,size,locked,entry,isdir,isinfo;
@@ -1815,9 +1820,8 @@ int sparta_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 /*
  * sparta_truncate()
  */
-int sparta_truncate(const char *path, off_t size, struct fuse_file_info *fi)
+int sparta_truncate(const char *path, off_t size)
 {
-   (void)fi;
    int inode=0,parent_dir_inode,filesize,locked,entry,isdir,isinfo;
    int r;
    r = sparta_path(path,&inode,&parent_dir_inode,&filesize,&locked,&entry,&isdir,&isinfo);
@@ -1899,6 +1903,7 @@ int sparta_truncate(const char *path, off_t size, struct fuse_file_info *fi)
    return 0;
 }
 
+#if (FUSE_USE_VERSION >= 30)
 int sparta_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi)
 {
    (void)fi;
@@ -1930,6 +1935,42 @@ int sparta_utimens(const char *path, const struct timespec tv[2], struct fuse_fi
    if ( r<0 ) return r;
    return 0;
 }
+#else
+int sparta_utime(const char *path, struct utimbuf *utimbuf)
+{
+   int inode=0,parent_dir_inode,size,locked,entry,isdir,isinfo;
+   int r;
+   r = sparta_path(path,&inode,&parent_dir_inode,&size,&locked,&entry,&isdir,&isinfo);
+   if ( r<0 ) return r;
+   if ( r>0 ) return -ENOENT;
+   if ( isinfo ) return -EACCES;
+
+   struct sparta_dir_entry dir_entry;
+   r = sparta_get_dirent(&dir_entry,parent_dir_inode,entry);
+   if ( r<0 ) return r;
+
+   time_t secs = utimbuf->modtime;
+#if 0 // Does FUSE have an option for this on older versions?
+   if ( tv[1].tv_nsec == UTIME_OMIT ) return 0;
+   if ( tv[1].tv_nsec == UTIME_NOW )
+   {
+      secs = time(NULL);
+   }
+#else
+   if ( !secs ) secs = time(NULL); // Just in case, be sane
+#endif
+   sparta_dirent_time_set(&dir_entry,secs);
+
+   if ( options.debug ) fprintf(stderr,"DEBUG: %s: "
+                                "  Date (d/m/y): %d/%d/%d\n",__FUNCTION__,dir_entry.file_date[0],dir_entry.file_date[1],dir_entry.file_date[2]);
+   if ( options.debug ) fprintf(stderr,"DEBUG: %s: "
+                                "  Time: %d:%02d:%02d\n",__FUNCTION__,dir_entry.file_time[0],dir_entry.file_time[1],dir_entry.file_time[2]);
+
+   r = sparta_put_dirent(&dir_entry,parent_dir_inode,entry);
+   if ( r<0 ) return r;
+   return 0;
+}
+#endif
 
 /*
  * sparta_statfs()
