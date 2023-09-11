@@ -56,6 +56,7 @@ enum atrfstype {
    ATR_DOS3,
    ATR_DOS4, // 1450 XLD DOS: Not planning to implement
    ATR_DOSXE,
+   ATR_LITEDOS, // http://www.mr-atari.com/Mr.Atari/LiteDOS/
    ATR_UNKNOWN, // Just do the special files
    ATR_MAXFSTYPE
 };

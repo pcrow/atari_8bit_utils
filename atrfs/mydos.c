@@ -27,8 +27,8 @@
 /*
  * Macros and defines
  */
-#define BITMAPBYTE(n)   (n/8)
-#define BITMAPMASK(n)   (1<<(7-(n%8)))
+#define BITMAPBYTE(n)   ((n)/8)
+#define BITMAPMASK(n)   (1<<(7-((n)%8)))
 #define BITMAP(map,sector)  (map[BITMAPBYTE(sector)]&BITMAPMASK(sector))
 #define DIRENT_ENTRY(n) ((n) + ((atrfs.sectorsize == 256 ) ? (n)/8 * 8 : 0 ))
 
@@ -580,7 +580,7 @@ int mydos_trace_file(int sector,int fileno,int dos1,int *size,int **sectors)
       }
       if ( next==0 ) break;
       sector = next;
-      if ( block > atrfs.sectorsize )
+      if ( block > atrfs.sectors )
       {
          fprintf(stderr,"Corrupted file number %d has a circular list of sectors\n",fileno);
          if ( sectors )
@@ -619,7 +619,7 @@ int mydos_remove_fileno(struct dos2_dirent *dirent,int fileno)
    while ( *s )
    {
       char *buf = SECTOR(*s);
-      buf[125] &= 0x03; // Mask off the file number
+      buf[atrfs.sectorsize-3] &= 0x03; // Mask off the file number
       ++s;
    }
    free(sectors);
@@ -647,10 +647,10 @@ int mydos_add_fileno(struct dos2_dirent *dirent,int fileno)
    while ( *s )
    {
       char *buf = SECTOR(*s);
-      if ( buf[125]>>2 )
+      if ( buf[atrfs.sectorsize-3]>>2 )
       {
          free(sectors);
-         if ( options.debug ) fprintf(stderr,"DEBUG: %s %8.8s.%3.3s can't add fileno due to sector %d\n",__FUNCTION__,dirent->name,dirent->ext,((buf[125]>>2)<<8)|buf[126]);
+         if ( options.debug ) fprintf(stderr,"DEBUG: %s %8.8s.%3.3s can't add fileno due to sector %d\n",__FUNCTION__,dirent->name,dirent->ext,((buf[atrfs.sectorsize-3]>>2)<<8)|buf[atrfs.sectorsize-2]);
          return 1; // Nope!
       }
       ++s;
@@ -662,8 +662,8 @@ int mydos_add_fileno(struct dos2_dirent *dirent,int fileno)
    while ( *s )
    {
       char *buf = SECTOR(*s);
-      buf[125] &= 0x03; // Mask off the file number (should be a no-op)
-      buf[125] |= fileno << 2; // Add file number
+      buf[atrfs.sectorsize-3] &= 0x03; // Mask off the file number (should be a no-op)
+      buf[atrfs.sectorsize-3] |= fileno << 2; // Add file number
       ++s;
    }
    free(sectors);
@@ -1880,7 +1880,7 @@ int mydos_create(const char *path, mode_t mode, struct fuse_file_info *fi)
    memset(buf,0,atrfs.sectorsize);
    if ( start < 720 || atrfs.fstype == ATR_DOS25 )
    {
-      buf[125] = entry << 2;
+      buf[atrfs.sectorsize-3] = entry << 2;
    }
    if ( strcmp(path,"/DOS.SYS")==0 )
    {
