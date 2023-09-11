@@ -456,9 +456,12 @@ int dos3_read(const char *path, char *buf, size_t size, off_t offset, struct fus
       {
          bytes = BYTES2(dirent->file_size)%1024;
       }
+      unsigned char *s=CLUSTER(cluster);
+      if ( !s ) return -EIO; // Invalid CLUSTER
       if ( offset < bytes )
       {
          bytes -= offset;
+         s+=offset;
          offset = 0;
       }
       if ( offset > bytes )
@@ -467,9 +470,6 @@ int dos3_read(const char *path, char *buf, size_t size, off_t offset, struct fus
          bytes = 0;
       }
       if ( (size_t)bytes > size ) bytes = size;
-      unsigned char *s=CLUSTER(cluster);
-      if ( !s ) return -EIO; // Invalid CLUSTER
-      s+=offset;
       if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s read %d bytes from cluster %d offset %ld\n",__FUNCTION__,path,bytes,cluster,offset);
       if ( bytes )
       {

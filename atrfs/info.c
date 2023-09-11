@@ -47,6 +47,7 @@ char *atr_info(const char *path,int filesize)
    free(p);
    if ( r != filesize )
    {
+      if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s: Expected %d bytes but read %d\n",__FUNCTION__,path,filesize,r);
       free(filebuf);
       return NULL;
    }

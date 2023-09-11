@@ -67,13 +67,18 @@
 /*
  * Macros and defines
  */
-#define CLUSTER(n) (atrfs.sectorsize==128?SECTOR((n)*2):SECTOR(n)) // 256-byte logical sector
+#define CLUSTER_TO_SEC(n) (atrfs.sectorsize==128?(n)*2:(n))
+#define CLUSTER(n) SECTOR(atrfs.sectorsize==128?(n)*2:(n)) // 256-byte logical sector
+#define MAX_CLUSTER (atrfs.sectorsize==128?(atrfs.sectors-1)/2:atrfs.sectors)
+#define VTOC_CLUSTER 4
 #define DATE_TO_YEAR(n)      (((n)[0])>>1)
 #define DATE_TO_4YEAR(n)     (DATE_TO_YEAR(n)+(DATE_TO_YEAR(n)<87?2000:1900))
 #define DATE_TO_MONTH(n)     ( ((((n)[0])&0x01)<<3) | (((n)[1])>>5) )
 #define DATE_TO_DAY(n)       (((n)[1])&0x1f)
 #define DATE_PRINT_FORMAT    "%d/%d/%d"
 #define DATE_PRINT_FIELDS(n) DATE_TO_MONTH(n),DATE_TO_DAY(n),DATE_TO_4YEAR(n)
+#define ROOT_DIR_CLUSTER     (((struct sector1_dosxe *)SECTOR(1))->main_directory)
+#define ROOT_DIR             CLUSTER(ROOT_DIR_CLUSTER)
 
 /*
  * File System Structures
@@ -98,7 +103,7 @@ struct sector1_dosxe {
    unsigned char total_clusters[2]; // plus 1
    unsigned char max_free_clusters[2];
    unsigned char first_vtoc_byte; // 0x07 ?
-   unsigned char main_directory; // 0x05 if only one VTOC sector
+   unsigned char main_directory; // 0x05 if only one VTOC cluster
    unsigned char sio_routine[2]; // df32 ?
    unsigned char unknwon_20[2]; // 5d 0d
    unsigned char sio_read_cmd; // 'R' or 'R'|0x80 for fast mode
@@ -133,9 +138,9 @@ struct cluster_label {
  */
 struct dosxe_dir_entry {
    unsigned char status;
-   unsigned char file_name[8];
-   unsigned char file_ext[3];
-   unsigned char file_clusters[2];
+   char file_name[8];
+   char file_ext[3];
+   unsigned char file_clusters[2]; // Does not include last cluster
    unsigned char bytes_in_last_cluster; // 00 and ignored for a directory
    unsigned char file_sequence_number[2];
    unsigned char volume_number[2];
@@ -154,7 +159,7 @@ enum dosxe_dir_status {
 };
 
 struct dosxe_dir_cluster {
-   struct dosxe_dir_entry entries[4];
+   struct dosxe_dir_entry entries[5];
    unsigned char          unused[3];
    unsigned char          next[2]; // Next cluster in directory or zero
    struct cluster_label    label;
@@ -233,8 +238,12 @@ const struct fs_ops dosxe_ops = {
  */
 int dosxe_bitmap_status(int cluster)
 {
-   struct dosxe_vtoc_cluster *vtoc = CLUSTER(4);
-   cluster-=4; // DOS XE doesn't have bits for clusters 0-3
+   // DOS XE doesn't have bits for clusters 0-3
+   if ( cluster < 4 ) return 0;
+   if ( cluster > MAX_CLUSTER ) return 0;
+   cluster-=4;
+
+   struct dosxe_vtoc_cluster *vtoc = CLUSTER(VTOC_CLUSTER);
    unsigned char mask = 1<<(7-(cluster & 0x07));
    return (vtoc->bitmap[cluster/8] & mask) != 0; // 0 or 1
 }
@@ -257,13 +266,198 @@ int dosxe_sanity(void)
    if ( (sec1->sio_format_cmd & 0x7f) != '!' ) {;} // FIXME: is it different for 1050 ED?
    if ( BYTES2R(sec1->sector_size) != atrfs.sectorsize ) return 1;
 
-   struct dosxe_vtoc_cluster *vtoc = CLUSTER(4);
+   struct dosxe_vtoc_cluster *vtoc = CLUSTER(VTOC_CLUSTER);
    if ( BYTES2(vtoc->total_clusters) != BYTES2(sec1->total_clusters) ) return 1;
 
    atrfs.readonly = 1; // FIXME: No write support yet
    return 0;
 }
 
+/*
+ * dosxe_info()
+ */
+char *dosxe_info(const char *path,int isdir,int parent_dir_first_cluster,struct dosxe_dir_entry *entry)
+{
+   char *buf,*b;
+
+   buf = malloc(64*1024);
+   b = buf;
+   *b = 0;
+   if ( isdir )
+   {
+      b+=sprintf(b,"Directory information and analysis\n\n  %.*s\n\n",(int)(strrchr(path,'.')-path),path);
+      b+=sprintf(b,"Parent directory starts on cluster %d\n",parent_dir_first_cluster);
+      if ( entry )
+      {
+         b+=sprintf(b,
+                    "Directory entry internals:\n"
+                    "  Flags: $%02x\n"
+                    "  Clusters: %d\n",
+                    entry->status,BYTES2(entry->file_clusters));
+      }
+      else
+      {
+         b+=sprintf(b,"There is no directory entry for the main directory itself\n");
+      }
+      buf = realloc(buf,strlen(buf)+1);
+      return buf;
+   }
+
+   int filesize = BYTES2(entry->file_clusters) * 250 + entry->bytes_in_last_cluster;
+   b+=sprintf(b,"File information and analysis\n\n  %.*s\n  %d bytes\n\n",(int)(strrchr(path,'.')-path),path,filesize);
+   b+=sprintf(b,"Parent directory starts on cluster %d\n",parent_dir_first_cluster);
+   b+=sprintf(b,
+              "Directory entry internals:\n"
+              "  Flags: $%02x\n"
+              "  Clusters: %d\n",
+              entry->status,BYTES2(entry->file_clusters));
+   // FIXME: Show file maps
+
+   // Generic info for the file type
+   {
+      char *moreinfo;
+      moreinfo = atr_info(path,filesize);
+      if ( moreinfo )
+      {
+         int off = b - buf;
+         buf = realloc(buf,strlen(buf)+1+strlen(moreinfo));
+         b = buf+off; // In case it moved
+         b+=sprintf(b,"%s",moreinfo);
+         free(moreinfo);
+      }
+   }
+
+   buf = realloc(buf,strlen(buf)+1);
+   return buf;
+}
+
+/*
+ * dosxe_path()
+ *
+ * Given a text path, get the pointer to the directory entry.
+ * If it's the root directory, the 'entry' will be NULL.
+ * If none, then 'entry' might point to an available entry, or it
+ * might be NULL if the directory would have to be expanded to add a file.
+ */
+int dosxe_path(const char *path,struct dosxe_dir_entry **entry,struct dosxe_dir_entry **parent_entry,int *parent_dir_first_cluster,int *isdir,int *isinfo)
+{
+   char name[8+3+1]; // 8+3+NULL
+   int junk1=0,junk2,junk3;
+   struct dosxe_dir_entry *junk4;
+   if ( !parent_dir_first_cluster ) parent_dir_first_cluster = &junk1;
+   if ( !isdir ) isdir = &junk2;
+   if ( !isinfo ) isinfo = &junk3;
+   if ( !parent_entry ) parent_entry = &junk4;
+
+   // If not recursing, initialize
+   if ( !*parent_dir_first_cluster )
+   {
+      *parent_dir_first_cluster = ROOT_DIR_CLUSTER;
+      *entry = NULL;
+      *parent_entry = NULL;
+      *isdir = 0;
+      *isinfo = 0;
+   }
+
+   while ( *path )
+   {
+      while ( *path == '/' ) ++path;
+      if ( ! *path )
+      {
+         *isdir = 1;
+         *entry = *parent_entry; // No entry for the root directory itself
+         return 0;
+      }
+
+      // If it's just ".info" then it's for the directory
+      if ( strcmp(path,".info") == 0 )
+      {
+         *isdir = 1;
+         *isinfo = 1;
+         if ( options.debug ) fprintf(stderr,"DEBUG: %s: Found info file for directory entry\n",__FUNCTION__);
+         return 0;
+      }
+
+      // Extract the file name up to the trailing slash
+      memset(name,' ',8+3);
+      name[8+3]=0;
+      int i;
+      for ( i=0;i<8;++i)
+      {
+         if ( *path && *path != '.' && *path != '/' )
+         {
+            name[i]=*path;
+            ++path;
+         }
+      }
+      if ( strcmp(path,".info")==0 )
+      {
+         *isinfo=1;
+         path += 5;
+      }
+      if ( *path == '.' )
+      {
+         ++path;
+      }
+      for ( i=8;i<8+3;++i)
+      {
+         if ( *path && *path != '.' && *path != '/' )
+         {
+            name[i]=*path;
+            ++path;
+         }
+      }
+      if ( strcmp(path,".info")==0 )
+      {
+         *isinfo=1;
+         path += 5;
+      }
+      if ( *path && *path != '/' )
+      {
+         if ( options.debug ) fprintf(stderr,"DEBUG: %s: Extracted name %s but have path left %s\n",__FUNCTION__,name,path);
+         return -ENOENT; // Name too long
+      }
+      if ( *path == '/' ) ++path;
+
+      if ( options.debug ) fprintf(stderr,"DEBUG: %s: Look for %11.11s in dir at cluster %d\n",__FUNCTION__,name,*parent_dir_first_cluster);
+      // Scan directory starting at *parent_dir_first_cluster for file name
+      struct dosxe_dir_entry *firstfree = NULL;
+      int dir_cluster_num=*parent_dir_first_cluster;
+      while ( dir_cluster_num && dir_cluster_num < MAX_CLUSTER )
+      {
+         struct dosxe_dir_cluster *dir_cluster = CLUSTER(dir_cluster_num);
+         for (int i=0;i<5;++i)
+         {
+            struct dosxe_dir_entry *e = &dir_cluster->entries[i];
+            if ( e->status == 0 || e->status == FLAGS_DELETED )
+            {
+               if ( !firstfree ) firstfree = e;
+            }
+            if ( e->status == 0 ) break;
+            if ( e->status == FLAGS_DELETED ) continue;
+            if ( strncmp(e->file_name,name,8+3) != 0 ) continue;
+            // Found a match!
+            if ( *path && (e->status & FLAGS_DIR) && !*isinfo )
+            {
+               // Recurse on a subdirectory
+               if ( options.debug ) fprintf(stderr,"DEBUG: %s: Recurrse on subdir %s\n",__FUNCTION__,path);
+               *parent_dir_first_cluster = BYTES2(e->file_map_blocks[0]);
+               *parent_entry = *entry;
+               *entry = e;
+               return dosxe_path(path,entry,parent_entry,parent_dir_first_cluster,isdir,isinfo);
+            }
+            if ( *path ) return -ENOTDIR; // Should have been a directory
+            if ( (e->status & FLAGS_DIR) ) *isdir = 1;
+            *parent_entry = *entry;
+            *entry = e;
+            return 0;
+         }
+         dir_cluster_num = BYTES2(dir_cluster->next);
+      }
+   }
+   if ( options.debug ) fprintf(stderr,"DEBUG: %s: Unexpectedly reached end of function\n",__FUNCTION__);
+   return -ENOENT; // Shouldn't be reached
+}
 // Implement these
 int dosxe_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 int dosxe_mkdir(const char *path,mode_t mode);
@@ -367,7 +561,7 @@ int dosxe_getattr(const char *path, struct stat *stbuf)
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
    if ( strcmp(path,"/") == 0 )
    {
-      stbuf->st_ino = 0x10000;
+      stbuf->st_ino = CLUSTER_TO_SEC(ROOT_DIR_CLUSTER);
       stbuf->st_size = 0;
       stbuf->st_mode = MODE_DIR(stbuf->st_mode);
       stbuf->st_mode = MODE_RO(stbuf->st_mode);
@@ -391,45 +585,163 @@ int dosxe_getattr(const char *path, struct stat *stbuf)
          return 0; // Good, can read this sector
       }
    }
-   stbuf->st_ino = 0x10001;
-   stbuf->st_size = 0;
+
+   // Get time stamp
+   int r,isdir,isinfo;
+   int parent_dir_first_cluster=0;
+   struct dosxe_dir_entry *entry=NULL;
+   r = dosxe_path(path,&entry,NULL,&parent_dir_first_cluster,&isdir,&isinfo);
+   if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s path search returned %d\n",__FUNCTION__,path,r);
+   if ( r<0 ) return r;
+   if ( r>0 ) return -ENOENT;
+
+   if ( entry )
+   {
+      struct tm tm;
+      struct timespec ts,cts;
+      memset(&tm,0,sizeof(tm));
+      tm.tm_sec=0;
+      tm.tm_min=0;
+      tm.tm_hour=12;
+      tm.tm_mday=DATE_TO_DAY(entry->modification_date);
+      tm.tm_mon=DATE_TO_MONTH(entry->modification_date)-1; // Want 0-11, not 1-12
+      tm.tm_year=DATE_TO_4YEAR(entry->modification_date)-1900;
+      tm.tm_isdst = -1; // Have the system determine if DST is in effect
+      ts.tv_nsec = 0;
+      ts.tv_sec = mktime(&tm);
+      memset(&tm,0,sizeof(tm));
+      tm.tm_sec=0;
+      tm.tm_min=0;
+      tm.tm_hour=12;
+      tm.tm_mday=DATE_TO_DAY(entry->creation_date);
+      tm.tm_mon=DATE_TO_MONTH(entry->creation_date)-1; // Want 0-11, not 1-12
+      tm.tm_year=DATE_TO_4YEAR(entry->creation_date)-1900;
+      tm.tm_isdst = -1; // Have the system determine if DST is in effect
+      cts.tv_nsec = 0;
+      cts.tv_sec = mktime(&tm);
+      if ( ts.tv_sec != -1 )
+      {
+         stbuf->st_mtim = ts;
+         stbuf->st_atim = ts;
+      }
+      if ( cts.tv_sec != -1 )
+      {
+         stbuf->st_ctim = cts;
+      }
+
+      if ( isdir && !isinfo )
+      {
+         ++stbuf->st_nlink;
+         stbuf->st_mode = MODE_DIR(atrfs.atrstat.st_mode & 0777);
+      }
+      if ( (entry->status & FLAGS_LOCKED) ) stbuf->st_mode = MODE_RO(stbuf->st_mode);
+      stbuf->st_size = BYTES2(entry->file_clusters) * 250 + entry->bytes_in_last_cluster;
+      stbuf->st_ino = CLUSTER_TO_SEC(BYTES2(entry->file_map_blocks[0])); // Unique, but not that useful
+   }
+   else
+   {
+      // Info on root dir; there is no entry to get info from
+      stbuf->st_ino = CLUSTER_TO_SEC(ROOT_DIR_CLUSTER);
+   }
+
+   if ( isinfo )
+   {
+      stbuf->st_mode = MODE_RO(stbuf->st_mode); // These files are never writable
+      stbuf->st_ino += 0x10000;
+
+      char *info = dosxe_info(path,isdir,parent_dir_first_cluster,entry);
+      stbuf->st_size = strlen(info);
+      free(info);
+      if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s info\n",__FUNCTION__,path);
+      return 0;
+   }
+
    return 0; // Whatever, don't really care
 }
 
 int dosxe_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
 {
-   (void)path; // Always "/"
    (void)offset;
    (void)fi;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
+
+   int r,isdir,isinfo;
+   struct dosxe_dir_entry *entry=NULL;
+   r = dosxe_path(path,&entry,NULL,NULL,&isdir,&isinfo);
+   if ( r<0 ) return r;
+   if ( r>0 ) return -ENOENT;
+   if ( !isdir ) return -ENOTDIR;
+
+   int dir_cluster_num=entry ? BYTES2(entry->file_map_blocks[0]) : ROOT_DIR_CLUSTER;
+   while ( dir_cluster_num && dir_cluster_num < MAX_CLUSTER )
+   {
+      struct dosxe_dir_cluster *dir_cluster = CLUSTER(dir_cluster_num);
+      for (int i=0;i<5;++i)
+      {
+         struct dosxe_dir_entry *e = &dir_cluster->entries[i];
+         if ( e->status == 0 ) break;
+         if ( e->status == FLAGS_DELETED ) continue;
+         char name[8+1+3+1];
+         char *n = name;
+         for (int j=0;j<8;++j)
+         {
+            if ( e->file_name[j] == ' ' ) break;
+            *n = e->file_name[j];
+            ++n;
+         }
+         if ( e->file_ext[0] != ' ' )
+         {
+            *n = '.';
+            ++n;
+            for (int j=0;j<3;++j)
+            {
+               if ( e->file_ext[j] == ' ' ) break;
+               *n=e->file_ext[j];
+               ++n;
+            }
+         }
+         *n=0;
+         filler(buf, name, FILLER_NULL);
+      }
+      if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s dir cluster %d -> %d\n",__FUNCTION__,path, dir_cluster_num, BYTES2(dir_cluster->next));
+      dir_cluster_num = BYTES2(dir_cluster->next);
+   }
+
+#if 0
    filler(buf, "DOS_XE_DISK_IMAGE", FILLER_NULL);
    filler(buf, "NOT_YET_SUPPORTED", FILLER_NULL);
    filler(buf, "USE_.cluster#_for_raw_nonzero_clusters", FILLER_NULL);
-
+#endif
 #if 1 // This will work even if we skip the entries
-   // Create .cluster4 ... .cluster359 as appropriate
-   unsigned char zero[256];
-   memset(zero,0,256);
-   char name[32];
-   int digits = sprintf(name,"%d",atrfs.sectors);
-   int maxcluster = atrfs.sectors;
-   if ( atrfs.sectorsize == 128 )
+   if ( strcmp(path,"/") == 0 )
    {
-      maxcluster--;
-      maxcluster /= 2;
-   }
-   for (int sec=4; sec<=maxcluster; ++sec)
-   {
-      unsigned char *s = CLUSTER(sec);
-      if ( memcmp(s,zero,256) == 0 ) continue; // Skip empty sectors
-      sprintf(name,".cluster%0*d",digits,sec);
-      filler(buf,name,FILLER_NULL);
+      // Create .cluster4 ... .cluster359 as appropriate
+      unsigned char zero[256];
+      memset(zero,0,256);
+      char name[32];
+      int digits = sprintf(name,"%d",atrfs.sectors);
+      int maxcluster = atrfs.sectors;
+      if ( atrfs.sectorsize == 128 )
+      {
+         maxcluster--;
+         maxcluster /= 2;
+      }
+      for (int sec=4; sec<=maxcluster; ++sec)
+      {
+         unsigned char *s = CLUSTER(sec);
+         if ( memcmp(s,zero,256) == 0 ) continue; // Skip empty sectors
+         sprintf(name,".cluster%0*d",digits,sec);
+         filler(buf,name,FILLER_NULL);
+      }
    }
 #endif
    return 0;
 }
 
+/*
+ * dosxe_read()
+ */
 int dosxe_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
    (void)fi;
@@ -457,6 +769,74 @@ int dosxe_read(const char *path, char *buf, size_t size, off_t offset, struct fu
    }
 
    // Regular files
-   // FIXME
-   return -ENOENT;
+   int r,isdir,isinfo;
+   struct dosxe_dir_entry *entry=NULL;
+   int parent_dir_first_cluster=0;
+   r = dosxe_path(path,&entry,NULL,&parent_dir_first_cluster,&isdir,&isinfo);
+   if ( r<0 ) return r;
+   if ( r>0 ) return -ENOENT;
+   if ( isdir && !isinfo ) return -EISDIR;
+
+   // Info files
+   if ( isinfo )
+   {
+      char *info = dosxe_info(path,isdir,parent_dir_first_cluster,entry);
+      char *i = info;
+      int bytes = strlen(info);
+      if ( offset >= bytes )
+      {
+         free(info);
+         return -EOF;
+      }
+      bytes -= offset;
+      i += offset;
+      if ( (size_t)bytes > size ) bytes = size;
+      memcpy(buf,i,bytes);
+      free(info);
+      return bytes;
+   }
+
+   // Regular files
+   if ( options.debug ) fprintf(stderr, "DEBUG: %s: %s File has %d clusters and %d more bytes\n",__FUNCTION__,path,BYTES2(entry->file_clusters),entry->bytes_in_last_cluster);
+   int bytes_read = 0;
+   int full_blocks = BYTES2(entry->file_clusters);
+   for ( int map=0;map<12;++map )
+   {
+      if ( !BYTES2(entry->file_map_blocks[map]) ) break; // EOF
+      struct dosxe_file_map_cluster *mapcluster = CLUSTER(BYTES2(entry->file_map_blocks[map]));
+      for ( int map_entry=0;map_entry<125;++map_entry )
+      {
+         int data_cluster_num = BYTES2(mapcluster->data_block[map_entry]);
+         if ( !data_cluster_num ) break; // EOF
+         struct dosxe_data_cluster *data = CLUSTER(data_cluster_num);
+         unsigned char *s = data->data;
+         if ( !data ) return -EIO;
+
+         int bytes=250;
+         if ( !full_blocks ) bytes = entry->bytes_in_last_cluster;
+         else --full_blocks;
+         if ( offset < bytes )
+         {
+            s+=offset;
+            bytes -= offset;
+            offset = 0;
+         }
+         if ( offset > bytes )
+         {
+            offset -= bytes;
+            bytes = 0;
+         }
+         if ( (size_t)bytes > size ) bytes = size;
+         // FIXME: Validate setor label
+         if ( bytes )
+         {
+            memcpy(buf,s,bytes);
+            buf += bytes;
+            bytes_read += bytes;
+            size -= bytes;
+         }
+      }
+   }
+   if ( bytes_read ) return bytes_read;
+   return -EOF;
 }
