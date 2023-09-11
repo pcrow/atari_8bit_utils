@@ -16,9 +16,6 @@
 #include <errno.h>
 #include <string.h>
 #include <stdlib.h>
-#include <sys/mman.h>
-#include <linux/fs.h> // RENAME_NOREPLACE
-#include <time.h>
 #include "atrfs.h"
 
 /*
