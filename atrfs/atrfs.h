@@ -31,6 +31,17 @@
 #endif
 
 /*
+ * MacOS compatibility
+ */
+// Source: https://github.com/hboetes/mg/issues/7
+#if defined(__APPLE__) || defined(__NetBSD__) 
+#define st_atim st_atimespec
+#define st_ctim st_ctimespec
+#define st_mtim st_mtimespec
+#endif
+
+
+/*
  * Data types
  */
 
