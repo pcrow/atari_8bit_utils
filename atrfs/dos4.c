@@ -85,7 +85,7 @@
 #ifdef __linux__
 #include <linux/fs.h> // Linux-only options; fix if supported elsewhere
 #else
-#define RENAME_REPLACE  0
+#define RENAME_NOREPLACE  0
 #define RENAME_EXCHANGE 0
 #endif
 #include <time.h>
