@@ -23,26 +23,48 @@ Limitations:
   upto 11 characters, and it will infer a '.' after 8 characters.
 
   Obviously there is no user/group or ACL support.  The user/group is that
-  of the user mounting the file system.
+  of the user mounting the file system.  Any attempt to change ownership of
+  files will report success despite doing nothing to avoid pointless
+  warnings.
 
   Permissions are always 755 for directories and 644 for files unless the
   file is locked, in which case it is 444.  You can use chmod to turn the
-  write permissions on or off.
+  write permissions on or off.  It will only look at the write permission
+  bit for the owner and ignore all other bits.
 
   If the ATR file is read-only, then all modifications will fail saying
   that it is a read-only file system.  Please unmount the file system
   before changing the permissions or otherwise modifying the underlying ATR
   file.
 
-Special files (if enabled):
+Special files:
   .bootsectors: The raw boot sectors from the image.
   .bootinfo: A text file containing information from the boot sectors.
   .fsinfo: A text file with general file system and disk image info.
 
+  The above will appear in the directory unless you turn them off.  The
+  files will still work even if you turn them off.
+
   All special files are read-only.
 
-Info files (if enabled):
-  Add ".info" to any regular file.  This will be a text file with
+  Example use: hexdump -C .bootsectors
+
+  Additionally, you can always access any sector with .sector# (where '#'
+  is the number in decimal, or hex with '0x' or '$' preceding it.
+
+  For file systems that use clusters, you can read raw clusters wth
+  .cluster# just like with sectors.  This is supported in DOS3, DOS4, and
+  DOS XE.
+
+  If the file system time can not be determined, the standard special files
+  will be created.  Also the directory will list the .sector files for each
+  non-zero sector.
+
+  The special files are only in the main directory for file systems that
+  support subdirectories.
+
+Info files
+  Add ".info" to any regular file or directory.  This will be a text file with
   additional information on the file.  It will not show up in directory
   listings and is read-only.
 
@@ -50,10 +72,12 @@ Info files (if enabled):
 General:
 
 The file system type is detected automatically.  If no valid file system is
-detected, then the mount will fail.
+detected, it will create the standard special files, .sector files for each non-zero sector, and a few empty files reporting that it's unknown.
 
 The design of this is modular, so that support for any given file system is
-a separate file, with the generic handling in atrfs.c.
+a separate file, with the generic handling in atrfs.c.  Due to the use of
+common code, DOS 1, DOS 2, DOS 2.5, and MyDOS are all in the mydos.c
+module.
 
 File system detection is done by calling a "sanity" function for each
 supported file system until one finds it compatible.  In adding new file
@@ -91,11 +115,13 @@ DOS 1, DOS 2.0s, DOS 2.0d, DOS 2.5, and MyDOS 4.53:
 These file systems are all very similar and handled by the mydos.c module.
 DOS 2.5 is only detected if it's an enhanced-density disk with a second
 VTOC sector on sector 1024.  Otherwise I believe DOS 2.5 images are identical
-to DOS 2.0s image.
+to DOS 2.0s images.
 
-The code allows subdirectories in all of them except DOS 2.5, as it is
-possible to format a disk with DOS 2.0s and then use MyDOS on the image,
-but with DOS 2.5, the extended VTOC sector is incompatible with MyDOS.
+The code allows subdirectories in all of them except DOS 2.5 and DOS 1, as
+it is possible to format a disk with DOS 2.0s and then use MyDOS on the
+image, but with DOS 2.5, the extended VTOC sector is incompatible with
+MyDOS.  DOS 1 is excluded because MyDOS does not have compatibilty with DOS
+1 files.
 
 Note: DOS 2.0d is detected as MyDOS, as it's a proper subset.  The only
 difference between the two is the code in the boot sectors is different.
@@ -132,20 +158,31 @@ from the current time zone.  SpartaDOS uses one byte for the last two digits of 
 
 Bugs:
 
-Much of this hasn't been implemented yet.
+Probably.
 
 
 DOS XE:
 
-Not implemented yet
+Read-only for now.
 
 Atari DOS 3:
 
-Not implemented yet (low priority)
+Read-only for now.
 
 Atari DOS 4 (designed for 1450XLD):
 
-Not implemented yet (very low priority)
+Read-only for now.
+
+LiteDOS:
+
+Minimal testing.
+
+Bugs:
+
+Does not handle copying DOS to the disk with touching the boot sector to make it boot.
+
+
+Thoughts:
 
 There were may other DOS versions released by third parties that could be
 implemented here.  Games that use their own formats could also be supported.
