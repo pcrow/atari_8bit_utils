@@ -22,7 +22,7 @@ LIBS = -lfuse
 endif
 
 CFLAGS += -D_FILE_OFFSET_BITS=64 # Important for older FUSE versions
-OBJ = atrfs.o special.o info.o mydos.o sparta.o dosxe.o dos3.o dos4.o unknown.o
+OBJ = atrfs.o special.o info.o mydos.o sparta.o dosxe.o dos3.o dos4.o litedos.o unknown.o
 HEADERS = atrfs.h
 atrfs: $(OBJ)
 	gcc -o $@ $(OBJ) $(LIBS)

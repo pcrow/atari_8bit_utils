@@ -87,6 +87,8 @@ struct options {
    unsigned int secsize;
    int mydos;
    int sparta;
+   int litedos;
+   int clustersize;
    const char *volname;
 };
 
@@ -156,4 +158,5 @@ extern const struct fs_ops sparta_ops;
 extern const struct fs_ops dos3_ops;
 extern const struct fs_ops dos4_ops;
 extern const struct fs_ops dosxe_ops;
+extern const struct fs_ops litedos_ops;
 extern const struct fs_ops unknown_ops;

@@ -54,6 +54,7 @@ const struct fs_ops *fs_ops[ATR_MAXFSTYPE] = {
    [ATR_DOS3] = &dos3_ops,
    [ATR_DOS4] = &dos4_ops,
    [ATR_DOSXE] = &dosxe_ops,
+   [ATR_LITEDOS] = &litedos_ops,
    [ATR_UNKNOWN] = &unknown_ops,
 };
 char *cwd; // FUSE sets working director to '/' before we open the ATR file
@@ -182,6 +183,7 @@ int atr_preinit(void)
       // Set file system type
       if ( options.sparta ) atrfs.fstype = ATR_SPARTA;
       else if ( options.mydos ) atrfs.fstype = ATR_MYDOS;
+      else if ( options.litedos ) atrfs.fstype = ATR_LITEDOS;
       else if ( atrfs.sectors < 368 ) atrfs.fstype = ATR_SPARTA; // Too short for DOS 2
       else if ( atrfs.sectors <= 720 && atrfs.sectorsize == 128 ) atrfs.fstype = ATR_DOS2;
       else if ( atrfs.sectors == 1040 && atrfs.sectorsize == 128 ) atrfs.fstype = ATR_DOS25;
@@ -616,6 +618,8 @@ const struct fuse_opt option_spec[] = {
    OPTION("--mydos", mydos),
    OPTION("--sparta", sparta),
    OPTION("--volname=%s", volname),
+   OPTION("--litedos", litedos),
+   OPTION("--cluster=%u", clustersize),
    FUSE_OPT_END
 };
 
@@ -649,11 +653,14 @@ int main(int argc,char *argv[])
              "    --name=<atr file path>\n"
              "    --nodotfiles  (no special dot files in root directory)\n"
              "    --create      (create new image)\n"
+             " Options used with --create:\n"
              "    --secsize=<#> (sector size if creating; default 128)\n"
              "    --sectors=<#> (number of sectors in image; default 720)\n"
              "    --mydos       (create MyDOS image)\n"
              "    --sparta      (create SpartDOS image)\n"
              "    --volname=<>  (set volume name for new SpartaDOS image)\n"
+             "    --litedos     (create LiteDOS iamge)\n"
+             "    --cluster=<#> (minimum cluster size for LiteDOS)\n"
          );
       return 0;
    }
