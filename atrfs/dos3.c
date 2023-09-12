@@ -291,7 +291,7 @@ int dos3_getattr(const char *path, struct stat *stbuf)
    // Special files for 1K blocks or clusters
    if ( strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
    {
-      int sec = atoi(path+sizeof("/.cluster")-1);
+      int sec = string_to_sector(path);
       if ( sec >= 0 && sec*8+25+7<=atrfs.sectors )
       {
          stbuf->st_mode = MODE_RO(stbuf->st_mode);
@@ -408,7 +408,7 @@ int dos3_read(const char *path, char *buf, size_t size, off_t offset, struct fus
    // Magic /.cluster### files
    if ( strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
    {
-      int sec = atoi(path+sizeof("/.cluster")-1);
+      int sec = string_to_sector(path);
       if ( sec < 0 || sec*8+25+7>atrfs.sectors ) return -ENOENT;
 
       int bytes = 1024;

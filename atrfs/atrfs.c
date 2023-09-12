@@ -300,7 +300,7 @@ int atr_getattr(const char *path, struct stat *stbuf
    // Magic ".sector###" files
    if ( strncmp(path,"/.sector",sizeof("/.sector")-1) == 0 )
    {
-      int sec = atoi(path+sizeof("/.sector")-1);
+      int sec = string_to_sector(path);
       if ( sec > 0 && sec <= atrfs.sectors )
       {
          stbuf->st_mode = MODE_RO(stbuf->st_mode);
@@ -369,7 +369,7 @@ int atr_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
    // Magic .sector### files: Read a raw sector
    if ( strncmp(path,"/.sector",sizeof("/.sector")-1) == 0 )
    {
-      int sec = atoi(path+sizeof("/.sector")-1);
+      int sec = string_to_sector(path);
       if ( sec <= 0 || sec > atrfs.sectors ) return -ENOENT;
 
       int bytes = 128;

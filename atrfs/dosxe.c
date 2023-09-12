@@ -573,7 +573,7 @@ int dosxe_getattr(const char *path, struct stat *stbuf)
    }
    if ( strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
    {
-      int sec = atoi(path+sizeof("/.cluster")-1);
+      int sec = string_to_sector(path);
       int maxcluster = atrfs.sectors;
       if ( atrfs.sectorsize == 128 )
       {
@@ -753,7 +753,7 @@ int dosxe_read(const char *path, char *buf, size_t size, off_t offset, struct fu
    // Magic /.cluster### files
    if ( strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
    {
-      int sec = atoi(path+sizeof("/.cluster")-1);
+      int sec = string_to_sector(path);
       int maxcluster = atrfs.sectors;
       if ( atrfs.sectorsize == 128 )
       {

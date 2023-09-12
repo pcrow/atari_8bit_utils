@@ -138,8 +138,11 @@ struct fs_ops {
 /*
  * Function prototypes
  */
+// atrfs.c functions used elsewhere
 int atr_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 char *atr_info(const char *path,int filesize);
+// common.c functions
+int string_to_sector(const char *path);
 
 /*
  * Global variables
