@@ -237,7 +237,6 @@ EOF
 #   DIR - mirror file system directory
 #   ATRS - list of ATR files to test with
 #   ATR - location to copy ATR files to for testing
-#   NEW - location to create temporary new ATR files
 #
 cmdline()
 {
@@ -277,7 +276,6 @@ cmdline()
     MNT="${SCRATCHDIR}"/mnt
     DIR="${SCRATCHDIR}"/dir
     ATR="${SCRATCHDIR}"/testcopy.atr
-    NEW="${SCRATCHDIR}"/newfs.atr
     mkdir "${MNT}" >& /dev/null
     mkdir "${DIR}" >& /dev/null
     if [ ! -d "${MNT}" ]; then
@@ -297,16 +295,16 @@ cmdline()
 #
 cleanup()
 {
-    rm -rf "${DIR}" "${ATR}" "${NEW}"
+    rm -rf "${DIR}" "${ATR}"
     rmdir "${MNT}"
     [ "${DID_MKDIR}" == "yes" ] && rmdir "${SCRATCHDIR}"
 }
 
-main()
+#
+# test_atr_files()
+#
+test_atr_files()
 {
-    cmdline "$@"
-    ERRORS=()
-
     for A in "${ATRS[@]}"; do
         # Copy the ATR file so that we can clobber it
         if [ ! -f "${A}" ]; then
@@ -332,10 +330,92 @@ main()
         fi
         echo "Tests passed: ${FSTYPE} image ${A}"
     done
-    echo Tests passed on all images
+    return 0
+}
+
+#
+# test_newfs()
+#
+# Create new images and test them
+#
+test_newfs()
+{
+    OPTIONS=(
+        "--mydos --secsize=128 --sectors=369"
+        "--mydos --secsize=256 --sectors=369"
+        "--mydos --secsize=128 --sectors=720"
+        "--mydos --secsize=256 --sectors=720"
+        "--mydos --secsize=128 --sectors=65535"
+        "--mydos --secsize=256 --sectors=65535"
+        "--mydos --secsize=128 --sectors=$(( (RANDOM % 256) * (RANDOM % 254) + 370 ))"
+        "--mydos --secsize=256 --sectors=$(( (RANDOM % 256) * (RANDOM % 254) + 370 ))"
+        "--sparta --volname=Test --secsize=128 --sectors=$(( 6 * 8 ))"
+        "--sparta --volname=Test --secsize=256 --sectors=$(( 6 * 4 ))"
+        "--sparta --volname=Test --secsize=128 --sectors=$(( (RANDOM % 256) * (RANDOM % 254) + 48 ))"
+        "--sparta --volname=Test --secsize=256 --sectors=$(( (RANDOM % 256) * (RANDOM % 254) + 48 ))"
+        "--litedos --secsize=128 --sectors=369"
+        "--litedos --secsize=256 --sectors=369"
+        "--litedos --secsize=128 --sectors=720"
+        "--litedos --secsize=256 --sectors=720"
+        "--litedos --cluster=4 --secsize=128 --sectors=720"
+        "--litedos --cluster=8 --secsize=256 --sectors=720"
+        "--litedos --cluster=16 --secsize=128 --sectors=720"
+        "--litedos --cluster=32 --secsize=256 --sectors=720"
+        "--litedos --secsize=128 --sectors=65535"
+        "--litedos --secsize=256 --sectors=65535"
+        "--litedos --secsize=128 --sectors=$(( (RANDOM % 256) * (RANDOM % 254) + 370 ))"
+        "--litedos --secsize=256 --sectors=$(( (RANDOM % 256) * (RANDOM % 254) + 370 ))"
+    )
+    for O in "${OPTIONS[@]}"; do
+        rm -f "${ATR}"
+        atrfs --name="${ATR}" --create $(echo "$O") "${MNT}"
+        R=$?
+        if [ "${R}" -ne 0 ]; then
+            echo Failed to create new file system
+            echo Command line: atrfs --name="${ATR}" --create $(echo "$O") "${MNT}"
+            return 1
+        fi
+        test
+        R=$?
+        umount "${MNT}"
+
+        if [ "${R}" -ne 0 ]; then
+            echo Tests failed with "$O"
+            for E in ${ERRORS[*]}; do
+                echo "  $E"
+            done
+            return 1
+        fi
+        echo "Tests passed: ${FSTYPE} options ${O}"
+    done
     return 0
 }
 
 
+#
+# main()
+#
+main()
+{
+    cmdline "$@"
+    ERRORS=()
+
+    test_atr_files
+    R=$?
+    if [ "${R}" -ne 0 ]; then
+        return 1
+    fi
+    echo Tests passed on all pre-existing images
+    test_newfs
+    if [ "${R}" -ne 0 ]; then
+        return 1
+    fi
+    echo Tests passed on all newly created images
+    return 0
+}
+
+#
+# Run and clean up
+#
 main "$@"
 cleanup

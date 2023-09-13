@@ -398,6 +398,7 @@ char *dos4_info(const char *path,struct dos4_dir_entry *dirent)
 int dos4_sanity(void)
 {
    if ( atrfs.sectorsize != 128 &&  atrfs.sectorsize != 256 ) return 1; // Must be SD
+   if ( atrfs.sectors < (VTOC_CLUSTER+2)*CLUSTER_SIZE ) return 1; // Too small
    struct dos4_dir_entry *dirent = DIR_START;
    struct dos4_vtoc *vtoc = VTOC_START;
    unsigned char *map = VTOC_START;

@@ -2025,12 +2025,12 @@ int sparta_newfs(void)
    // Sector 1
    sec1->sectors[0] = atrfs.sectors & 0xff;
    sec1->sectors[1] = atrfs.sectors >> 8;
-   sec1->bitmap_sectors = (atrfs.sectors+1)/(8*atrfs.sectorsize);
+   sec1->bitmap_sectors = ((atrfs.sectors+7)/8 + atrfs.sectorsize-1) / atrfs.sectorsize;
    sec1->first_bitmap[0] = next_sector & 0xff;
    sec1->first_bitmap[1] = next_sector >> 8; // Always zero
    next_sector += sec1->bitmap_sectors;
    sec1->dir[0] = next_sector & 0xff;
-   sec1->dir[0] = next_sector >> 8; // Always zero
+   sec1->dir[1] = next_sector >> 8; // Always zero
    switch (atrfs.sectorsize)
    {
       case 128: sec1->sector_size = 128; break;
