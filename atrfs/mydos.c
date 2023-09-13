@@ -351,6 +351,47 @@ static const char bootsectors[ATR_MAXFSTYPE][3*128] =
  */
 
 /*
+ * dos_dirent_sanity()
+ *
+ * Return:
+ *    0 - good
+ *    1 - good and never allocated
+ *   neg - bad
+ */
+int dos_dirent_sanity(const struct dos2_dirent *dirent)
+{
+   struct dos2_dirent zero;
+   memset(&zero,0,sizeof(zero));
+   if ( memcmp(&zero,dirent,sizeof(zero)) == 0 ) return 1;
+   if ( (dirent->flags & FLAGS_DELETED) && (dirent->flags & ~FLAGS_DELETED) ) return -1;
+   if ( dirent->flags == 0 ) return -1; // Not unless full directory is empty
+   if ( (dirent->flags & FLAGS_UNDEF) ) return -1; // Should never be set
+   if ( BYTES2(dirent->sectors) > atrfs.sectors ) return -1; // File too large to exist
+   if ( BYTES2(dirent->start) > atrfs.sectors ) return -1; // File starts past end of image
+   return 0;
+}
+
+/*
+ * dos_root_dir_sanity()
+ */
+int dos_root_dir_sanity(void)
+{
+   int at_end=0;
+   int r;
+
+   for ( int i=0;i<64;++i )
+   {
+      struct dos2_dirent *dirent;
+      dirent = SECTOR(361);
+      r = dos_dirent_sanity(&dirent[DIRENT_ENTRY(i)]);
+      if ( r < 0 ) return r;
+      if ( r == 0 && at_end ) return -1;
+      if ( r == 1 ) at_end = 1;
+   }
+   return 0;
+}
+
+/*
  * mydos_sanity()
  *
  * Return 0 if this is a valid MyDOS file system
@@ -364,6 +405,7 @@ int mydos_sanity(void)
    if ( sec1->pad_zero == 'X' || sec1->pad_zero == 'S' ) return 1; // Flagged as DOS XE or SpartaDOS
    struct mydos_vtoc *vtoc = SECTOR(360);
    if ( BYTES2(vtoc->total_sectors) < BYTES2(vtoc->free_sectors) ) return 1; // free must not exceed total
+   if ( dos_root_dir_sanity() ) return 1; // Root directory not sane
 
    int vtoc_sectors = 2; // Code is 2 for one sector to match DOS 2
    if ( atrfs.sectors > 943 )
@@ -372,24 +414,26 @@ int mydos_sanity(void)
       const int vtoc_bytes = (atrfs.sectors - 943 + 7)/8;
       vtoc_sectors += (vtoc_bytes + 255) / 256;
    }
-   if ( vtoc->vtoc_sectors != vtoc_sectors ) // Number of VTOC sectors doesn't match
-   {
-      fprintf(stderr,"Warning: MyDOS VTOC sector code should be %d, observed %d (sector size %d)\n",vtoc_sectors,vtoc->vtoc_sectors,atrfs.sectorsize);
-      // return 1; // Don't abort; some disks are wrong.
-   }
    if ( atrfs.sectorsize == 128 ) vtoc_sectors = vtoc_sectors*2-3;
    else vtoc_sectors=vtoc_sectors-1;
    int reserved_sectors = 3+vtoc_sectors+8;
    if ( atrfs.sectors >= 720 ) ++reserved_sectors;
 
    if ( !BYTES2(vtoc->total_sectors) ) return 1; // Must have some sectors
+   if ( vtoc->bitmap[0]&0xf0 ) return 1; // sectors 0-4 are always used
+   for (int i=360;i<=368;++i) if ( BITMAP(vtoc->bitmap,i) ) return 1; // VTOC and directory used
+
+   // Checks for which we will print warnings but not abort
+   if ( vtoc->vtoc_sectors != vtoc_sectors ) // Number of VTOC sectors doesn't match
+   {
+      fprintf(stderr,"Warning: MyDOS VTOC sector code should be %d, observed %d (sector size %d)\n",vtoc_sectors,vtoc->vtoc_sectors,atrfs.sectorsize);
+      // return 1; // Don't abort; some disks are wrong.
+   }
    if ( BYTES2(vtoc->total_sectors) != atrfs.sectors - reserved_sectors )
    {
       fprintf(stderr,"Warning: MyDOS total sectors reported %d; should be %d - %d = %d\n",BYTES2(vtoc->total_sectors), atrfs.sectors, reserved_sectors, atrfs.sectors - reserved_sectors);
-      // return 1;
+      // return 1; // Don't abort; some disks are wrong.
    }
-   if ( vtoc->bitmap[0]&0xf0 ) return 1; // sectors 0-4 are always used
-   for (int i=360;i<=368;++i) if ( BITMAP(vtoc->bitmap,i) ) return 1; // VTOC and directory used
    // We could add up the free sectors in the bitmap and validate the free count; probably overkill as this isn't fsck.
    return 0;
 }
@@ -408,9 +452,10 @@ int dos1_sanity(void)
    if ( sec1->boot_sectors != 1 ) return 1; // Must have 1 boot sector!
    struct mydos_vtoc *vtoc = SECTOR(360);
    if ( BYTES2(vtoc->total_sectors) < BYTES2(vtoc->free_sectors) ) return 1; // free must not exceed total
+   if ( dos_root_dir_sanity() ) return 1; // Root directory not sane
 
    if ( vtoc->vtoc_sectors != 1 ) return 1; // Code is 1 for DOS 1
-   int reserved_sectors = 2+1+8+1;
+   int reserved_sectors = 1+1+8+1;
    
    if ( !BYTES2(vtoc->total_sectors) ) return 1; // Must have some sectors
    if ( BYTES2(vtoc->total_sectors) != atrfs.sectors - reserved_sectors )
@@ -442,9 +487,10 @@ int dos2_sanity(void)
    if ( sec1->pad_zero == 'X' || sec1->pad_zero == 'S' ) return 1; // Flagged as DOS XE or SpartaDOS
    struct mydos_vtoc *vtoc = SECTOR(360);
    if ( BYTES2(vtoc->total_sectors) < BYTES2(vtoc->free_sectors) ) return 1; // free must not exceed total
+   if ( dos_root_dir_sanity() ) return 1; // Root directory not sane
 
    if ( vtoc->vtoc_sectors != 2 ) return 1; // Code is 2 for DOS 2
-   int reserved_sectors = 4+1+8+1; // sector 0; boot; vtoc; dir(8); 720
+   int reserved_sectors = 3+1+8+1; // boot; vtoc; dir(8); 720
    
    if ( !BYTES2(vtoc->total_sectors) ) return 1; // Must have some sectors
    if ( BYTES2(vtoc->total_sectors) != atrfs.sectors - reserved_sectors )
@@ -476,16 +522,17 @@ int dos25_sanity(void)
    if ( sec1->pad_zero == 'X' || sec1->pad_zero == 'S' ) return 1; // Flagged as DOS XE or SpartaDOS
    struct mydos_vtoc *vtoc = SECTOR(360);
    if ( BYTES2(vtoc->total_sectors) < BYTES2(vtoc->free_sectors) ) return 1; // free must not exceed total
+   if ( dos_root_dir_sanity() ) return 1; // Root directory not sane
 
    if ( vtoc->vtoc_sectors != 2 ) return 1; // Code is 2 for DOS 2
-   int reserved_sectors = 4+1+8+1;
+   int reserved_sectors = 1+3+1+8+1; // Counts sector zero
    
    if ( !BYTES2(vtoc->total_sectors) ) return 1; // Must have some sectors
    int total_sec = atrfs.sectors;
    if ( total_sec > 1024 ) total_sec = 1024;
    if ( BYTES2(vtoc->total_sectors) != total_sec - reserved_sectors )
    {
-      fprintf(stderr,"Warning: DOS total sectors reported %d; should be %d - %d = %d\n",BYTES2(vtoc->total_sectors), total_sec, reserved_sectors, total_sec - reserved_sectors);
+      fprintf(stderr,"Warning: DOS 2.5 total sectors reported %d; should be %d - %d = %d\n",BYTES2(vtoc->total_sectors), total_sec, reserved_sectors, total_sec - reserved_sectors);
       // return 1;
    }
    if ( vtoc->bitmap[0]&0xf0 ) return 1; // sectors 0-4 are always used
@@ -696,6 +743,7 @@ int mydos_path(const char *path,int *sector,int *parent_dir_sector,int *count,in
    {
       if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s recursing on dir %d\n",__FUNCTION__,path,*parent_dir_sector);
    }
+   *entry = -1;
    *count = 0;
    *isdir=0;
    *isinfo=0;
@@ -708,6 +756,11 @@ int mydos_path(const char *path,int *sector,int *parent_dir_sector,int *count,in
       {
          *isdir = 1;
          return 0;
+      }
+      if ( strcmp(path,".info")==0 )
+      {
+         *isinfo = 1;
+         return 0;      
       }
 
       // Extract the file name up to the trailing slash
@@ -1024,14 +1077,17 @@ char *mydos_info(const char *path,struct dos2_dirent *dirent,int parent_dir_sect
    b = buf;
    *b = 0;
    b+=sprintf(b,"File information and analysis\n\n  %.*s\n  %d bytes\n\n",(int)(strrchr(path,'.')-path),path,filesize);
-   b+=sprintf(b,
-              "Directory entry internals:\n"
-              "  Entry %d in directory at sector %d\n"
-              "  Flags: $%02x\n"
-              "  Sectors: %d\n"
-              "  Starting Sector: %d\n\n",
-              entry,parent_dir_sector,
-              dirent->flags,BYTES2(dirent->sectors),BYTES2(dirent->start));
+   if ( dirent )
+   {
+      b+=sprintf(b,
+                 "Directory entry internals:\n"
+                 "  Entry %d in directory at sector %d\n"
+                 "  Flags: $%02x\n"
+                 "  Sectors: %d\n"
+                 "  Starting Sector: %d\n\n",
+                 entry,parent_dir_sector,
+                 dirent->flags,BYTES2(dirent->sectors),BYTES2(dirent->start));
+   }
    if ( !sectors )
    {
       b+=sprintf(b,"This is a directory\n");
@@ -1155,9 +1211,12 @@ int mydos_getattr(const char *path, struct stat *stbuf)
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
 
-   struct dos2_dirent *dirent;
-   dirent = SECTOR(parent_dir_sector);
-   dirent += DIRENT_ENTRY(entry);
+   struct dos2_dirent *dirent = NULL;
+   if ( entry >= 0 )
+   {
+      dirent = SECTOR(parent_dir_sector);
+      dirent += DIRENT_ENTRY(entry);
+   }
 
    if ( isinfo )
    {
@@ -1165,7 +1224,7 @@ int mydos_getattr(const char *path, struct stat *stbuf)
       stbuf->st_ino = sector + 0x10000;
 
       int filesize = atrfs.sectorsize*8,*sectors = NULL; // defaults for directories
-      if ( !(dirent->flags & FLAGS_DIR) )
+      if ( dirent && !(dirent->flags & FLAGS_DIR) )
       {
          r = mydos_trace_file(sector,fileno,(dirent->flags & FLAGS_DOS2) == 0,&filesize,&sectors);
          if ( r<0 ) return r;
@@ -1208,16 +1267,19 @@ int mydos_read(const char *path, char *buf, size_t size, off_t offset, struct fu
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
 
-   struct dos2_dirent *dirent;
-   dirent = SECTOR(parent_dir_sector);
-   dirent += DIRENT_ENTRY(entry);
+   struct dos2_dirent *dirent=NULL;
+   if ( entry >= 0 )
+   {
+      dirent = SECTOR(parent_dir_sector);
+      dirent += DIRENT_ENTRY(entry);
+   }
 
-   if ( isinfo && (dirent->flags & FLAGS_DIR) )
+   if ( isinfo && dirent && (dirent->flags & FLAGS_DIR) )
    {
       sectors = NULL;
       filesize = 8 * atrfs.sectorsize;
    }
-   else
+   else if ( !isinfo || dirent )
    {
       r = mydos_trace_file(sector,fileno,(dirent->flags & FLAGS_DOS2) == 0,&filesize,&sectors);
 
@@ -1230,7 +1292,7 @@ int mydos_read(const char *path, char *buf, size_t size, off_t offset, struct fu
 
    if ( isinfo )
    {
-      if ( dirent->flags & FLAGS_DIR )
+      if ( !dirent || dirent->flags & FLAGS_DIR )
       {
          sectors = NULL;
          filesize = 8 * atrfs.sectorsize;

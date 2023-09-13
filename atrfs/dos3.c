@@ -134,6 +134,11 @@ int dos3_get_dir_entry(const char *path,struct dos3_dir_entry **dirent_found,int
    *isinfo = 0;
    while (*path == '/') ++path;
    if ( strchr(path,'/') ) return -ENOENT; // No subdirectories alowed
+   if ( strcmp(path,".info")==0 )
+   {
+      *isinfo = 1;
+      return 0;      
+   }
 
    unsigned char name[8+3+1]; // 8+3+NULL
    memset(name,' ',8+3);
@@ -173,7 +178,6 @@ int dos3_get_dir_entry(const char *path,struct dos3_dir_entry **dirent_found,int
    {
       return -ENOENT; // Name too long
    }
-   if ( *path == '/' ) ++path;
 
    struct dos3_dir_entry *dirent = SECTOR(16);
    int firstfree = 0;
@@ -212,23 +216,35 @@ int dos3_get_dir_entry(const char *path,struct dos3_dir_entry **dirent_found,int
 char *dos3_info(const char *path,struct dos3_dir_entry *dirent)
 {
    char *buf,*b;
+   int filesize;
 
-   int filesize = (dirent->blocks-1)*1024 + BYTES2(dirent->file_size)%1024;
+   if ( !dirent )
+   {
+      filesize = 8*128;
+   }
+   else
+   {
+      filesize = (dirent->blocks-1)*1024 + BYTES2(dirent->file_size)%1024;
+   }
 
    buf = malloc(64*1024);
    b = buf;
    *b = 0;
    b+=sprintf(b,"File information and analysis\n\n  %.*s\n  %d bytes\n\n",(int)(strrchr(path,'.')-path),path,filesize);
-   b+=sprintf(b,
-              "Directory entry internals:\n"
-              "  Entry %ld\n"
-              "  Flags: $%02x\n"
-              "  1K Clusters: %d\n"
-              "  Starting cluster: %d\n\n",
-              dirent - (struct dos3_dir_entry *)SECTOR(16),
-              dirent->status,dirent->blocks,dirent->start);
-
+   if ( dirent )
+   {
+      b+=sprintf(b,
+                 "Directory entry internals:\n"
+                 "  Entry %ld\n"
+                 "  Flags: $%02x\n"
+                 "  1K Clusters: %d\n"
+                 "  Starting cluster: %d\n\n",
+                 dirent - (struct dos3_dir_entry *)SECTOR(16),
+                 dirent->status,dirent->blocks,dirent->start);
+   }
+   
    // Generic info for the file type
+   if ( dirent )
    {
       char *moreinfo;
       moreinfo = atr_info(path,filesize);
@@ -307,16 +323,16 @@ int dos3_getattr(const char *path, struct stat *stbuf)
    int r;
    r = dos3_get_dir_entry(path,&dirent,&isinfo);
    if ( r ) return r;
-   stbuf->st_ino = CLUSTER_TO_SECTOR(dirent->start);
-   if ( isinfo ) stbuf->st_ino += 0x10000;
-   stbuf->st_size = (dirent->blocks-1)*1024 + BYTES2(dirent->file_size)%1024;
+   stbuf->st_ino = dirent ? CLUSTER_TO_SECTOR(dirent->start) : 0;
    if ( isinfo )
    {
+      stbuf->st_ino += 0x10000;
       char *info = dos3_info(path,dirent);
       stbuf->st_size = strlen(info);
       free(info);
+      return 0;
    }
-
+   stbuf->st_size = (dirent->blocks-1)*1024 + BYTES2(dirent->file_size)%1024;
    return 0; // Whatever, don't really care
 }
 

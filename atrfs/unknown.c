@@ -31,6 +31,7 @@
  */
 int unknown_getattr(const char *path, struct stat *stbuf);
 int unknown_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
+int unknown_statfs(const char *path, struct statvfs *stfsbuf);
 
 /*
  * Global variables
@@ -50,7 +51,7 @@ const struct fs_ops unknown_ops = {
    // .fs_create = unknown_create,
    // .fs_truncate = unknown_truncate,
    // .fs_utimens = unknown_utimens,
-   // .fs_statfs = unknown_statfs,
+   .fs_statfs = unknown_statfs,
    // .fs_newfs = unknown_newfs,
    // .fs_fsinfo = unknown_fsinfo,
 };
@@ -101,5 +102,38 @@ int unknown_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t o
    }
    free(zero);
 #endif
+   return 0;
+}
+
+/*
+ * unknown_statfs()
+ *
+ * Report empty sectors as free.
+ */
+int unknown_statfs(const char *path, struct statvfs *stfsbuf)
+{
+   (void)path; // meaningless
+
+   // Find count of empty sectors
+   int free_sectors=0;
+   struct sector1 *s1 = SECTOR(1);
+   unsigned char *zero = calloc(1,atrfs.sectorsize);
+   if ( !zero ) return -ENOMEM; // Weird
+   for (int sec=s1->boot_sectors + 1; sec<=atrfs.sectors; ++sec)
+   {
+      unsigned char *s = SECTOR(sec);
+      if ( memcmp(s,zero,atrfs.sectorsize) == 0 ) continue;
+      ++free_sectors;
+   }
+   free(zero);
+
+   stfsbuf->f_bsize = atrfs.sectorsize;
+   stfsbuf->f_frsize = atrfs.sectorsize;
+   stfsbuf->f_blocks = atrfs.sectors;
+   stfsbuf->f_bfree = free_sectors;
+   stfsbuf->f_bavail = stfsbuf->f_bfree;
+   stfsbuf->f_files = 0; // no file system, no files
+   stfsbuf->f_ffree = 0;
+   stfsbuf->f_namemax = 12;
    return 0;
 }

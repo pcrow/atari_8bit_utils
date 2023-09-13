@@ -1295,15 +1295,12 @@ int litedos_statfs(const char *path, struct statvfs *stfsbuf)
    stfsbuf->f_bavail = stfsbuf->f_bfree;
    stfsbuf->f_files = DIRENT_COUNT;
    stfsbuf->f_ffree = 0; // Count them up below
-   if ( atrfs.fstype != ATR_LITEDOS )
+   for (int i=0;i<DIRENT_COUNT;++i)
    {
-      for (int i=0;i<DIRENT_COUNT;++i)
+      struct litedos_dirent *dirent = DIRENT_ENTRY(i);
+      if ( (dirent->flags & FLAGS_DELETED) || (dirent->flags == 0x00) )
       {
-         struct litedos_dirent *dirent = DIRENT_ENTRY(i);
-         if ( (dirent->flags & FLAGS_DELETED) || (dirent->flags == 0x00) )
-         {
-            ++stfsbuf->f_ffree;
-         }
+         ++stfsbuf->f_ffree;
       }
    }
    stfsbuf->f_namemax = 12; // 8.3, plus ".info" if enabled

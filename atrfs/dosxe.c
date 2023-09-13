@@ -226,7 +226,7 @@ const struct fs_ops dosxe_ops = {
    // .fs_create = dosxe_create,
    // .fs_truncate = dosxe_truncate,
    // .fs_utimens = dosxe_utimens,
-   // .fs_statfs = dosxe_statfs,
+   .fs_statfs = dosxe_statfs,
    // .fs_newfs = dosxe_newfs,
    .fs_fsinfo = dosxe_fsinfo,
 };
@@ -462,18 +462,6 @@ int dosxe_path(const char *path,struct dosxe_dir_entry **entry,struct dosxe_dir_
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: Unexpectedly reached end of function\n",__FUNCTION__);
    return -ENOENT; // Shouldn't be reached
 }
-// Implement these
-int dosxe_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
-int dosxe_mkdir(const char *path,mode_t mode);
-int dosxe_rmdir(const char *path);
-int dosxe_unlink(const char *path);
-int dosxe_rename(const char *path1, const char *path2, unsigned int flags);
-int dosxe_chmod(const char *path, mode_t mode, struct fuse_file_info *fi);
-int dosxe_create(const char *path, mode_t mode, struct fuse_file_info *fi);
-int dosxe_truncate(const char *path, off_t size, struct fuse_file_info *fi);
-int dosxe_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi);
-int dosxe_statfs(const char *path, struct statvfs *stfsbuf);
-int dosxe_newfs(void);
 
 /*
  * dosxe_fsinfo()
@@ -844,3 +832,35 @@ int dosxe_read(const char *path, char *buf, size_t size, off_t offset, struct fu
    if ( bytes_read ) return bytes_read;
    return -EOF;
 }
+// Implement these
+int dosxe_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
+int dosxe_mkdir(const char *path,mode_t mode);
+int dosxe_rmdir(const char *path);
+int dosxe_unlink(const char *path);
+int dosxe_rename(const char *path1, const char *path2, unsigned int flags);
+int dosxe_chmod(const char *path, mode_t mode, struct fuse_file_info *fi);
+int dosxe_create(const char *path, mode_t mode, struct fuse_file_info *fi);
+int dosxe_truncate(const char *path, off_t size, struct fuse_file_info *fi);
+int dosxe_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi);
+
+/*
+ * dosxe_statfs()
+ */
+int dosxe_statfs(const char *path, struct statvfs *stfsbuf)
+{
+   struct dosxe_vtoc_cluster *vtoc = CLUSTER(VTOC_CLUSTER);
+
+   (void)path; // meaningless
+   stfsbuf->f_bsize = 256;
+   stfsbuf->f_frsize = 256;
+   stfsbuf->f_blocks = BYTES2(vtoc->total_clusters);
+   stfsbuf->f_bfree = BYTES2(vtoc->free_clusters);
+   stfsbuf->f_bavail = stfsbuf->f_bfree;
+   stfsbuf->f_files = 0;
+   stfsbuf->f_ffree = 0;
+   stfsbuf->f_namemax = 12; // 8.3 including '.'
+   return 0;
+}
+
+// Implement this
+int dosxe_newfs(void);

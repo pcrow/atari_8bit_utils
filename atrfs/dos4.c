@@ -127,7 +127,7 @@
 #define VTOC_START SECTOR(CLUSTER_TO_SEC(VTOC_CLUSTER+2)-VTOC_SECTOR_COUNT)
 #define MAX_CLUSTER (atrfs.sectors/CLUSTER_SIZE+8)
 #define DIR_ENTRIES ((CLUSTER_BYTES*2-VTOC_SECTOR_COUNT*atrfs.sectorsize)/(int)sizeof(struct dos4_dir_entry))
-#define TOTAL_CLUSTERS (MAX_CLUSTER-7-(atrfs.sectorsize == 256?1:0))
+#define TOTAL_CLUSTERS (MAX_CLUSTER-8-(atrfs.sectorsize == 256?1:0))
 
 /*
  * File System Structures
@@ -236,6 +236,11 @@ int dos4_get_dir_entry(const char *path,struct dos4_dir_entry **dirent_found,int
    *isinfo = 0;
    while (*path == '/') ++path;
    if ( strchr(path,'/') ) return -ENOENT; // No subdirectories alowed
+   if ( strcmp(path,".info")==0 )
+   {
+      *isinfo = 1;
+      return 0;      
+   }
 
    unsigned char name[8+3+1]; // 8+3+NULL
    memset(name,' ',8+3);
@@ -275,7 +280,6 @@ int dos4_get_dir_entry(const char *path,struct dos4_dir_entry **dirent_found,int
    {
       return -ENOENT; // Name too long
    }
-   if ( *path == '/' ) ++path;
 
    struct dos4_dir_entry *dirent = DIR_START;
    int firstfree = 0;
@@ -338,25 +342,37 @@ int dos4_get_file_size(struct dos4_dir_entry *dirent)
 char *dos4_info(const char *path,struct dos4_dir_entry *dirent)
 {
    char *buf,*b;
+   int filesize;
 
-   int filesize = dos4_get_file_size(dirent);
-   if ( filesize < 0 ) return NULL;
+   if ( !dirent )
+   {
+      filesize = DIR_ENTRIES * sizeof(struct dos4_dir_entry);
+   }
+   else
+   {
+      filesize = dos4_get_file_size(dirent);
+      if ( filesize < 0 ) return NULL;
+   }
 
    buf = malloc(64*1024);
    b = buf;
    *b = 0;
    b+=sprintf(b,"File information and analysis\n\n  %.*s\n  %d bytes\n\n",(int)(strrchr(path,'.')-path),path,filesize);
-   b+=sprintf(b,
-              "Directory entry internals:\n"
-              "  Entry %ld\n"
-              "  Flags: $%02x\n"
-              "  Cluster size: %d bytes, %d sectors\n"
-              "  Clusters: %d\n"
-              "  Starting cluster: %d\n\n",
-              dirent - DIR_START,
-              dirent->status,CLUSTER_BYTES,CLUSTER_SIZE,dirent->blocks,dirent->start);
+   if ( dirent )
+   {
+      b+=sprintf(b,
+                 "Directory entry internals:\n"
+                 "  Entry %ld\n"
+                 "  Flags: $%02x\n"
+                 "  Cluster size: %d bytes, %d sectors\n"
+                 "  Clusters: %d\n"
+                 "  Starting cluster: %d\n\n",
+                 dirent - DIR_START,
+                 dirent->status,CLUSTER_BYTES,CLUSTER_SIZE,dirent->blocks,dirent->start);
+   }
 
    // Generic info for the file type
+   if ( dirent )
    {
       char *moreinfo;
       moreinfo = atr_info(path,filesize);
@@ -487,7 +503,7 @@ int dos4_getattr(const char *path, struct stat *stbuf)
    int r;
    r = dos4_get_dir_entry(path,&dirent,&isinfo);
    if ( r ) return r;
-   stbuf->st_ino = CLUSTER_TO_SEC(dirent->start);
+   stbuf->st_ino = dirent ? CLUSTER_TO_SEC(dirent->start) : 0;
    if ( isinfo ) stbuf->st_ino += 0x10000;
    if ( isinfo )
    {
