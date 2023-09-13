@@ -652,6 +652,7 @@ int main(int argc,char *argv[])
       printf("atrfs options:\n"
              "    --name=<atr file path>\n"
              "    --nodotfiles  (no special dot files in root directory)\n"
+             "    --atrdebug    (extra debugging from atrfs)\n"
              "    --create      (create new image)\n"
              " Options used with --create:\n"
              "    --secsize=<#> (sector size if creating; default 128)\n"
