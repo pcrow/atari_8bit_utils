@@ -669,7 +669,7 @@ int main(int argc,char *argv[])
    if ( ret ) return ret;
 
    ret = fuse_main(args.argc, args.argv, &atr_oper
-#if (FUSE_USE_VERSION >= 30)
+#if (FUSE_USE_VERSION >= 26)
                    , NULL
 #endif
       );
