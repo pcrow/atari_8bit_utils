@@ -640,9 +640,20 @@ int main(int argc,char *argv[])
    if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1)
       return 1;
 
+   if ( !options.filename && args.argc == 3 )
+   {
+      options.filename = args.argv[1];
+      --args.argc;
+      ++args.argv;
+   }
+
    if ( !options.filename || options.help )
    {
-      printf("usage: %s [options] <mountpoint>\n\n",argv[0]);
+      printf("usage:\n"
+             " %s [options] <mountpoint>\n"
+             "   or\n"
+             " %s [options] <atrfile> <mountpoint>\n"
+             "\n",argv[0],argv[0]);
       printf("fuse options:\n"
              "    -d   (debugging output; implies -f)\n"
              "    -f   (do not fork into background)\n"
@@ -668,6 +679,12 @@ int main(int argc,char *argv[])
 
    ret = atr_preinit();
    if ( ret ) return ret;
+
+   if ( args.argc == 1 )
+   {
+      printf("Image created.  No mount point specified.\n");
+      return 0;
+   }
 
    ret = fuse_main(args.argc, args.argv, &atr_oper
 #if (FUSE_USE_VERSION >= 26)
