@@ -294,6 +294,8 @@ int atr_getattr(const char *path, struct stat *stbuf
 #endif
    memset(stbuf,0,sizeof(*stbuf));
 
+   if ( options.debug > 1 ) fprintf(stderr,"DEBUG: %s %s\n",__FUNCTION__,path);
+
    // Copy time stamps from image file; adjust if SpartaDOS
    stbuf->st_atim = atrfs.atrstat.st_atim;
    stbuf->st_mtim = atrfs.atrstat.st_mtim;
@@ -327,6 +329,7 @@ int atr_getattr(const char *path, struct stat *stbuf
    {
       return (fs_ops[atrfs.fstype]->fs_getattr)(path, stbuf);
    }
+   if ( options.debug ) fprintf(stderr,"DEBUG: %s %s failure: EIO\n",__FUNCTION__,path);
    return -EIO;
 }
 
@@ -353,6 +356,7 @@ int atr_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offse
    st.st_mode = MODE_DIR(atrfs.atrstat.st_mode); // dir; adjust below
 #endif
 
+   if ( options.debug > 1 ) fprintf(stderr,"DEBUG: %s %s\n",__FUNCTION__,path);
    // Standard directories
    filler(buf, ".", FILLER_NULL);
    filler(buf, "..", FILLER_NULL);
@@ -366,7 +370,7 @@ int atr_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offse
    {
       return (fs_ops[atrfs.fstype]->fs_readdir)(path, buf, filler,offset,fi);
    }
-   return -ENOENT;
+   return 0; // At least the standard files work
 }
 
 int atr_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
@@ -408,7 +412,8 @@ int atr_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
 
 int atr_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
-   if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
+   if ( options.debug ) fprintf(stderr,"DEBUG: %s %s %ld bytes at %lu\n",__FUNCTION__,path,size,offset);
+
    if ( atrfs.readonly ) return -EROFS;
    if ( fs_ops[ATR_SPECIAL] && fs_ops[ATR_SPECIAL]->fs_write )
    {
@@ -665,6 +670,7 @@ const struct fuse_opt option_spec[] = {
    OPTION("--name=%s", filename),
    OPTION("--nodotfiles", nodotfiles),
    OPTION("--atrdebug", debug),
+   OPTION("--atrdebug=%d", debug),
    OPTION("-h", help),
    OPTION("--help", help),
    OPTION("--info", info),
