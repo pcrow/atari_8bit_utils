@@ -609,6 +609,54 @@ static const struct fuse_operations atr_oper = {
 };
 
 /*
+ * atrfs_info()
+ *
+ * Display information about the image
+ */
+void atrfs_info(void)
+{
+   struct atr_head *head = atrfs.atrmem;
+   unsigned long bytes16 = (BYTES2(head->bytes16count)|(BYTES2(head->hibytes16count) << 16));
+
+   printf("\n\n"
+          "Image information\n"
+          "\n"
+          "ATR Headder:\n"
+          "  Sector size:  %d\n"
+          "  Size in 16-byte units:   %lu\n"
+          "  Size in bytes:           %lu (plus 16-byte header)\n",
+          BYTES2(head->secsize),bytes16,bytes16*16
+      );
+   printf("  Computed sectors:        %d\n",atrfs.sectors);
+   if ( atrfs.shortsectors )
+   {
+      printf("The first three sectors in the image are only 128 bytes each\n");
+   }
+   if ( atrfs.atrstat.st_size != (off_t)bytes16*16+16 )
+   {
+      printf("The raw file size is %lu, not %lu as would be expected from the header\n",atrfs.atrstat.st_size,bytes16*16+16);
+      int exp_sectors;
+      int exp_short_sectors = 0;
+      int exp_garbage;
+      if ( atrfs.sectorsize == 256 && ((atrfs.atrstat.st_size - 16) % atrfs.sectorsize) == 128 ) exp_short_sectors = 3;
+      exp_sectors = (atrfs.atrstat.st_size - 16 + 128 * exp_short_sectors) / atrfs.sectorsize;
+      exp_garbage = (atrfs.atrstat.st_size - 16 + 128 * exp_short_sectors) % atrfs.sectorsize;
+      printf("  Sectors from file size:  %d\n",exp_sectors);
+      if ( exp_short_sectors ) printf("  First three sectors are 128-bytes long\n");
+      if ( exp_garbage ) printf("  Stray bytes at end of image: %d\n", exp_garbage);
+      
+      
+   }
+   printf("\n");
+   char *buf = fsinfo_textdata();
+   if ( buf )
+   {
+      printf("%s",buf);
+      free(buf);
+   }
+}
+
+/*
  * Command line options
  */
 
@@ -619,6 +667,8 @@ const struct fuse_opt option_spec[] = {
    OPTION("--atrdebug", debug),
    OPTION("-h", help),
    OPTION("--help", help),
+   OPTION("--info", info),
+   OPTION("-i", info),
    OPTION("--create", create),
    OPTION("--secsize=%u", secsize),
    OPTION("--sectors=%u", sectors),
@@ -671,6 +721,7 @@ int main(int argc,char *argv[])
              "    --name=<atr file path>\n"
              "    --nodotfiles  (no special dot files in root directory)\n"
              "    --atrdebug    (extra debugging from atrfs)\n"
+             "    --info        (display image info)\n"
              "    --create      (create new image)\n"
              " Options used with --create:\n"
              "    --secsize=<#> (sector size if creating; default 128)\n"
@@ -687,11 +738,15 @@ int main(int argc,char *argv[])
    ret = atr_preinit();
    if ( ret ) return ret;
 
-   if ( args.argc == 1 )
+   if ( options.create && args.argc == 1 )
    {
       printf("Image created.  No mount point specified.\n");
       return 0;
    }
+
+   if ( options.info ) atrfs_info();
+
+   if ( options.info && args.argc == 1 ) return 0;
 
    ret = fuse_main(args.argc, args.argv, &atr_oper
 #if (FUSE_USE_VERSION >= 26)
