@@ -31,9 +31,9 @@
 struct atr_head {
    unsigned char h0; /* 0x96 */
    unsigned char h1; /* 0x02 */
-   unsigned char seccount[2];
+   unsigned char bytes16count[2];
    unsigned char secsize[2];
-   unsigned char hiseccount[2];
+   unsigned char hibytes16count[2];
    unsigned char unused[8];
 };
 
@@ -81,22 +81,23 @@ int valid_atr_file(struct atr_head *head)
       case 512:
          break; // Those are valid
       default:
-         fprintf(stderr,"Sector size in ATR file is invalide: %d\n",atrfs.sectorsize);
+         fprintf(stderr,"Sector size in ATR file is invalid: %d\n",atrfs.sectorsize);
          return 0;
    }
-   atrfs.sectors=BYTES2(head->seccount) + (BYTES2(head->hiseccount) << 16); // image size in 16 bytes
-   if ( atrfs.sectorsize > 128 && atrfs.sectors % atrfs.sectorsize )
+   int atrbytes = (BYTES2(head->bytes16count) + (BYTES2(head->hibytes16count) << 16)) * 16;
+   if ( atrbytes % atrfs.sectorsize && atrfs.sectorsize == 256 )
    {
-      atrfs.shortsectors=3; // I haven't see this, but it's in the spec
+      atrfs.shortsectors=3; // First three sectors are optionally 128 bytes
    }
    atrfs.ssbytes = atrfs.shortsectors * (atrfs.sectorsize-128);
-   atrfs.sectors = (atrfs.sectors * 16 + atrfs.ssbytes) / atrfs.sectorsize;
+   atrfs.sectors = (atrbytes + atrfs.ssbytes) / atrfs.sectorsize;
 
    size_t expected = sizeof(struct atr_head) + atrfs.sectors*atrfs.sectorsize - atrfs.ssbytes;
    if ( atrfs.atrsize != expected )
    {
       fprintf(stderr,"ATR file size unexpected value, expected %lu bytes, found %lu bytes\n",expected,atrfs.atrsize);
       if ( atrfs.atrsize < expected ) return 0;
+      fprintf(stderr,"There is more data in the file than the ATR header indicates should be present.\n");
       // else it's just a warning
    }
 
@@ -146,6 +147,12 @@ int atr_preinit(void)
       atrfs.shortsectors = 0;
       atrfs.ssbytes = 0;
       atrfs.sectors = options.sectors;
+      if ( atrfs.sectorsize == 256 && atrfs.sectors > 3 ) // This is optional, but may make emulators work better
+      {
+         atrfs.ssbytes = 128 * 3;
+         atrfs.shortsectors = 3;
+         atrfs.atrsize -= 128 * 3;
+      }
       r=ftruncate(atrfs.fd,atrfs.atrsize);
       if ( r != 0 )
       {
@@ -167,10 +174,10 @@ int atr_preinit(void)
       head->secsize[0] = options.secsize & 0xff;
       head->secsize[1] = options.secsize >> 8;
       int imagesize16 = (options.secsize*options.sectors) >> 4;
-      head->seccount[0] = imagesize16 & 0xff;
-      head->seccount[1] = (imagesize16 >> 8 ) & 0xff;
-      head->hiseccount[1] = (imagesize16 >> 16 ) & 0xff;
-      head->hiseccount[1] = (imagesize16 >> 24 ) & 0xff;
+      head->bytes16count[0] = imagesize16 & 0xff;
+      head->bytes16count[1] = (imagesize16 >> 8 ) & 0xff;
+      head->hibytes16count[1] = (imagesize16 >> 16 ) & 0xff;
+      head->hibytes16count[1] = (imagesize16 >> 24 ) & 0xff;
 
       // Save stat of image file
       r=fstat(atrfs.fd,&atrfs.atrstat); // Before opening for r/w
@@ -241,10 +248,10 @@ int atr_preinit(void)
       fprintf(stderr,"mmap of %s failed\n",options.filename);
       return 1;
    }
-if ( atrfs.atrmem ) atrfs.mem=((char *)atrfs.atrmem)+sizeof(struct atr_head);
+   if ( atrfs.atrmem ) atrfs.mem=((char *)atrfs.atrmem)+sizeof(struct atr_head);
 
    // Validate that this is an ATR file and fill in struct values
-if ( !valid_atr_file(atrfs.atrmem) ) return 1;
+   if ( !valid_atr_file(atrfs.atrmem) ) return 1;
 
    // Determine file system type
    for (int i=0;i<ATR_MAXFSTYPE;++i)

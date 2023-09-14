@@ -407,28 +407,29 @@ int mydos_sanity(void)
    if ( BYTES2(vtoc->total_sectors) < BYTES2(vtoc->free_sectors) ) return 1; // free must not exceed total
    if ( dos_root_dir_sanity() ) return 1; // Root directory not sane
 
-   int vtoc_sectors = 2; // Code is 2 for one sector to match DOS 2
-   if ( atrfs.sectors > 943 )
-   {
-      // Add 1 for each 256-bytes needed (single-density sectors added in pairs)
-      const int vtoc_bytes = (atrfs.sectors - 943 + 7)/8;
-      vtoc_sectors += (vtoc_bytes + 255) / 256;
-   }
-   if ( atrfs.sectorsize == 128 ) vtoc_sectors = vtoc_sectors*2-3;
-   else vtoc_sectors=vtoc_sectors-1;
-   int reserved_sectors = 3+vtoc_sectors+8;
-   if ( atrfs.sectors >= 720 ) ++reserved_sectors;
-
    if ( !BYTES2(vtoc->total_sectors) ) return 1; // Must have some sectors
    if ( vtoc->bitmap[0]&0xf0 ) return 1; // sectors 0-4 are always used
    for (int i=360;i<=368;++i) if ( BITMAP(vtoc->bitmap,i) ) return 1; // VTOC and directory used
 
-   // Checks for which we will print warnings but not abort
-   if ( vtoc->vtoc_sectors != vtoc_sectors ) // Number of VTOC sectors doesn't match
+   int vtoc_code = 2; // Small images: 2 matches DOS 2 for one sector
+   int vtoc_sectors = 1;
+   if ( atrfs.sectors > 943 )
    {
-      fprintf(stderr,"Warning: MyDOS VTOC sector code should be %d, observed %d (sector size %d)\n",vtoc_sectors,vtoc->vtoc_sectors,atrfs.sectorsize);
+      // Add 1 for each 256-bytes needed (single-density sectors added in pairs)
+      const int vtoc_bytes = (atrfs.sectors - 943 + 7)/8;
+      vtoc_code += (vtoc_bytes + 255) / 256;
+   }
+   if ( atrfs.sectorsize == 128 ) vtoc_sectors = vtoc_code*2-3;
+   else vtoc_sectors=vtoc_code-1;
+
+   // Checks for which we will print warnings but not abort
+   if ( vtoc->vtoc_sectors != vtoc_code ) // VTOC Code for number of sectors doesn't match
+   {
+      fprintf(stderr,"Warning: MyDOS VTOC sector code should be %d, observed %d (VTOC %d sectors of %d bytes)\n",vtoc_code,vtoc->vtoc_sectors,vtoc_sectors,atrfs.sectorsize);
       // return 1; // Don't abort; some disks are wrong.
    }
+   int reserved_sectors = 3+vtoc_sectors+8; // 3 boot sectors, VTOC, main directory
+   if ( atrfs.sectors >= 720 ) ++reserved_sectors; // sector 720 is skipped unless it's a short image
    if ( BYTES2(vtoc->total_sectors) != atrfs.sectors - reserved_sectors )
    {
       fprintf(stderr,"Warning: MyDOS total sectors reported %d; should be %d - %d = %d\n",BYTES2(vtoc->total_sectors), atrfs.sectors, reserved_sectors, atrfs.sectors - reserved_sectors);
