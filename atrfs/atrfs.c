@@ -565,6 +565,7 @@ int atr_utimens(const char *path, const struct timespec tv[2], struct fuse_file_
 int atr_utime(const char *path, struct utimbuf *utimbuf)
 {
    if ( atrfs.readonly ) return -EROFS;
+   if ( options.debug > 1 ) fprintf(stderr,"DEBUG: %s %s\n",__FUNCTION__,path);
 
    if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_utime )
    {
@@ -580,6 +581,7 @@ int atr_chown(const char *path, uid_t uid, gid_t gid
 #endif
    )
 {
+   if ( options.debug > 1 ) fprintf(stderr,"DEBUG: %s %s\n",__FUNCTION__,path);
    (void)path;
    (void)uid;
    (void)gid;
