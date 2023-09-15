@@ -339,6 +339,7 @@ int atr_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offse
 #endif
    )
 {
+   (void)fi;
 #if (FUSE_USE_VERSION >= 30)
    (void)flags;
 #endif
@@ -364,17 +365,18 @@ int atr_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offse
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s\n",__FUNCTION__,path);
    if ( fs_ops[ATR_SPECIAL] && fs_ops[ATR_SPECIAL]->fs_readdir )
    {
-      (fs_ops[ATR_SPECIAL]->fs_readdir)(path, buf, filler,offset,fi);
+      (fs_ops[ATR_SPECIAL]->fs_readdir)(path, buf, filler,offset);
    }
    if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_readdir )
    {
-      return (fs_ops[atrfs.fstype]->fs_readdir)(path, buf, filler,offset,fi);
+      return (fs_ops[atrfs.fstype]->fs_readdir)(path, buf, filler,offset);
    }
    return 0; // At least the standard files work
 }
 
 int atr_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
+   (void)fi;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s %ld bytes at %lu\n",__FUNCTION__,path,size,offset);
 
    // Magic .sector### files: Read a raw sector
@@ -398,34 +400,35 @@ int atr_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
    if ( fs_ops[ATR_SPECIAL] && fs_ops[ATR_SPECIAL]->fs_read )
    {
       int r;
-      r = (fs_ops[ATR_SPECIAL]->fs_read)(path,buf,size,offset,fi);
+      r = (fs_ops[ATR_SPECIAL]->fs_read)(path,buf,size,offset);
       if ( options.debug ) fprintf(stderr,"DEBUG: %s %s special returned %d\n",__FUNCTION__,path,r);
       if ( r != 0 ) return r;
       // If 'r' is zero, then it wasn't handled.
    }
    if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_read )
    {
-      return (fs_ops[atrfs.fstype]->fs_read)(path,buf,size,offset,fi);
+      return (fs_ops[atrfs.fstype]->fs_read)(path,buf,size,offset);
    }
    return -ENOENT;
 }
 
 int atr_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
+   (void)fi;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s %ld bytes at %lu\n",__FUNCTION__,path,size,offset);
 
    if ( atrfs.readonly ) return -EROFS;
    if ( fs_ops[ATR_SPECIAL] && fs_ops[ATR_SPECIAL]->fs_write )
    {
       int r;
-      r = (fs_ops[ATR_SPECIAL]->fs_write)(path,buf,size,offset,fi);
+      r = (fs_ops[ATR_SPECIAL]->fs_write)(path,buf,size,offset);
       if ( options.debug ) fprintf(stderr,"DEBUG: %s %s special returned %d\n",__FUNCTION__,path,r);
       if ( r != 0 ) return r;
       // If 'r' is zero, then it wasn't handled.
    }
    if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_write )
    {
-      return (fs_ops[atrfs.fstype]->fs_write)(path,buf,size,offset,fi);
+      return (fs_ops[atrfs.fstype]->fs_write)(path,buf,size,offset);
    }
    return -ENOENT;
 }
@@ -512,11 +515,12 @@ int atr_statfs(const char *path, struct statvfs *stfsbuf)
 }
 int atr_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
+   (void)fi;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( atrfs.readonly ) return -EROFS;
    if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_create )
    {
-      return (fs_ops[atrfs.fstype]->fs_create)(path,mode,fi);
+      return (fs_ops[atrfs.fstype]->fs_create)(path,mode);
    }
    return -EIO; // Seems like the right error for not supported
 }
@@ -543,6 +547,7 @@ int atr_truncate(const char *path,
 #if (FUSE_USE_VERSION >= 30)
 int atr_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi)
 {
+   (void)fi;
    if ( atrfs.readonly ) return -EROFS;
    
    if ( options.debug )
@@ -557,7 +562,7 @@ int atr_utimens(const char *path, const struct timespec tv[2], struct fuse_file_
    }
    if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_utimens )
    {
-      return (fs_ops[atrfs.fstype]->fs_utimens)(path,tv,fi);
+      return (fs_ops[atrfs.fstype]->fs_utimens)(path,tv);
    }
    return 0; // Fake success on file systems that don't have time stamps
 }

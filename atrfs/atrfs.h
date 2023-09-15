@@ -44,6 +44,7 @@
 /*
  * Data types
  */
+struct fuse_file_info;
 
 enum atrfstype {
    ATR_SPECIAL, // files that aren't part of the Atari file system
@@ -116,19 +117,19 @@ struct fs_ops {
    char *name;
    int (*fs_sanity)(void);
    int (*fs_getattr)(const char *,struct stat *);
-   int (*fs_readdir)(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
-   int (*fs_read)(const char *,char *,size_t,off_t,struct fuse_file_info *);
-   int (*fs_write)(const char *,const char *,size_t,off_t,struct fuse_file_info *);
+   int (*fs_readdir)(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
+   int (*fs_read)(const char *,char *,size_t,off_t);
+   int (*fs_write)(const char *,const char *,size_t,off_t);
    int (*fs_mkdir)(const char *, mode_t);
    int (*fs_rmdir)(const char *);
    int (*fs_unlink)(const char *);
    int (*fs_rename)(const char *, const char *, unsigned int);
    int (*fs_chmod)(const char *, mode_t);
-   int (*fs_create )(const char *, mode_t, struct fuse_file_info *);
+   int (*fs_create )(const char *, mode_t);
    int (*fs_statfs)(const char *, struct statvfs *);
    int (*fs_truncate) (const char *, off_t);
 #if (FUSE_USE_VERSION >= 30)
-   int (*fs_utimens)(const char *, const struct timespec tv[2], struct fuse_file_info *fi);
+   int (*fs_utimens)(const char *, const struct timespec tv[2]);
 #else
    int (*fs_utime)(const char *, struct utimbuf *utimbuf);
 #endif

@@ -128,18 +128,18 @@ enum sparta_dir_status {
 int sparta_alloc_any_sector(void);
 int sparta_sanity(void);
 int sparta_getattr(const char *path, struct stat *stbuf);
-int sparta_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
-int sparta_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
-int sparta_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
+int sparta_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
+int sparta_read(const char *path, char *buf, size_t size, off_t offset);
+int sparta_write(const char *path, const char *buf, size_t size, off_t offset);
 int sparta_mkdir(const char *path,mode_t mode);
 int sparta_rmdir(const char *path);
 int sparta_unlink(const char *path);
 int sparta_rename(const char *path1, const char *path2, unsigned int flags);
 int sparta_chmod(const char *path, mode_t mode);
-int sparta_create(const char *path, mode_t mode, struct fuse_file_info *fi);
+int sparta_create(const char *path, mode_t mode);
 int sparta_truncate(const char *path, off_t size);
 #if (FUSE_USE_VERSION >= 30)
-int sparta_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi);
+int sparta_utimens(const char *path, const struct timespec tv[2]);
 #else
 int sparta_utime(const char *path,struct utimbuf *utimbif);
 #endif
@@ -1091,10 +1091,9 @@ int sparta_getattr(const char *path, struct stat *stbuf)
 /*
  * sparta_readdir()
  */
-int sparta_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
+int sparta_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
 {
    (void)offset; // FUSE will always read directories from the start in our use
-   (void)fi;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
    int sector=0,parent_dir_inode,dir_size,locked,entry,isdir,isinfo;
@@ -1139,10 +1138,9 @@ int sparta_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t of
 /*
  * sparta_read()
  */
-int sparta_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+int sparta_read(const char *path, char *buf, size_t size, off_t offset)
 {
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s size %lu offset %ld\n",__FUNCTION__,path,size,offset);
-   (void)fi;
    int inode=0,parent_dir_inode,filesize,locked,entry,isdir,isinfo;
    int r;
    struct sparta_dir_entry dir_entry;
@@ -1197,9 +1195,8 @@ int sparta_read(const char *path, char *buf, size_t size, off_t offset, struct f
    return r;
 }
 
-int sparta_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+int sparta_write(const char *path, const char *buf, size_t size, off_t offset)
 {
-   (void)fi;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s size %lu offset %ld\n",__FUNCTION__,path,size,offset);
    int inode=0,parent_dir_inode,filesize,locked,entry,isdir,isinfo;
    int r;
@@ -1734,9 +1731,8 @@ int sparta_chmod(const char *path, mode_t mode)
 /*
  * sparta_create()
  */
-int sparta_create(const char *path, mode_t mode, struct fuse_file_info *fi)
+int sparta_create(const char *path, mode_t mode)
 {
-   (void)fi;
    (void)mode; // Always create read-write, but allow chmod to lock it
    // Create a file
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
@@ -1908,9 +1904,8 @@ int sparta_truncate(const char *path, off_t size)
 }
 
 #if (FUSE_USE_VERSION >= 30)
-int sparta_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi)
+int sparta_utimens(const char *path, const struct timespec tv[2])
 {
-   (void)fi;
    int inode=0,parent_dir_inode,size,locked,entry,isdir,isinfo;
    int r;
    r = sparta_path(path,&inode,&parent_dir_inode,&size,&locked,&entry,&isdir,&isinfo);

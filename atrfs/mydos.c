@@ -108,16 +108,16 @@ int mydos_sanity(void);
 int dos1_sanity(void);
 int dos2_sanity(void);
 int dos25_sanity(void);
-int mydos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
+int mydos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
 int mydos_getattr(const char *path, struct stat *stbuf);
-int mydos_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
-int mydos_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
+int mydos_read(const char *path, char *buf, size_t size, off_t offset);
+int mydos_write(const char *path, const char *buf, size_t size, off_t offset);
 int mydos_mkdir(const char *path,mode_t mode);
 int mydos_rmdir(const char *path);
 int mydos_unlink(const char *path);
 int mydos_rename(const char *path1, const char *path2, unsigned int flags);
 int mydos_chmod(const char *path, mode_t mode);
-int mydos_create(const char *path, mode_t mode, struct fuse_file_info *fi);
+int mydos_create(const char *path, mode_t mode);
 int mydos_truncate(const char *path, off_t size);
 int mydos_statfs(const char *path, struct statvfs *stfsbuf);
 int mydos_newfs(void);
@@ -1151,10 +1151,9 @@ char *mydos_info(const char *path,struct dos2_dirent *dirent,int parent_dir_sect
  *
  * Also use for dos2 and dos25
  */
-int mydos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
+int mydos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
 {
    (void)offset; // FUSE will always read directories from the start in our use
-   (void)fi;
    int r;
    int sector=0,parent_dir_sector,count,locked,fileno,entry,isdir,isinfo;
 
@@ -1257,9 +1256,8 @@ int mydos_getattr(const char *path, struct stat *stbuf)
    return 0;
 }
 
-int mydos_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+int mydos_read(const char *path, char *buf, size_t size, off_t offset)
 {
-   (void)fi;
    int r,sector=0,parent_dir_sector,count,locked,fileno,entry,filesize,*sectors;
    int isdir,isinfo;
    unsigned char *s;
@@ -1344,9 +1342,8 @@ int mydos_read(const char *path, char *buf, size_t size, off_t offset, struct fu
    return r;
 }
 
-int mydos_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+int mydos_write(const char *path, const char *buf, size_t size, off_t offset)
 {
-   (void)fi;
    int r,sector=0,parent_dir_sector,count,locked,fileno,entry,filesize,*sectors;
    int isdir,isinfo;
    unsigned char *s = NULL;
@@ -1877,9 +1874,8 @@ int mydos_chmod(const char *path, mode_t mode)
    }
    return 0;
 }
-int mydos_create(const char *path, mode_t mode, struct fuse_file_info *fi)
+int mydos_create(const char *path, mode_t mode)
 {
-   (void)fi;
    (void)mode; // Always create read-write, but allow chmod to lock it
    // Create a file
    // Note: An empty file has one sector with zero bytes in it, not zero sectors
@@ -2022,7 +2018,7 @@ int mydos_truncate(const char *path, off_t size)
       char *buf = malloc ( size - filesize );
       if ( !buf ) return -ENOMEM;
       memset(buf,0,size-filesize);
-      r = mydos_write(path,buf,size-filesize,filesize,NULL /* fi */);
+      r = mydos_write(path,buf,size-filesize,filesize);
       free(buf);
       free(sectors);
       if ( r == size-filesize ) return 0;

@@ -88,14 +88,14 @@ enum dirent_flags {
  * Function prototypes
  */
 int litedos_sanity(void);
-int litedos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
+int litedos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
 int litedos_getattr(const char *path, struct stat *stbuf);
-int litedos_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
-int litedos_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
+int litedos_read(const char *path, char *buf, size_t size, off_t offset);
+int litedos_write(const char *path, const char *buf, size_t size, off_t offset);
 int litedos_unlink(const char *path);
 int litedos_rename(const char *path1, const char *path2, unsigned int flags);
 int litedos_chmod(const char *path, mode_t mode);
-int litedos_create(const char *path, mode_t mode, struct fuse_file_info *fi);
+int litedos_create(const char *path, mode_t mode);
 int litedos_truncate(const char *path, off_t size);
 int litedos_statfs(const char *path, struct statvfs *stfsbuf);
 int litedos_newfs(void);
@@ -620,13 +620,12 @@ char *litedos_info(const char *path,struct litedos_dirent *dirent,int entry,int 
  *
  * Also use for dos2 and dos25
  */
-int litedos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
+int litedos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
 {
    if ( strcmp(path,"/") != 0 )
    {
       // Just check to see which errno to return
       (void)offset; // FUSE will always read directories from the start in our use
-      (void)fi;
       int r;
       int sector=0,count,locked,fileno,entry,isdir,isinfo;
 
@@ -726,9 +725,8 @@ int litedos_getattr(const char *path, struct stat *stbuf)
    return 0;
 }
 
-int litedos_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+int litedos_read(const char *path, char *buf, size_t size, off_t offset)
 {
-   (void)fi;
    int r,sector=0,count,locked,fileno,entry,filesize,*sectors;
    int isdir,isinfo;
    unsigned char *s;
@@ -793,9 +791,8 @@ int litedos_read(const char *path, char *buf, size_t size, off_t offset, struct 
    return r;
 }
 
-int litedos_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+int litedos_write(const char *path, const char *buf, size_t size, off_t offset)
 {
-   (void)fi;
    int r,sector=0,count,locked,fileno,entry,filesize,*sectors;
    int isdir,isinfo;
    unsigned char *s = NULL;
@@ -1124,9 +1121,8 @@ int litedos_chmod(const char *path, mode_t mode)
    return 0;
 }
 
-int litedos_create(const char *path, mode_t mode, struct fuse_file_info *fi)
+int litedos_create(const char *path, mode_t mode)
 {
-   (void)fi;
    (void)mode; // Always create read-write, but allow chmod to lock it
    // Create a file
    // Note: An empty file has one sector with zero bytes in it, not zero sectors
@@ -1241,7 +1237,7 @@ int litedos_truncate(const char *path, off_t size)
       char *buf = malloc ( size - filesize );
       if ( !buf ) return -ENOMEM;
       memset(buf,0,size-filesize);
-      r = litedos_write(path,buf,size-filesize,filesize,NULL /* fi */);
+      r = litedos_write(path,buf,size-filesize,filesize);
       free(buf);
       free(sectors);
       if ( r == size-filesize ) return 0;

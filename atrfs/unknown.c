@@ -30,7 +30,7 @@
  * Function prototypes
  */
 int unknown_getattr(const char *path, struct stat *stbuf);
-int unknown_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
+int unknown_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
 int unknown_statfs(const char *path, struct statvfs *stfsbuf);
 
 /*
@@ -76,11 +76,10 @@ int unknown_getattr(const char *path, struct stat *stbuf)
    return 0; // Whatever, don't really care
 }
 
-int unknown_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
+int unknown_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
 {
    (void)path; // Always "/"
    (void)offset;
-   (void)fi;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
    filler(buf, "UNKNOWN_DISK_FORMAT", FILLER_NULL);

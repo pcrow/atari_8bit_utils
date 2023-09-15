@@ -183,17 +183,17 @@ struct dos4_vtoc {
  */
 int dos4_sanity(void);
 int dos4_getattr(const char *path, struct stat *stbuf);
-int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
-int dos4_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
-int dos4_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
+int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
+int dos4_read(const char *path, char *buf, size_t size, off_t offset);
+int dos4_write(const char *path, const char *buf, size_t size, off_t offset);
 int dos4_mkdir(const char *path,mode_t mode);
 int dos4_rmdir(const char *path);
 int dos4_unlink(const char *path);
 int dos4_rename(const char *path1, const char *path2, unsigned int flags);
-int dos4_chmod(const char *path, mode_t mode, struct fuse_file_info *fi);
-int dos4_create(const char *path, mode_t mode, struct fuse_file_info *fi);
+int dos4_chmod(const char *path, mode_t mode);
+int dos4_create(const char *path, mode_t mode);
 int dos4_truncate(const char *path, off_t size);
-int dos4_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi);
+int dos4_utimens(const char *path, const struct timespec tv[2]);
 int dos4_statfs(const char *path, struct statvfs *stfsbuf);
 int dos4_newfs(void);
 char *dos4_fsinfo(void);
@@ -522,11 +522,10 @@ int dos4_getattr(const char *path, struct stat *stbuf)
 /*
  * dos4_readdir()
  */
-int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
+int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
 {
    (void)path; // Always "/"
    (void)offset;
-   (void)fi;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
 
@@ -585,9 +584,8 @@ int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
 /*
  * dos4_read()
  */
-int dos4_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+int dos4_read(const char *path, char *buf, size_t size, off_t offset)
 {
-   (void)fi;
 
    // Magic /.cluster### files
    if ( strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
@@ -677,11 +675,11 @@ int dos4_read(const char *path, char *buf, size_t size, off_t offset, struct fus
 }
 
 // Implement these for read-write support
-int dos4_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
+int dos4_write(const char *path, const char *buf, size_t size, off_t offset);
 int dos4_unlink(const char *path);
 int dos4_rename(const char *path1, const char *path2, unsigned int flags);
-int dos4_chmod(const char *path, mode_t mode, struct fuse_file_info *fi);
-int dos4_create(const char *path, mode_t mode, struct fuse_file_info *fi);
+int dos4_chmod(const char *path, mode_t mode);
+int dos4_create(const char *path, mode_t mode);
 int dos4_truncate(const char *path, off_t size);
 int dos4_newfs(void);
 

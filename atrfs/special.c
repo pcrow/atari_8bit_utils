@@ -27,8 +27,8 @@
  */
 struct special_files {
    char *name;
-   int (*getattr)(const char *,struct stat *,struct fuse_file_info *);
-   int (*read)(const char *,char *,size_t,off_t,struct fuse_file_info *);
+   int (*getattr)(const char *,struct stat *);
+   int (*read)(const char *,char *,size_t,off_t);
    void *write; // If we allow writing to boot sectors
    char *(*textdata)(void);
 };
@@ -37,8 +37,8 @@ struct special_files {
  * Function prototypes
  */
 int special_getattr(const char *path, struct stat *stbuf);
-int special_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
-int special_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
+int special_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
+int special_read(const char *path, char *buf, size_t size, off_t offset);
 char *fsinfo_textdata(void);
 char *bootinfo_textdata(void);
 
@@ -105,9 +105,8 @@ int special_getattr(const char *path, struct stat *stbuf)
    return -ENOENT; // Continue with regular file system
 }
 
-int special_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
+int special_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
 {
-   (void)fi; // Not used
    (void)offset; // Ignored in our usage mode
    if ( !options.nodotfiles && strcmp(path,"/") == 0 )
    {
@@ -119,9 +118,8 @@ int special_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t o
    return 0;
 }
 
-int special_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+int special_read(const char *path, char *buf, size_t size, off_t offset)
 {
-   (void)fi; //not used
    if ( *path == '/' )
    {
       for (int i=0;(long unsigned)i<sizeof(files)/sizeof(files[0]);++i)

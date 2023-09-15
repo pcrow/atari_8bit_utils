@@ -81,13 +81,13 @@ enum dos3_vtoc_entry {
  */
 int dos3_sanity(void);
 int dos3_getattr(const char *path, struct stat *stbuf);
-int dos3_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
-int dos3_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
-int dos3_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
+int dos3_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
+int dos3_read(const char *path, char *buf, size_t size, off_t offset);
+int dos3_write(const char *path, const char *buf, size_t size, off_t offset);
 int dos3_unlink(const char *path);
 int dos3_rename(const char *path1, const char *path2, unsigned int flags);
-int dos3_chmod(const char *path, mode_t mode, struct fuse_file_info *fi);
-int dos3_create(const char *path, mode_t mode, struct fuse_file_info *fi);
+int dos3_chmod(const char *path, mode_t mode);
+int dos3_create(const char *path, mode_t mode);
 int dos3_truncate(const char *path, off_t size);
 int dos3_statfs(const char *path, struct statvfs *stfsbuf);
 int dos3_newfs(void);
@@ -339,11 +339,10 @@ int dos3_getattr(const char *path, struct stat *stbuf)
 /*
  * dos3_readdir()
  */
-int dos3_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
+int dos3_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
 {
    (void)path; // Always "/"
    (void)offset;
-   (void)fi;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
 
@@ -417,9 +416,8 @@ int dos3_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
 /*
  * dos3_read()
  */
-int dos3_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+int dos3_read(const char *path, char *buf, size_t size, off_t offset)
 {
-   (void)fi;
 
    // Magic /.cluster### files
    if ( strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
@@ -509,11 +507,11 @@ int dos3_read(const char *path, char *buf, size_t size, off_t offset, struct fus
 }
 
 // Implement these for read-write support
-int dos3_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
+int dos3_write(const char *path, const char *buf, size_t size, off_t offset);
 int dos3_unlink(const char *path);
 int dos3_rename(const char *path1, const char *path2, unsigned int flags);
-int dos3_chmod(const char *path, mode_t mode, struct fuse_file_info *fi);
-int dos3_create(const char *path, mode_t mode, struct fuse_file_info *fi);
+int dos3_chmod(const char *path, mode_t mode);
+int dos3_create(const char *path, mode_t mode);
 int dos3_truncate(const char *path, off_t size);
 int dos3_newfs(void);
 

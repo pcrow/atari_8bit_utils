@@ -193,17 +193,17 @@ struct dosxe_data_cluster {
  */
 int dosxe_sanity(void);
 int dosxe_getattr(const char *path, struct stat *stbuf);
-int dosxe_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
-int dosxe_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
-int dosxe_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
+int dosxe_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
+int dosxe_read(const char *path, char *buf, size_t size, off_t offset);
+int dosxe_write(const char *path, const char *buf, size_t size, off_t offset);
 int dosxe_mkdir(const char *path,mode_t mode);
 int dosxe_rmdir(const char *path);
 int dosxe_unlink(const char *path);
 int dosxe_rename(const char *path1, const char *path2, unsigned int flags);
-int dosxe_chmod(const char *path, mode_t mode, struct fuse_file_info *fi);
-int dosxe_create(const char *path, mode_t mode, struct fuse_file_info *fi);
-int dosxe_truncate(const char *path, off_t size, struct fuse_file_info *fi);
-int dosxe_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi);
+int dosxe_chmod(const char *path, mode_t mode);
+int dosxe_create(const char *path, mode_t mode);
+int dosxe_truncate(const char *path, off_t size);
+int dosxe_utimens(const char *path, const struct timespec tv[2]);
 int dosxe_statfs(const char *path, struct statvfs *stfsbuf);
 int dosxe_newfs(void);
 char *dosxe_fsinfo(void);
@@ -651,10 +651,9 @@ int dosxe_getattr(const char *path, struct stat *stbuf)
    return 0; // Whatever, don't really care
 }
 
-int dosxe_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
+int dosxe_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
 {
    (void)offset;
-   (void)fi;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
 
@@ -734,9 +733,8 @@ int dosxe_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t off
 /*
  * dosxe_read()
  */
-int dosxe_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+int dosxe_read(const char *path, char *buf, size_t size, off_t offset)
 {
-   (void)fi;
 
    // Magic /.cluster### files
    if ( strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
@@ -833,15 +831,15 @@ int dosxe_read(const char *path, char *buf, size_t size, off_t offset, struct fu
    return -EOF;
 }
 // Implement these
-int dosxe_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
+int dosxe_write(const char *path, const char *buf, size_t size, off_t offset);
 int dosxe_mkdir(const char *path,mode_t mode);
 int dosxe_rmdir(const char *path);
 int dosxe_unlink(const char *path);
 int dosxe_rename(const char *path1, const char *path2, unsigned int flags);
-int dosxe_chmod(const char *path, mode_t mode, struct fuse_file_info *fi);
-int dosxe_create(const char *path, mode_t mode, struct fuse_file_info *fi);
-int dosxe_truncate(const char *path, off_t size, struct fuse_file_info *fi);
-int dosxe_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi);
+int dosxe_chmod(const char *path, mode_t mode);
+int dosxe_create(const char *path, mode_t mode);
+int dosxe_truncate(const char *path, off_t size);
+int dosxe_utimens(const char *path, const struct timespec tv[2]);
 
 /*
  * dosxe_statfs()
