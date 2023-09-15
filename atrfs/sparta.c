@@ -152,6 +152,7 @@ char *sparta_fsinfo(void);
  */
 const struct fs_ops sparta_ops = {
    .name = "SpartaDOS",
+   .fstype = "sparta",
    .fs_sanity = sparta_sanity,
    .fs_getattr = sparta_getattr,
    .fs_readdir = sparta_readdir,

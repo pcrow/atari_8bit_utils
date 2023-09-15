@@ -87,9 +87,7 @@ struct options {
    // Following only matter if create is specified:
    unsigned int sectors;
    unsigned int secsize;
-   int mydos;
-   int sparta;
-   int litedos;
+   const char *fstype;
    int clustersize;
    const char *volname;
 };
@@ -114,7 +112,8 @@ struct sector1 {
 
 // FIXME: Get correct types for these functions
 struct fs_ops {
-   char *name;
+   const char *name;
+   const char *fstype; // For command-line create image option
    int (*fs_sanity)(void);
    int (*fs_getattr)(const char *,struct stat *);
    int (*fs_readdir)(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);

@@ -188,14 +188,26 @@ int atr_preinit(void)
       }
 
       // Set file system type
-      if ( options.sparta ) atrfs.fstype = ATR_SPARTA;
-      else if ( options.mydos ) atrfs.fstype = ATR_MYDOS;
-      else if ( options.litedos ) atrfs.fstype = ATR_LITEDOS;
-      else if ( atrfs.sectors < 368 ) atrfs.fstype = ATR_SPARTA; // Too short for DOS 2
-      else if ( atrfs.sectors <= 720 && atrfs.sectorsize == 128 ) atrfs.fstype = ATR_DOS2;
-      else if ( atrfs.sectors == 1040 && atrfs.sectorsize == 128 ) atrfs.fstype = ATR_DOS25;
-      else if ( atrfs.sectors == 1024 && atrfs.sectorsize == 128 ) atrfs.fstype = ATR_DOS25; // short enhanced-density image
-      else atrfs.fstype = ATR_MYDOS;
+      atrfs.fstype = ATR_SPECIAL; // Invalid for creation
+      if ( options.fstype )
+      {
+         for (int i=0;i<ATR_MAXFSTYPE;++i)
+         {
+            if ( fs_ops[i] && fs_ops[i]->fstype && strcmp(options.fstype,fs_ops[i]->fstype) == 0 )
+            {
+               atrfs.fstype = i;
+               break;
+            }
+         }
+      }
+      if ( atrfs.fstype == ATR_SPECIAL)
+      {
+         if ( atrfs.sectors < 368 ) atrfs.fstype = ATR_SPARTA; // Too short for DOS 2
+         else if ( atrfs.sectors <= 720 && atrfs.sectorsize == 128 ) atrfs.fstype = ATR_DOS2;
+         else if ( atrfs.sectors == 1040 && atrfs.sectorsize == 128 ) atrfs.fstype = ATR_DOS25;
+         else if ( atrfs.sectors == 1024 && atrfs.sectorsize == 128 ) atrfs.fstype = ATR_DOS25; // short enhanced-density image
+         else atrfs.fstype = ATR_MYDOS;
+      }
       if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_newfs )
       {
          (fs_ops[atrfs.fstype]->fs_newfs)();
@@ -685,10 +697,8 @@ const struct fuse_opt option_spec[] = {
    OPTION("--create", create),
    OPTION("--secsize=%u", secsize),
    OPTION("--sectors=%u", sectors),
-   OPTION("--mydos", mydos),
-   OPTION("--sparta", sparta),
+   OPTION("--fs=%s", fstype),
    OPTION("--volname=%s", volname),
-   OPTION("--litedos", litedos),
    OPTION("--cluster=%u", clustersize),
    FUSE_OPT_END
 };
@@ -739,10 +749,20 @@ int main(int argc,char *argv[])
              " Options used with --create:\n"
              "    --secsize=<#> (sector size if creating; default 128)\n"
              "    --sectors=<#> (number of sectors in image; default 720)\n"
-             "    --mydos       (create MyDOS image)\n"
-             "    --sparta      (create SpartDOS image)\n"
-             "    --volname=<>  (set volume name for new SpartaDOS image)\n"
-             "    --litedos     (create LiteDOS iamge)\n"
+             "    --fs=<type>   (type of file system: " );
+      int comma=0;
+      for (int i=0;i<ATR_MAXFSTYPE;++i)
+      {
+         if ( fs_ops[i] && fs_ops[i]->fstype )
+         {
+            if ( comma ) printf(", ");
+            printf("%s",fs_ops[i]->fstype);
+            comma=1;
+         }
+      }
+      printf(")\n");
+
+      printf("    --volname=<>  (set volume name for new SpartaDOS image)\n"
              "    --cluster=<#> (minimum cluster size for LiteDOS)\n"
          );
       return 0;

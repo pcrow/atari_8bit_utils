@@ -32,12 +32,14 @@
 int unknown_getattr(const char *path, struct stat *stbuf);
 int unknown_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
 int unknown_statfs(const char *path, struct statvfs *stfsbuf);
+int unknown_newfs(void);
 
 /*
  * Global variables
  */
 const struct fs_ops unknown_ops = {
    .name = "Unknown Disk Format",
+   .fstype = "blank",
    // .fs_sanity = unknown_sanity,
    .fs_getattr = unknown_getattr,
    .fs_readdir = unknown_readdir,
@@ -52,7 +54,7 @@ const struct fs_ops unknown_ops = {
    // .fs_truncate = unknown_truncate,
    // .fs_utimens = unknown_utimens,
    .fs_statfs = unknown_statfs,
-   // .fs_newfs = unknown_newfs,
+   .fs_newfs = unknown_newfs,
    // .fs_fsinfo = unknown_fsinfo,
 };
 
@@ -134,5 +136,15 @@ int unknown_statfs(const char *path, struct statvfs *stfsbuf)
    stfsbuf->f_files = 0; // no file system, no files
    stfsbuf->f_ffree = 0;
    stfsbuf->f_namemax = 12;
+   return 0;
+}
+
+/*
+ * unknown_newfs()
+ *
+ * Seems like a good place for creating blank images
+ */
+int unknown_newfs(void)
+{
    return 0;
 }

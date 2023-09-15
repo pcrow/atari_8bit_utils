@@ -106,6 +106,7 @@ char *litedos_fsinfo(void);
  */
 const struct fs_ops litedos_ops = {
    .name = "LiteDOS",
+   .fstype = "litedos",
    .fs_sanity = litedos_sanity,
    .fs_getattr = litedos_getattr,
    .fs_readdir = litedos_readdir,

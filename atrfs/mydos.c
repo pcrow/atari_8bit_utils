@@ -128,6 +128,7 @@ char *mydos_fsinfo(void);
  */
 const struct fs_ops dos1_ops = {
    .name = "Atari DOS 1",
+   .fstype = "dos1",
    .fs_sanity = dos1_sanity,
    .fs_getattr = mydos_getattr,
    .fs_readdir = mydos_readdir,
@@ -146,6 +147,7 @@ const struct fs_ops dos1_ops = {
 };
 const struct fs_ops dos2_ops = {
    .name = "Atari DOS 2.0s",
+   .fstype = "dos2",
    .fs_sanity = dos2_sanity,
    .fs_getattr = mydos_getattr,
    .fs_readdir = mydos_readdir,
@@ -164,6 +166,7 @@ const struct fs_ops dos2_ops = {
 };
 const struct fs_ops dos20d_ops = {
    .name = "Atari DOS 2.0d",
+   //.fstype = "dos2d",
    //.fs_sanity = dos2_sanity, // Never detected
    .fs_getattr = mydos_getattr,
    .fs_readdir = mydos_readdir,
@@ -182,6 +185,7 @@ const struct fs_ops dos20d_ops = {
 };
 const struct fs_ops dos25_ops = {
    .name = "Atari DOS 2.5",
+   .fstype = "dos25",
    .fs_sanity = dos25_sanity,
    .fs_getattr = mydos_getattr,
    .fs_readdir = mydos_readdir,
@@ -200,6 +204,7 @@ const struct fs_ops dos25_ops = {
 };
 const struct fs_ops mydos_ops = {
    .name = "MyDOS 4.53 or compatible",
+   .fstype = "mydos",
    .fs_sanity = mydos_sanity,
    .fs_getattr = mydos_getattr,
    .fs_readdir = mydos_readdir,
