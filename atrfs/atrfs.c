@@ -324,7 +324,7 @@ int atr_getattr(const char *path, struct stat *stbuf
       int sec = string_to_sector(path);
       if ( sec > 0 && sec <= atrfs.sectors )
       {
-         stbuf->st_mode = MODE_RO(stbuf->st_mode);
+         // stbuf->st_mode = MODE_RO(stbuf->st_mode);
          stbuf->st_size = 128;
          stbuf->st_ino = sec;
          if ( !atrfs.ssbytes || sec > 3 ) stbuf->st_size = atrfs.sectorsize;
@@ -428,8 +428,26 @@ int atr_write(const char *path, const char *buf, size_t size, off_t offset, stru
 {
    (void)fi;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s %ld bytes at %lu\n",__FUNCTION__,path,size,offset);
-
    if ( atrfs.readonly ) return -EROFS;
+
+   // Magic .sector### files: Write a raw sector
+   if ( strncmp(path,"/.sector",sizeof("/.sector")-1) == 0 )
+   {
+      int sec = string_to_sector(path);
+      if ( sec <= 0 || sec > atrfs.sectors ) return -ENOENT;
+
+      int bytes = 128;
+      if ( !atrfs.ssbytes || sec > 3 ) bytes = atrfs.sectorsize;
+
+      if (offset >= bytes ) return -ENOSPC; // -EOF doesn't stop 'dd' from writing
+      unsigned char *s = SECTOR(sec);
+      bytes -= offset;
+      s += offset;
+      if ( (size_t)bytes > size ) bytes = size;
+      memcpy(s,buf,bytes);
+      return bytes;
+   }
+
    if ( fs_ops[ATR_SPECIAL] && fs_ops[ATR_SPECIAL]->fs_write )
    {
       int r;
