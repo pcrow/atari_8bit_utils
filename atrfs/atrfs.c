@@ -202,6 +202,11 @@ int atr_preinit(void)
       }
       if ( atrfs.fstype == ATR_SPECIAL)
       {
+         if ( options.fstype )
+         {
+            fprintf(stderr,"Unable to create specified image type: %s\n",options.fstype);
+            return 1;
+         }
          if ( atrfs.sectors < 368 ) atrfs.fstype = ATR_SPARTA; // Too short for DOS 2
          else if ( atrfs.sectors <= 720 && atrfs.sectorsize == 128 ) atrfs.fstype = ATR_DOS2;
          else if ( atrfs.sectors == 1040 && atrfs.sectorsize == 128 ) atrfs.fstype = ATR_DOS25;
