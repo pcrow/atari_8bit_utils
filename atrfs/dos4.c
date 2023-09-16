@@ -125,9 +125,9 @@
       1 )))
 #define DIR_START ((struct dos4_dir_entry *)CLUSTER(VTOC_CLUSTER))
 #define VTOC_START SECTOR(CLUSTER_TO_SEC(VTOC_CLUSTER+2)-VTOC_SECTOR_COUNT)
-#define MAX_CLUSTER (atrfs.sectors/CLUSTER_SIZE+8)
+#define MAX_CLUSTER (atrfs.sectors/CLUSTER_SIZE+8-1)
 #define DIR_ENTRIES ((CLUSTER_BYTES*2-VTOC_SECTOR_COUNT*atrfs.sectorsize)/(int)sizeof(struct dos4_dir_entry))
-#define TOTAL_CLUSTERS (MAX_CLUSTER-8-(atrfs.sectorsize == 256?1:0))
+#define TOTAL_CLUSTERS (MAX_CLUSTER-7-(atrfs.sectorsize == 256?1:0))
 
 /*
  * File System Structures
@@ -186,14 +186,11 @@ int dos4_getattr(const char *path, struct stat *stbuf);
 int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
 int dos4_read(const char *path, char *buf, size_t size, off_t offset);
 int dos4_write(const char *path, const char *buf, size_t size, off_t offset);
-int dos4_mkdir(const char *path,mode_t mode);
-int dos4_rmdir(const char *path);
 int dos4_unlink(const char *path);
 int dos4_rename(const char *path1, const char *path2, unsigned int flags);
 int dos4_chmod(const char *path, mode_t mode);
 int dos4_create(const char *path, mode_t mode);
 int dos4_truncate(const char *path, off_t size);
-int dos4_utimens(const char *path, const struct timespec tv[2]);
 int dos4_statfs(const char *path, struct statvfs *stfsbuf);
 int dos4_newfs(void);
 char *dos4_fsinfo(void);
@@ -203,6 +200,7 @@ char *dos4_fsinfo(void);
  */
 const struct fs_ops dos4_ops = {
    .name = "Atari DOS 4",
+   .fstype = "dos4",
    .fs_sanity = dos4_sanity,
    .fs_getattr = dos4_getattr,
    .fs_readdir = dos4_readdir,
@@ -214,13 +212,50 @@ const struct fs_ops dos4_ops = {
    // .fs_create = dos4_create,
    // .fs_truncate = dos4_truncate,
    .fs_statfs = dos4_statfs,
-   // .fs_newfs = dos4_newfs,
+   .fs_newfs = dos4_newfs,
    .fs_fsinfo = dos4_fsinfo,
 };
 
 /*
  * Functions
  */
+
+/*
+ * dos4_free_cluster()
+ */
+int dos4_free_cluster(int cluster)
+{
+   struct dos4_vtoc *vtoc = VTOC_START;
+   unsigned char *map = VTOC_START;
+
+   if ( options.debug>1 ) fprintf(stderr,"DEBUG: %s: Cluster %d (old map value: %d)\n",__FUNCTION__,cluster,map[cluster]);
+   if ( cluster > MAX_CLUSTER || cluster < 8 || ( cluster==8 && atrfs.sectorsize==256 ) ) return -EIO;
+   if ( cluster == VTOC_CLUSTER ) return -EIO;
+   if ( cluster == VTOC_CLUSTER+1 ) return -EIO;
+
+   if ( !vtoc->first_free || map[vtoc->first_free] > cluster )
+   {
+      map[cluster] = vtoc->first_free;
+      vtoc->first_free = cluster;
+      ++vtoc->free;
+      return 0;
+   }
+
+   int c = vtoc->first_free;
+   while ( c < cluster && map[c] > c && map[c] < cluster )
+   {
+      c=map[c];
+   }
+   if ( map[c] > cluster || map[c] == 0 )
+   {
+      map[cluster] = map[c];
+      map[c] = cluster;
+      ++vtoc->free;
+      return 0;
+   }
+   fprintf(stderr,"DEBUG: %s: Bad free cluster chain: attempt to free cluster %d; map[%d]->%d\n",__FUNCTION__,cluster,c,map[c]);
+   return -EIO; // Bad free list
+}
 
 /*
  * dos4_get_dir_entry()
@@ -402,7 +437,7 @@ int dos4_sanity(void)
    struct dos4_dir_entry *dirent = DIR_START;
    struct dos4_vtoc *vtoc = VTOC_START;
    unsigned char *map = VTOC_START;
-   if ( options.debug ) fprintf(stderr,"DEBUG: %s: Cluster size: %d  VTOC Clusters: %d-%d (sectors %d-%d)  VTOC Sector count: %d  First VTOC sector: %d Max DIR entries: %d Max Cluster: %d\n",__FUNCTION__,CLUSTER_SIZE,VTOC_CLUSTER,VTOC_CLUSTER+1,CLUSTER_TO_SEC(VTOC_CLUSTER),CLUSTER_TO_SEC(VTOC_CLUSTER+2)-1,VTOC_SECTOR_COUNT,CLUSTER_TO_SEC(VTOC_CLUSTER+2)-VTOC_SECTOR_COUNT,DIR_ENTRIES,MAX_CLUSTER);
+   if ( options.debug > 1 ) fprintf(stderr,"DEBUG: %s: Cluster size: %d  VTOC Clusters: %d-%d (sectors %d-%d)  VTOC Sector count: %d  First VTOC sector: %d Max DIR entries: %d Max Cluster: %d\n",__FUNCTION__,CLUSTER_SIZE,VTOC_CLUSTER,VTOC_CLUSTER+1,CLUSTER_TO_SEC(VTOC_CLUSTER),CLUSTER_TO_SEC(VTOC_CLUSTER+2)-1,VTOC_SECTOR_COUNT,CLUSTER_TO_SEC(VTOC_CLUSTER+2)-VTOC_SECTOR_COUNT,DIR_ENTRIES,MAX_CLUSTER);
    // Sector 1 is not special in DOS 4!
    // If DOS files are written, QDOS.SYS is simply written contiguously starting at
    // sector 1 (cluster 8)
@@ -681,7 +716,46 @@ int dos4_rename(const char *path1, const char *path2, unsigned int flags);
 int dos4_chmod(const char *path, mode_t mode);
 int dos4_create(const char *path, mode_t mode);
 int dos4_truncate(const char *path, off_t size);
-int dos4_newfs(void);
+
+/*
+ * dos4_newfs()
+ */
+int dos4_newfs(void)
+{
+   if ( atrfs.sectorsize != 128 && atrfs.sectorsize != 256 )
+   {
+      fprintf(stderr,"Error: Atari DOS 4 only supports SD or DD sector sizes\n");
+      return -EIO;
+   }
+   if ( atrfs.sectorsize == 128 && atrfs.sectors > 1040 )
+   {
+      fprintf(stderr,"Error: Atari DOS 4 single-density images maximum size is 1040 sectors (SS/ED)\n");
+      return -EIO;
+   }
+   if ( atrfs.sectorsize == 256 && atrfs.sectors > 1440 )
+   {
+      fprintf(stderr,"Error: Atari DOS 4 double-density images maximum size is 1440 sectors (DS/DD)\n");
+      return -EIO;
+   }
+   if ( CLUSTER_TO_SEC(VTOC_CLUSTER+2) - 1 > atrfs.sectors )
+   {
+      fprintf(stderr,"Error: Atari DOS 4 needs %d sectors minimum\n",CLUSTER_TO_SEC(VTOC_CLUSTER+2) - 1);
+      return -EIO;
+   }
+
+   struct dos4_vtoc *vtoc = VTOC_START;
+   vtoc->format = 'R';
+   if ( atrfs.sectorsize==256 && atrfs.sectors > 720 ) vtoc->format = 'C';
+
+   for ( int cluster = 8; cluster <= MAX_CLUSTER; ++cluster)
+   {
+      if ( cluster == 8 && atrfs.sectorsize==256 ) continue;
+      if ( cluster == VTOC_CLUSTER ) continue;
+      if ( cluster == VTOC_CLUSTER+1 ) continue;
+      dos4_free_cluster(cluster);
+   }
+   return 0;
+}
 
 /*
  * dos4_statfs()
@@ -721,7 +795,17 @@ char *dos4_fsinfo(void)
    
    struct dos4_vtoc *vtoc = VTOC_START;
    b+=sprintf(b,"Cluster size:        %d bytes, %d sectors\n",CLUSTER_BYTES,CLUSTER_SIZE);
-   b+=sprintf(b,"Total data clusters: %d\n",TOTAL_CLUSTERS);
+   b+=sprintf(b,"Total data clusters: %d: %d--%d\n",TOTAL_CLUSTERS,(atrfs.sectorsize==128)?8:9,((atrfs.sectorsize==128)?8:9)+TOTAL_CLUSTERS-1);
    b+=sprintf(b,"Free clusters:       %d\n",vtoc->free);
+   b+=sprintf(b,"VTOC/DIR clusters:   %d--%d\n",VTOC_CLUSTER,VTOC_CLUSTER+1);
+   b+=sprintf(b,"DIR sectors:         %d--%d\n",CLUSTER_TO_SEC(VTOC_CLUSTER),CLUSTER_TO_SEC(VTOC_CLUSTER+2)-VTOC_SECTOR_COUNT-1);   
+   if ( VTOC_SECTOR_COUNT == 1 )
+   {
+      b+=sprintf(b,"VTOC sector:         %d\n",CLUSTER_TO_SEC(VTOC_CLUSTER+2)-VTOC_SECTOR_COUNT);
+   }
+   else
+   {
+      b+=sprintf(b,"VTOC sector:         %d--%d\n",CLUSTER_TO_SEC(VTOC_CLUSTER+2)-VTOC_SECTOR_COUNT,CLUSTER_TO_SEC(VTOC_CLUSTER+2)-1);
+   }
    return buf;
 }
