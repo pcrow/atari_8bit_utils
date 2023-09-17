@@ -78,7 +78,7 @@
 #define MAX_PHYSICAL_CLUSTER (atrfs.sectorsize==128?(atrfs.sectors-1)/2:atrfs.sectors)
 #define MAX_CLUSTER (BYTES2(((struct dosxe_vtoc_cluster *)CLUSTER(4))->total_clusters)-1)
 #define VTOC_CLUSTER 4
-#define VTOC_CLUSTERS        ((MAX_CLUSTER / 8 + 10 + 255)/256)
+#define VTOC_CLUSTERS        (((MAX_PHYSICAL_CLUSTER+7) / 8 + 10 + 255)/256)
 #define DATE_TO_YEAR(n)      (((n)[0])>>1)
 #define DATE_TO_4YEAR(n)     (DATE_TO_YEAR(n)+(DATE_TO_YEAR(n)<87?2000:1900))
 #define DATE_TO_MONTH(n)     ( ((((n)[0])&0x01)<<3) | (((n)[1])>>5) )
@@ -110,7 +110,7 @@ struct sector1_dosxe {
    unsigned char unknown_17; // 0x01 ?
    unsigned char total_clusters[2]; // plus 1
    unsigned char max_free_clusters[2];
-   unsigned char first_vtoc_byte; // 0x07 ?
+   unsigned char first_vtoc_byte; // 0x07 if one VTOC cluster >>1 for each additional
    unsigned char main_directory; // 0x05 if only one VTOC cluster
    unsigned char sio_routine[2]; // df32 ?
    unsigned char unknwon_20[2]; // 5d 0d
@@ -426,14 +426,31 @@ int dosxe_sanity(void)
    struct sector1_dosxe *sec1 = SECTOR(1);
    if ( sec1->pad_zero != 'X' ) return 1; // Flag for DOS XE
    if ( sec1->boot_sectors != 3 ) return 1; // Must have 3 boot sectors, how original
-   if ( BYTES2(sec1->exec_addr) != 0x0730 ) return 1;
-   if ( (sec1->sio_read_cmd & 0x7f) != 'R' ) return 1;
+   if ( BYTES2(sec1->exec_addr) != 0x0730 )
+   {
+      if ( options.debug > 1 ) fprintf(stderr,"DEBUG: %s: NOT DOS XE exec_addr %04x\n",__FUNCTION__,BYTES2(sec1->exec_addr));
+      return 1;
+   }
+   if ( (sec1->sio_read_cmd & 0x7f) != 'R' )
+   {
+      if ( options.debug > 1 ) fprintf(stderr,"DEBUG: %s: NOT DOS XE sio_read_cmd: %02x -> %c\n",__FUNCTION__,sec1->sio_read_cmd,sec1->sio_read_cmd);
+      return 1;
+   }
    // if ( (sec1->sio_write_cmd & 0x7f) != 'W' ) return 1; // Could also be 'P'
    if ( (sec1->sio_format_cmd & 0x7f) != '!' ) {;} // FIXME: is it different for 1050 ED?
-   if ( BYTES2R(sec1->sector_size) != atrfs.sectorsize ) return 1;
+   if ( BYTES2R(sec1->sector_size) != atrfs.sectorsize )
+   {
+      if ( options.debug > 1 ) fprintf(stderr,"DEBUG: %s: NOT DOS XE inconsistent sector size: %d != %d\n",__FUNCTION__,BYTES2R(sec1->sector_size), atrfs.sectorsize);
+      return 1;
+   }
 
    struct dosxe_vtoc_cluster *vtoc = CLUSTER(VTOC_CLUSTER);
-   if ( BYTES2(vtoc->total_clusters) != BYTES2(sec1->total_clusters) ) return 1;
+   if ( BYTES2(vtoc->total_clusters) != BYTES2(sec1->total_clusters) )
+   {
+      if ( options.debug > 1 ) fprintf(stderr,"DEBUG: %s: NOT DOS XE inconsistent total clusters: %d != %d\n",__FUNCTION__,BYTES2(vtoc->total_clusters),BYTES2(sec1->total_clusters));
+      return 1;
+   }
+
 
    atrfs.readonly = 1; // FIXME: No write support yet
    return 0;
@@ -640,9 +657,13 @@ char *dosxe_fsinfo(void)
    b+=sprintf(b,"Disk drive type:     %.6s\n",sec1->disk_type);
    b+=sprintf(b,"Total blocks:        %d\n",BYTES2(sec1->total_clusters));
    b+=sprintf(b,"Initial free blocks: %d\n",BYTES2(sec1->max_free_clusters));
+   if ( VTOC_CLUSTERS == 1 )
+      b+=sprintf(b,"VTOC cluster:        %d\n",VTOC_CLUSTER);
+   else
+      b+=sprintf(b,"VTOC clusters:       %d--%d\n",VTOC_CLUSTER,VTOC_CLUSTER+VTOC_CLUSTERS-1);
    b+=sprintf(b,"Main directory:      %d\n",sec1->main_directory);
    b+=sprintf(b,"Tracks:              %d\n",sec1->tracks);
-   b+=sprintf(b,"Clusters per track:  %d\n",BYTES2R(sec1->sectors_per_track));
+   b+=sprintf(b,"Sectors per track:   %d\n",BYTES2R(sec1->sectors_per_track));
    b+=sprintf(b,"Sides                %d\n",sec1->sides+1);
    b+=sprintf(b,"Sector size:         %d\n",BYTES2R(sec1->sector_size));
    b+=sprintf(b,"Density:             ");
@@ -1024,6 +1045,30 @@ int dosxe_newfs(void)
       return -EINVAL;
    }
 
+   // Non-standard image size warning
+   if ( !( atrfs.sectors == 720 ||
+           (atrfs.sectors == 1040 && atrfs.sectorsize == 128) ||
+           (atrfs.sectors == 1440 && atrfs.sectorsize == 256) ) )
+   {
+      fprintf(stderr,
+              "WARNING: DOS XE does not always work with non-standard image sizes\n"
+              "         You may need to hack DOS to recognize these images\n"
+              "         Recommended values:\n"
+              "           720  x 128 (SS/SD) AT810\n"
+              "           1040 x 128 (SS/ED) AT1050\n"
+              "           720  x 256 (SS/DD) SSDD\n"
+              "           1440 x 256 (DS/DD) XF551\n"
+              "         Images with more than 3960 clusters (DD sectors) will fail\n"
+              "         a directory listing in unmodified DOS XE with an error 144\n"
+         );
+      if ( MAX_PHYSICAL_CLUSTER > 3960 )
+      {
+         fprintf(stderr,
+                 "WARNING: THIS IMAGE WILL NOT WORK!!!\n"
+                 "   See above unless you're modifying the DOS XE drive table\n"
+            );
+      }
+   }
    // Copy in saved boot sectors
    for (int i=0;i<3;++i)
    {
@@ -1049,10 +1094,11 @@ int dosxe_newfs(void)
    // Stuff that is image-specific:
    struct sector1_dosxe *sec1 = SECTOR(1);
    STOREBYTES2(sec1->total_clusters,MAX_PHYSICAL_CLUSTER + 1); // Add one
+   if ( MAX_PHYSICAL_CLUSTER == 0xffff ) STOREBYTES2(sec1->total_clusters,MAX_PHYSICAL_CLUSTER); // Don't add one
    STOREBYTES2(sec1->max_free_clusters,MAX_PHYSICAL_CLUSTER - 3 - VTOC_CLUSTERS - 1); // Allocate: boot, VTOC, main directory
    sec1->main_directory = 4 + VTOC_CLUSTERS; // 5 on standard images
    STOREBYTES2(sec1->date_code,dosxe_datecode(time(NULL)));
-   // 1c first byte of vtoc // ?? 07 (leave alone unless I find some case where it can be different)
+   sec1->first_vtoc_byte = 0x0f >> VTOC_CLUSTERS; // 0x07 if one VTOC cluster >>1 for each additional
 
    // Initialize VTOC
    struct dosxe_vtoc_cluster *vtoc = CLUSTER(VTOC_CLUSTER);

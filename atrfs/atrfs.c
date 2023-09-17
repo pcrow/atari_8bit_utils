@@ -173,10 +173,10 @@ int atr_preinit(void)
       head->h1 = 0x02;
       head->secsize[0] = options.secsize & 0xff;
       head->secsize[1] = options.secsize >> 8;
-      int imagesize16 = (options.secsize*options.sectors) >> 4;
+      int imagesize16 = (options.secsize*options.sectors - atrfs.ssbytes) >> 4;
       head->bytes16count[0] = imagesize16 & 0xff;
       head->bytes16count[1] = (imagesize16 >> 8 ) & 0xff;
-      head->hibytes16count[1] = (imagesize16 >> 16 ) & 0xff;
+      head->hibytes16count[0] = (imagesize16 >> 16 ) & 0xff;
       head->hibytes16count[1] = (imagesize16 >> 24 ) & 0xff;
 
       // Save stat of image file
@@ -750,6 +750,12 @@ int main(int argc,char *argv[])
       ++args.argv;
    }
 
+   if ( !options.filename )
+   {
+      printf("argc: %d\n",args.argc);
+      for ( int i=0;i<args.argc;++i) printf("argv[%d]: %s\n",i,args.argv[i]);
+   }
+   
    if ( !options.filename || options.help )
    {
       printf("usage:\n"
