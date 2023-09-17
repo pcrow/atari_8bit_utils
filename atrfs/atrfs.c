@@ -734,27 +734,31 @@ const struct fuse_opt option_spec[] = {
 int main(int argc,char *argv[])
 {
    int ret;
-   struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
 
    // Defaults
    options.secsize=128;
    options.sectors=720;
 
+   // Mangle options for no '--nmae=' option with a mount point
+   int mp = 0;
+   for ( int i=argc-1;i>0;--i )
+   {
+      if ( argv[i][0] == '-' ) continue;
+      if ( !mp )
+      {
+         mp = 1;
+         continue;
+      }
+      char *dummy = malloc(strlen(argv[i])+10);
+      printf("argv[%d]: %s\n",i,argv[i]);
+      sprintf(dummy,"--name=%s",argv[i]);
+      argv[i] = dummy;
+      break;
+   }
+
+   struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
    if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1)
       return 1;
-
-   if ( !options.filename && args.argc == 3 )
-   {
-      options.filename = args.argv[1];
-      --args.argc;
-      ++args.argv;
-   }
-
-   if ( !options.filename )
-   {
-      printf("argc: %d\n",args.argc);
-      for ( int i=0;i<args.argc;++i) printf("argv[%d]: %s\n",i,args.argv[i]);
-   }
    
    if ( !options.filename || options.help )
    {
