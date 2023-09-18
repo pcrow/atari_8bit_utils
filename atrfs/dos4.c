@@ -100,10 +100,10 @@
    (atrfs.sectorsize==128?6:                    \
     /* 3 for DD unless it's a big disk */       \
     (atrfs.sectors <= 720 ? 3 :                 \
-     /* 6 for DS/DD or other large disks */    \
+     /* 6 for DS/DD or other large disks */     \
      6 ))
 #define CLUSTER_BYTES (CLUSTER_SIZE * atrfs.sectorsize)
-#define CLUSTER_TO_SEC(n) ((n-8)*CLUSTER_SIZE + 1) // Starts at 8, not zero
+#define CLUSTER_TO_SEC(n) (((n)-8)*CLUSTER_SIZE + 1 - ((n)>128?CLUSTER_SIZE:0)) // Starts at 8, not zero, but skip 0x80
 #define CLUSTER(n) SECTOR(CLUSTER_TO_SEC(n))
 #define VTOC_CLUSTER                                    \
    /* SS/SD: 66 */                                      \
@@ -125,9 +125,10 @@
       1 )))
 #define DIR_START ((struct dos4_dir_entry *)CLUSTER(VTOC_CLUSTER))
 #define VTOC_START SECTOR(CLUSTER_TO_SEC(VTOC_CLUSTER+2)-VTOC_SECTOR_COUNT)
-#define MAX_CLUSTER (atrfs.sectors/CLUSTER_SIZE+8-1)
+#define REAL_MAX_CLUSTER (atrfs.sectors/CLUSTER_SIZE+8-1) // Pretend 0x80 is a normal cluster
+#define MAX_CLUSTER (REAL_MAX_CLUSTER < 0x80 ? REAL_MAX_CLUSTER : REAL_MAX_CLUSTER + 1)
 #define DIR_ENTRIES ((CLUSTER_BYTES*2-VTOC_SECTOR_COUNT*atrfs.sectorsize)/(int)sizeof(struct dos4_dir_entry))
-#define TOTAL_CLUSTERS (MAX_CLUSTER-7-(atrfs.sectorsize == 256?1:0))
+#define TOTAL_CLUSTERS (REAL_MAX_CLUSTER-7-(atrfs.sectorsize == 256?1:0))
 
 /*
  * File System Structures
@@ -458,8 +459,20 @@ int dos4_sanity(void)
    {
       if ( c > MAX_CLUSTER )
       {
-         if ( options.debug ) fprintf(stderr,"DEBUG: %s: VTOC free sanity failed %d > %d with %d free clusters left\n",__FUNCTION__,c,MAX_CLUSTER,free);
-         return 1;
+         // Strange, on a SS/DD disk, DOS 4 creates a VTOC where cluster f7 points to f8 instead of being zero
+         // Also on SS/ED, DOS 4 VTOC has cluster b4 pointing to b5 instead of being zero
+         // On a DS/DD disk, it gets it right with the same number of clusters
+         // But on DS/DD, the free count is one short.
+         // On SS/SD, the chain is right and the free count is right.
+         if ( c == MAX_CLUSTER+1 && map[c]==0 ) // Let it optionally chain to past the end
+         {
+            ; // OK, bug in DOS 4
+         }
+         else
+         {
+            if ( options.debug ) fprintf(stderr,"DEBUG: %s: VTOC free sanity failed %d > %d with %d free clusters left\n",__FUNCTION__,c,MAX_CLUSTER,free);
+            //return 1;
+         }
       }
       if ( free == 1 && map[c]==0 ) break; // Good ending
       if ( free == 1 )
@@ -525,7 +538,7 @@ int dos4_getattr(const char *path, struct stat *stbuf)
    if ( strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
    {
       int sec = string_to_sector(path);
-      if ( sec >= 0 && sec*CLUSTER_SIZE+1<=atrfs.sectors )
+      if ( sec >= 0 && sec*CLUSTER_SIZE+1<=atrfs.sectors && sec != 0x80 )
       {
          stbuf->st_mode = MODE_RO(stbuf->st_mode);
          stbuf->st_size = CLUSTER_BYTES;
@@ -594,8 +607,9 @@ int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
       filler(buf, name, FILLER_NULL);
    }
 
-#if 0 // Data clusters
    // Create .cluster000 ... .cluster255 as appropriate
+   // Only for debugging
+   if ( options.debug > 1 )
    {
       unsigned char *zero = calloc(1,CLUSTER_BYTES);
       if ( !zero ) return -ENOMEM; // Weird
@@ -605,6 +619,7 @@ int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
       {
          unsigned char *s = CLUSTER(sec);
          char *note="";
+         if ( sec == 128 ) continue; // No such cluster
          if ( memcmp(s,zero,CLUSTER_BYTES) == 0 ) continue; // Skip empty sectors
          if ( sec == VTOC_CLUSTER || sec == VTOC_CLUSTER+1 ) note="-dir_vtoc";
          sprintf(name,".cluster%0*d%s",digits,sec,note);
@@ -612,7 +627,7 @@ int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
       }
       free(zero);
    }
-#endif
+
    return 0;
 }
 
@@ -626,7 +641,7 @@ int dos4_read(const char *path, char *buf, size_t size, off_t offset)
    if ( strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
    {
       int sec = string_to_sector(path);
-      if ( sec < 0 || sec*CLUSTER_SIZE+1>atrfs.sectors ) return -ENOENT;
+      if ( sec < 0 || sec*CLUSTER_SIZE+1>atrfs.sectors || sec==128 ) return -ENOENT;
 
       int bytes = CLUSTER_BYTES;
       if (offset >= bytes ) return -EOF;
@@ -743,6 +758,51 @@ int dos4_newfs(void)
       return -EIO;
    }
 
+   /*
+    * Formatting a disk with DOS 4 creates the VTOC and nothing else.
+    * No boot sectors!
+    *
+    * With DD disks, it will write boot sectors when writing the DOS files; perhaps we want to do that here, too?
+    */
+
+   /*
+    * The formatting rules are non-intuitive and different for each of the four supported sizes:
+    *  SS/SD
+    *     720 sectors grouped into 120 clusters of 6 sectors (768 bytes) each.
+    *     These are numbered 8--127 to cover sectors 1--720.
+    *     Clusters 66-67; sectors 349--360 are the directory and vtoc
+    *     118 clusters are initially free, reported correctly as 708 sectors.
+    *
+    *  SS/ED
+    *     1040 sectors grouped into 173 clusters of 6 sectors each.
+    *     Sectors 1039 and 1040 are unused.
+    *     Clusters 92--93, sectors 505--516, are the directory and 2 vtoc sectors.
+    *     Cluster 128 does not exist; cluster 129 starts with sector 721 where 128 should start
+    *     The entry for cluster 128 is modified, I'm not clear on what they byte represents.
+    *     Note: DOS 4 reports half the real number of sectors, so it treats it as if it were
+    *     clusters of 3 256-byte sectors instead of 6 128-byte sectors.
+    *
+    *  SS/DD
+    *     720 sectors grouped into 240 clusters of 3 sectors (768 bytes) each.
+    *     These are numbered 8--248, skipping 128 to cover sectors 1--720.
+    *     Cluster 8 is not used because the boot sectors may be short.
+    *     Cluster 126-127; sectors 355--360; are the directory and vtoc
+    *     Reports 711 sectors free.
+    *
+    *  DS/DD
+    *     1440 sectors grouped into 240 clusters of 6 sectors (1536 bytes) each.
+    *     These are numbered 8--248, skipping 128 to cover sectors 1--1440.
+    *     Cluster 8 is not used because the boot sectors may be short.
+    *     Clusters 66--67 (sectors 349--359) are the directory and vtoc
+    *     Cluster 248 is not used, which is apparently a bug DOS 4.  I have not tested using
+    *     it and seeing if the DOS 4 will read and write files on that cluster.
+    *     Reports 708 sectors free, dividing real sectors by 2 to keep it under 1000.
+    *
+    * Open question: What does the entry for cluster $80 get used for?  Something
+    * changes it when doing various disk operations, but I haven't isolated what
+    * causes it to be modified.  It doesn't appear to be anything important, and the byte
+    * doesn't exist on SS/SD disks at all.
+    */
    struct dos4_vtoc *vtoc = VTOC_START;
    vtoc->format = 'R';
    if ( atrfs.sectorsize==256 && atrfs.sectors > 720 ) vtoc->format = 'C';
@@ -750,8 +810,10 @@ int dos4_newfs(void)
    for ( int cluster = 8; cluster <= MAX_CLUSTER; ++cluster)
    {
       if ( cluster == 8 && atrfs.sectorsize==256 ) continue;
+      if ( cluster == 0x80 ) continue; // This is skipped
       if ( cluster == VTOC_CLUSTER ) continue;
       if ( cluster == VTOC_CLUSTER+1 ) continue;
+      if ( cluster == MAX_CLUSTER && atrfs.sectors == 1440 ) continue; // Bug compatible with DS/DD image
       dos4_free_cluster(cluster);
    }
    return 0;
@@ -795,7 +857,7 @@ char *dos4_fsinfo(void)
    
    struct dos4_vtoc *vtoc = VTOC_START;
    b+=sprintf(b,"Cluster size:        %d bytes, %d sectors\n",CLUSTER_BYTES,CLUSTER_SIZE);
-   b+=sprintf(b,"Total data clusters: %d: %d--%d\n",TOTAL_CLUSTERS,(atrfs.sectorsize==128)?8:9,((atrfs.sectorsize==128)?8:9)+TOTAL_CLUSTERS-1);
+   b+=sprintf(b,"Total data clusters: %d: %d--%d  sectors: %d--%d\n",TOTAL_CLUSTERS,(atrfs.sectorsize==128)?8:9,MAX_CLUSTER,CLUSTER_TO_SEC((atrfs.sectorsize==128)?8:9),CLUSTER_TO_SEC(MAX_CLUSTER+1)-1);
    b+=sprintf(b,"Free clusters:       %d\n",vtoc->free);
    b+=sprintf(b,"VTOC/DIR clusters:   %d--%d\n",VTOC_CLUSTER,VTOC_CLUSTER+1);
    b+=sprintf(b,"DIR sectors:         %d--%d\n",CLUSTER_TO_SEC(VTOC_CLUSTER),CLUSTER_TO_SEC(VTOC_CLUSTER+2)-VTOC_SECTOR_COUNT-1);   
