@@ -103,7 +103,7 @@
      /* 6 for DS/DD or other large disks */     \
      6 ))
 #define CLUSTER_BYTES (CLUSTER_SIZE * atrfs.sectorsize)
-#define CLUSTER_TO_SEC(n) (((n)-8)*CLUSTER_SIZE + 1 - ((n)>128?CLUSTER_SIZE:0)) // Starts at 8, not zero, but skip 0x80
+#define CLUSTER_TO_SEC(n) (((n)-8)*CLUSTER_SIZE + 1 - ((n)>128?CLUSTER_SIZE:0)) // Starts at 8, not zero, but skip checksum at 0x80
 #define CLUSTER(n) SECTOR(CLUSTER_TO_SEC(n))
 #define VTOC_CLUSTER                                    \
    /* SS/SD: 66 */                                      \
@@ -217,9 +217,52 @@ const struct fs_ops dos4_ops = {
    .fs_fsinfo = dos4_fsinfo,
 };
 
+static const unsigned char bootsectors[2][128*2] = {
+   [0] = { // SS/DD
+      0x00, 0x02, 0x08, 0x1c, 0x0e, 0x1c, 0xa9, 0x31, 0x8d, 0x00, 0x03, 0xa9, 0x01, 0x8d, 0x01, 0x03, 
+      0xa9, 0x4e, 0x8d, 0x02, 0x03, 0xa9, 0x40, 0x8d, 0x03, 0x03, 0xa9, 0xfc, 0x8d, 0x04, 0x03, 0xa9, 
+      0x1b, 0x8d, 0x05, 0x03, 0xa9, 0x02, 0x8d, 0x06, 0x03, 0xa9, 0x0c, 0x8d, 0x08, 0x03, 0xa9, 0x00, 
+      0x8d, 0x09, 0x03, 0xa9, 0x00, 0x8d, 0x0a, 0x03, 0xa9, 0x00, 0x8d, 0x0b, 0x03, 0x20, 0x59, 0xe4, 
+      0x30, 0x23, 0xa9, 0x00, 0x8d, 0x00, 0x1c, 0xa9, 0x04, 0x8d, 0x01, 0x1c, 0xa9, 0x01, 0x8d, 0x02, // 0x00 for SS/SD
+      0x1c, 0xa9, 0x00, 0x8d, 0x03, 0x1c, 0xa9, 0x4f, 0x8d, 0x02, 0x03, 0xa9, 0x80, 0x8d, 0x03, 0x03, 
+      0x20, 0x59, 0xe4, 0x10, 0x02, 0x38, 0x60, 0xa9, 0x52, 0x8d, 0x02, 0x03, 0xa9, 0x40, 0x8d, 0x03, 
+      0x03, 0xa9, 0x01, 0x8d, 0x04, 0x03, 0xa9, 0x07, 0x8d, 0x05, 0x03, 0xa9, 0x07, 0x8d, 0x06, 0x03, 
+   },
+   [1] = { // DS/DD
+      0x00, 0x02, 0x08, 0x1c, 0x0e, 0x1c, 0xa9, 0x31, 0x8d, 0x00, 0x03, 0xa9, 0x01, 0x8d, 0x01, 0x03, 
+      0xa9, 0x4e, 0x8d, 0x02, 0x03, 0xa9, 0x40, 0x8d, 0x03, 0x03, 0xa9, 0xfc, 0x8d, 0x04, 0x03, 0xa9, 
+      0x1b, 0x8d, 0x05, 0x03, 0xa9, 0x02, 0x8d, 0x06, 0x03, 0xa9, 0x0c, 0x8d, 0x08, 0x03, 0xa9, 0x00, 
+      0x8d, 0x09, 0x03, 0xa9, 0x00, 0x8d, 0x0a, 0x03, 0xa9, 0x00, 0x8d, 0x0b, 0x03, 0x20, 0x59, 0xe4, 
+      0x30, 0x23, 0xa9, 0x01, 0x8d, 0x00, 0x1c, 0xa9, 0x04, 0x8d, 0x01, 0x1c, 0xa9, 0x01, 0x8d, 0x02, // 0x01 for DS/DD
+      0x1c, 0xa9, 0x00, 0x8d, 0x03, 0x1c, 0xa9, 0x4f, 0x8d, 0x02, 0x03, 0xa9, 0x80, 0x8d, 0x03, 0x03, 
+      0x20, 0x59, 0xe4, 0x10, 0x02, 0x38, 0x60, 0xa9, 0x52, 0x8d, 0x02, 0x03, 0xa9, 0x40, 0x8d, 0x03, 
+      0x03, 0xa9, 0x01, 0x8d, 0x04, 0x03, 0xa9, 0x07, 0x8d, 0x05, 0x03, 0xa9, 0x07, 0x8d, 0x06, 0x03, 
+   },
+};
+
 /*
  * Functions
  */
+
+/*
+ * dos4_set_vtoc_checksum()
+ *
+ * byte 128 of the VTOC (except on SS/SD) is a sum of all previous bytes
+ * and carry bits.
+ *
+ * I don't think DOS 4 actually verifies this at any point.
+ */
+void dos4_set_vtoc_checksum(void)
+{
+   unsigned char *map = VTOC_START;
+
+   if ( atrfs.sectorsize == 128 && VTOC_SECTOR_COUNT == 1 ) return; // No checksum without a byte 128
+
+   int sum = 0;
+   for (int i=0;i<128;++i) sum += map[i];
+   sum = (sum&0xff) + (sum>>8);
+   map[128]=sum;
+}
 
 /*
  * dos4_free_cluster()
@@ -239,6 +282,7 @@ int dos4_free_cluster(int cluster)
       map[cluster] = vtoc->first_free;
       vtoc->first_free = cluster;
       ++vtoc->free;
+      dos4_set_vtoc_checksum();
       return 0;
    }
 
@@ -252,6 +296,7 @@ int dos4_free_cluster(int cluster)
       map[cluster] = map[c];
       map[c] = cluster;
       ++vtoc->free;
+      dos4_set_vtoc_checksum();
       return 0;
    }
    fprintf(stderr,"DEBUG: %s: Bad free cluster chain: attempt to free cluster %d; map[%d]->%d\n",__FUNCTION__,cluster,c,map[c]);
@@ -809,10 +854,10 @@ int dos4_newfs(void)
     *     it, and DOS 4 seems happy to allocate, read, and write it like any other cluster.
     *     Reports 708 sectors free, dividing real sectors by 2 to keep it under 1000.
     *
-    * Open question: What does the entry for cluster $80 get used for?  Something
-    * changes it when doing various disk operations, but I haven't isolated what
-    * causes it to be modified.  It doesn't appear to be anything important, and the byte
-    * doesn't exist on SS/SD disks at all.
+    *  Except on SS/SD where there is no byte 128 of the VTOC, this byte is a checksum of
+    *  the bytes 0--127.  Just add them up, plus all the carry bits, and it should match.
+    *  I don't see any indications either in the DOS source code or testing that it ever
+    *  verifies the value.
     */
    struct dos4_vtoc *vtoc = VTOC_START;
    vtoc->format = 'R';
@@ -827,6 +872,29 @@ int dos4_newfs(void)
       // Uncomment the following for bug compatibility:
       // if ( cluster == MAX_CLUSTER && atrfs.sectors == 1440 ) continue;
       dos4_free_cluster(cluster);
+   }
+
+   /*
+    * Real DOS 4 does not write boot sectors.
+    * For SD, the boot sectors are also data sectors.
+    * For DD, writing DOS files writes out two sectors of boot code.
+    * They are identical except byte 68 is 1 for DS/DD and 0 for SS/DD.
+    * Might as well write them out now.
+    *
+    * If writing QDOS.SYS to the image, be aware that there are a number of
+    * byte differences between the files depending on the drive settings.
+    */
+   if ( atrfs.sectorsize == 256 )
+   {
+      const unsigned char *b;
+      unsigned char *s = SECTOR(1);
+      if ( atrfs.sectors <= 720 ) b=bootsectors[0];
+      else b=bootsectors[1];
+      for (int i=0;i<2;++i)
+      {
+         s=SECTOR(i+1);
+         memcpy(s,b+i*128,128);
+      }
    }
    return 0;
 }
