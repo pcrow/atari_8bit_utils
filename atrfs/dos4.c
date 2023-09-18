@@ -434,7 +434,7 @@ char *dos4_info(const char *path,struct dos4_dir_entry *dirent)
 int dos4_sanity(void)
 {
    if ( atrfs.sectorsize != 128 &&  atrfs.sectorsize != 256 ) return 1; // Must be SD
-   if ( atrfs.sectors < (VTOC_CLUSTER+2)*CLUSTER_SIZE ) return 1; // Too small
+   if ( atrfs.sectors < (VTOC_CLUSTER+2)*CLUSTER_SIZE - 1 ) return 1; // Too small
    struct dos4_dir_entry *dirent = DIR_START;
    struct dos4_vtoc *vtoc = VTOC_START;
    unsigned char *map = VTOC_START;
@@ -442,6 +442,7 @@ int dos4_sanity(void)
    // Sector 1 is not special in DOS 4!
    // If DOS files are written, QDOS.SYS is simply written contiguously starting at
    // sector 1 (cluster 8)
+   if ( MAX_CLUSTER > 0xff ) return 1; // Too large (well, it could have unallocated space, but that's stupid)
    if ( vtoc->format != 'R' && vtoc->format != 'C' ) return 1; // FIXME: Check all formats
    if ( vtoc->reserved_02 != 00 ) return 1;
    if ( vtoc->reserved[0] != 00 ) return 1;
@@ -742,20 +743,30 @@ int dos4_newfs(void)
       fprintf(stderr,"Error: Atari DOS 4 only supports SD or DD sector sizes\n");
       return -EIO;
    }
-   if ( atrfs.sectorsize == 128 && atrfs.sectors > 1040 )
+   if ( atrfs.sectors > 1482 ) // MAX_CLUSTER <= 0xff in both DS/DD and SS/ED mode with cluster size 6
    {
-      fprintf(stderr,"Error: Atari DOS 4 single-density images maximum size is 1040 sectors (SS/ED)\n");
-      return -EIO;
-   }
-   if ( atrfs.sectorsize == 256 && atrfs.sectors > 1440 )
-   {
-      fprintf(stderr,"Error: Atari DOS 4 double-density images maximum size is 1440 sectors (DS/DD)\n");
+      fprintf(stderr,"Error: Atari DOS 4 maximum size is 1484 sectors\n");
       return -EIO;
    }
    if ( CLUSTER_TO_SEC(VTOC_CLUSTER+2) - 1 > atrfs.sectors )
    {
-      fprintf(stderr,"Error: Atari DOS 4 needs %d sectors minimum\n",CLUSTER_TO_SEC(VTOC_CLUSTER+2) - 1);
+      fprintf(stderr,"Error: Atari DOS 4 needs %d sectors minimum for this density\n",CLUSTER_TO_SEC(VTOC_CLUSTER+2) - 1);
       return -EIO;
+   }
+
+   // Warn about non-standard images
+   if ( atrfs.sectors != 720 &&
+        !(atrfs.sectors == 1040 && atrfs.sectorsize == 128) &&
+        !(atrfs.sectors == 1440 && atrfs.sectorsize == 256) )
+   {
+      if ( atrfs.sectors < 720 && atrfs.sectorsize == 128 )
+         fprintf(stderr,"Creating short non-standard DOS 4 image:  Tell DOS 4 that this is SS/SD\n");
+      else if ( atrfs.sectors < 720 && atrfs.sectorsize == 256 )
+         fprintf(stderr,"Creating short non-standard DOS 4 image:  Tell DOS 4 that this is SS/DD\n");
+      else if ( atrfs.sectorsize == 128 )
+         fprintf(stderr,"Creating non-standard DOS 4 image:  Tell DOS 4 that this is SS/2D (AT1050)\n");
+      else
+         fprintf(stderr,"Creating non-standard DOS 4 image:  Tell DOS 4 that this is DS/DD\n");
    }
 
    /*
@@ -794,8 +805,8 @@ int dos4_newfs(void)
     *     These are numbered 8--248, skipping 128 to cover sectors 1--1440.
     *     Cluster 8 is not used because the boot sectors may be short.
     *     Clusters 66--67 (sectors 349--359) are the directory and vtoc
-    *     Cluster 248 is not used, which is apparently a bug DOS 4.  I have not tested using
-    *     it and seeing if the DOS 4 will read and write files on that cluster.
+    *     Cluster 248 is not used, which is apparently a bug DOS 4.  I have tested using
+    *     it, and DOS 4 seems happy to allocate, read, and write it like any other cluster.
     *     Reports 708 sectors free, dividing real sectors by 2 to keep it under 1000.
     *
     * Open question: What does the entry for cluster $80 get used for?  Something
@@ -813,7 +824,8 @@ int dos4_newfs(void)
       if ( cluster == 0x80 ) continue; // This is skipped
       if ( cluster == VTOC_CLUSTER ) continue;
       if ( cluster == VTOC_CLUSTER+1 ) continue;
-      if ( cluster == MAX_CLUSTER && atrfs.sectors == 1440 ) continue; // Bug compatible with DS/DD image
+      // Uncomment the following for bug compatibility:
+      // if ( cluster == MAX_CLUSTER && atrfs.sectors == 1440 ) continue;
       dos4_free_cluster(cluster);
    }
    return 0;
