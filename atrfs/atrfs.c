@@ -750,7 +750,6 @@ int main(int argc,char *argv[])
          continue;
       }
       char *dummy = malloc(strlen(argv[i])+10);
-      printf("argv[%d]: %s\n",i,argv[i]);
       sprintf(dummy,"--name=%s",argv[i]);
       argv[i] = dummy;
       break;

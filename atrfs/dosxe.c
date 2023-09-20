@@ -1065,7 +1065,8 @@ int dosxe_newfs(void)
       {
          fprintf(stderr,
                  "WARNING: THIS IMAGE WILL NOT WORK!!!\n"
-                 "   See above unless you're modifying the DOS XE drive table\n"
+                 "   See above unless you're modifying the drive table\n"
+                 "   in the DOS XE executable\n"
             );
       }
    }
