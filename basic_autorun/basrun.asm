@@ -61,23 +61,17 @@ BASENAB	LDA	PORTB		; I see $FF, so maybe it's write-only?
 BASENAB	LDA	#%10110001
 #endif
 	STA	PORTB
-	LDA	#$00
-	STA	BASICF		; Set flag to keep BASIC enabled in PORTB on reset
+	LDX	#$00
+	STX	BASICF		; Set flag to keep BASIC enabled in PORTB on reset
 	;; Init BASIC
-	;LDA	#$00	    	; Already zero
-	STA	CARTINIT+1	; Should be ROM if PORTB enabled BASIC
-	LDA	CARTINIT+1	; Page of init address must be in A0-BF range
+	;LDX	#$00	    	; Already zero
+	STX	CARTINIT+1	; Should be ROM if PORTB enabled BASIC
+	LDX	CARTINIT+1	; Page of init address must be in A0-BF range
 	BNE	BASGOOD		; Branch if we found it
 	;; Here we were unable to enable BASIC
-BASBAD	LDY	#82 ; third line with 2-character indent
-CPYMSG	LDA	FAILMSG-82,Y
-	BEQ	DIE
-	SEC
-	SBC	#$20
-	STA	(SAVMSC),Y
-	INY
-	BPL	CPYMSG
-DIE	BEQ	DIE		; Loop here forever
+	;; LDX	#FAILMSG-MESSAGES ; That's zero, which is already there from above
+	JSR	CPYMSG
+DIE	BEQ	DIE		; Loop here forever (CPYMSG returns from BEQ)
 BASGOOD	JSR	CARTI 		; want JSR (CARTINIT), but only JMP indirect exists
 	LDA	#$01
 	STA	TRAMSZ	; flag cartridge present
@@ -87,18 +81,12 @@ SETCLR	LDA	COLOR2
 #if 1 // Disable for debugging to see the autorun message
 	STA	COLOR1
 #endif
-	LDY	#82 ; third line with 2-character indent
-CPYBYTE	LDA	RUNCMD-82,Y
-	BEQ	CPYDONE
-	SEC
-	SBC	#$20
-	STA	(SAVMSC),Y
-	INY
-	BPL	CPYBYTE
-CPYDONE	LDA	#$0D
+	LDX	#RUNCMD-MESSAGES
+	JSR	CPYMSG
 #if 0 // Debug to stop here
 DEAD	BNE DEAD
 #endif
+	LDA	#$0D
 	STA	$034A 		; IOCB 0 set to return mode for auto-input
 	RTS
 	;; Subroutines
@@ -108,7 +96,19 @@ DO_OP	LDA	E_OPEN+1	; Hack to call E handler open routine from the table
 	PHA
 	RTS			; Jump to ($E400)+1
 CARTI	JMP	(CARTINIT)
-
+	;; Copy Message
+	;; X is offset of start of message from MSG
+CPYMSG	LDY	#82
+CPYBYTE	LDA	MESSAGES,X
+	BEQ	CPYDONE
+	SEC
+	SBC	#$20
+	STA	(SAVMSC),Y
+	INY
+	INX
+	BPL	CPYBYTE		; Unconditional (INX won't hit zero)
+CPYDONE	RTS
+MESSAGES = *	
 FAILMSG	.asc "BASIC MISSING"
 	.byte $00		; Flag end of message
 	;; Run command should be no more than 38 bytes
