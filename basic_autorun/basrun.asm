@@ -73,8 +73,7 @@ BASENAB	LDA	#%10110001
 	JSR	CPYMSG
 DIE	BEQ	DIE		; Loop here forever (CPYMSG returns from BEQ)
 BASGOOD	JSR	CARTI 		; want JSR (CARTINIT), but only JMP indirect exists
-	LDA	#$01
-	STA	TRAMSZ	; flag cartridge present
+	INC	TRAMSZ	; flag cartridge present
 	;; Set text (color1) to background (color2)
 	;; This will be reset with the "GR.0" command later
 SETCLR	LDA	COLOR2
@@ -109,7 +108,7 @@ CPYBYTE	LDA	MESSAGES,X
 	BPL	CPYBYTE		; Unconditional (INX won't hit zero)
 CPYDONE	RTS
 MESSAGES = *	
-FAILMSG	.asc "BASIC MISSING"
+FAILMSG	.asc "NEED BASIC"
 	.byte $00		; Flag end of message
 	;; Run command should be no more than 38 bytes
 	;; Doesn't need closing quote or extra space; space reserved for longer names
