@@ -9,6 +9,10 @@ This uses FUSE to create a user-space file system that allows reading and writin
 
 The framework is designed to be modular, making it relatively simple to add support for new Atari file systems.
 
+BASIC Autorun
+
+There are lots of AUTORUN.SYS files for running BASIC programs, but what if BASIC isn't available?  Well, this one will enable BASIC first if it's disabled on an XL/XE system.  If it's a 400/800/1200XL, it will display "BASIC REQUIRED" and hang.  Also, the command text is stored in ATASCII, so it's easy to edit the binary.
+
 SIO2Linux
 
 Pavel Machek made an initial attempt at communicating with the Atari through an SIO2PC cable using Linux's serial port drivers. He came up with a simple floppy emulator he called "femul.c"
