@@ -43,10 +43,9 @@
 CHKBAS	LDA 	TRAMSZ		; set to 1 if cartridge is present
 	BNE	SETCLR
 	;; Reduce RAMTOP to 40K unless it's already at or below
-NOBAS   LDA	RAMTOP		; See if we can enable BASIC in XL/XE PORTB
-	CMP	#$A0
+NOBAS   LDA	#$A0		; See if we can enable BASIC in XL/XE PORTB
+	CMP	RAMTOP
 	BCC	GR0		; Already <= 40K, do not modify
-	LDA	#$A0
 	STA	RAMTOP
 	;; Set graphics 0 to adjust display below new RAMTP
 	;; OS listing shows a close of E: does nothing: just re-open it
@@ -65,20 +64,18 @@ BASENAB	LDA	#%10110001
 	LDA	#$00
 	STA	BASICF		; Set flag to keep BASIC enabled in PORTB on reset
 	;; Init BASIC
-	LDA	#$00
+	;LDA	#$00	    	; Already zero
 	STA	CARTINIT+1	; Should be ROM if PORTB enabled BASIC
 	LDA	CARTINIT+1	; Page of init address must be in A0-BF range
 	BNE	BASGOOD		; Branch if we found it
 	;; Here we were unable to enable BASIC
 BASBAD	LDY	#82 ; third line with 2-character indent
-	LDX	#00
-CPYMSG	LDA	FAILMSG,X
+CPYMSG	LDA	FAILMSG-82,Y
 	BEQ	DIE
 	SEC
 	SBC	#$20
 	STA	(SAVMSC),Y
 	INY
-	INX
 	BPL	CPYMSG
 DIE	BEQ	DIE		; Loop here forever
 BASGOOD	JSR	CARTI 		; want JSR (CARTINIT), but only JMP indirect exists
@@ -91,14 +88,12 @@ SETCLR	LDA	COLOR2
 	STA	COLOR1
 #endif
 	LDY	#82 ; third line with 2-character indent
-	LDX	#00
-CPYBYTE	LDA	RUNCMD,X
+CPYBYTE	LDA	RUNCMD-82,Y
 	BEQ	CPYDONE
 	SEC
 	SBC	#$20
 	STA	(SAVMSC),Y
 	INY
-	INX
 	BPL	CPYBYTE
 CPYDONE	LDA	#$0D
 #if 0 // Debug to stop here
@@ -114,9 +109,11 @@ DO_OP	LDA	E_OPEN+1	; Hack to call E handler open routine from the table
 	RTS			; Jump to ($E400)+1
 CARTI	JMP	(CARTINIT)
 
-FAILMSG	.asc "BASIC REQUIRED"
+FAILMSG	.asc "BASIC MISSING"
 	.byte $00		; Flag end of message
 	;; Run command should be no more than 38 bytes
+	;; Doesn't need closing quote or extra space; space reserved for longer names
+	;; Could add one more character and a drive number in some weird case
 RUNCMD	.asc "POKE842,12:GR.0:RUN",$22,"H:RUNFILE.BAS",$22," "
 	.byte $00		; Flag end of command
 END	.word INITAD
