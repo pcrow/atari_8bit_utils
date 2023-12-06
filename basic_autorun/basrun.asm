@@ -27,6 +27,7 @@
 	COLOR1 = $2C5
 	COLOR2 = $2C6
 	INITAD = $2E2
+	CH     = $2FC
 	BASICF = $3F8
 	CARTINIT = $BFFE	; JSR indirect here
 	CARTRUN  = $BFFA 	; JMP indirect here
@@ -51,8 +52,10 @@ NOBAS   LDA	#$A0		; See if we can enable BASIC in XL/XE PORTB
 	;; Also guarantees no garbage on the screen and resets the cursor position
 GR0	JSR	DO_OP
 
+#if 0 // Just always try to enable BASIC
 CHKBAS	LDA 	TRAMSZ		; set to 1 if cartridge is present
 	BNE	BASREADY
+#endif
 
 	;; Enable BASIC in PORTB
 	;; Should be 10110001 on XE
@@ -80,16 +83,16 @@ BASREADY = *
 	;; Set text (color1) to background (color2)
 	;; This will be reset with the "GR.0" command later
 #if 0 // Disable to save space; GR.0 will wipe the text quickly
-	LDA	COLOR2
+	LDA	#$94		; default COLOR2 as set by GR.0 above
 	STA	COLOR1
 #endif
 	LDX	#RUNCMD-MESSAGES
 	JSR	CPYMSG
-	LDA	#$0D
+	LDA	#$0C		; key code for RETURN
 #if 0 // Debug to stop here
 	RTS
 #endif
-	STA	$034A 		; IOCB 0 set to return mode for auto-input
+	STA	CH		; Active key
 	RTS
 	;; Subroutines
 DO_OP	LDA	E_OPEN+1	; Hack to call E handler open routine from the table
@@ -114,7 +117,7 @@ FAILMSG	.asc "NEED BASIC"
 	.byte $00		; Flag end of message
 	;; Run command should be no more than 38 bytes
 	;; Doesn't need closing quote; space reserved for 8.3 names
-RUNCMD	.asc "POKE842,12:GR.0:RUN",$22,"H:RUNFILE.BAS",$22
+RUNCMD	.asc "GR.0:RUN",$22,"H:RUNFILE.BAS",$22
 	.byte $00		; Flag end of command
 END	.word INITAD
 	.word INITAD+1
