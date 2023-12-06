@@ -113,7 +113,7 @@ CPYBYTE	LDA	MESSAGES,X
 	INX
 	BPL	CPYBYTE		; Unconditional (INX won't hit zero)
 MESSAGES = *	
-FAILMSG	.asc "NEED BASIC"
+FAILMSG	.asc "NO BASIC"
 	.byte $00		; Flag end of message
 	;; Run command should be no more than 38 bytes
 	;; Doesn't need closing quote; space reserved for 8.3 names
