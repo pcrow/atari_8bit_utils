@@ -18,8 +18,7 @@
 	;;    0100 If run at boot, then the stack only uses the top 10 bytes or so
 	;;    0400 Cassette buffer and boot disk buffer, plus 480-4ff is unused
 	;;    0500 BASIC uses some of this, but it's likely safe here
-	;;  If I wanted to keep page 6 empty, I would put this on page 4, or maybe
-	;;  put a routine on page 4 to wipe page 6 before returning at the end.
+	;;    0600 Everything uses page 6 for things like this, but nice to have it clean
 	;;
 	TRAMSZ = $6
 	SAVMSC = $58 		; two bytes: start of screen memory
@@ -35,17 +34,17 @@
 	EDITRV = $E400		; E handler vectors (open,close,get,put,...)
 	E_OPEN = $E400		; E open vector push onto stack and return
 	E_CLOSE = $E402
-	START = $0600
+	START = $0400
 	.word $ffff
 	.word START
 	.word END-1
 	*= START
 CHKBAS	LDA 	TRAMSZ		; set to 1 if cartridge is present
-	BNE	SETCLR
+	BNE	BASREADY
 	;; Reduce RAMTOP to 40K unless it's already at or below
 NOBAS   LDA	#$A0		; See if we can enable BASIC in XL/XE PORTB
 	CMP	RAMTOP
-	BCC	GR0		; Already <= 40K, do not modify
+	BCS	GR0		; Already <= 40K, do not modify
 	STA	RAMTOP
 	;; Set graphics 0 to adjust display below new RAMTP
 	;; OS listing shows a close of E: does nothing: just re-open it
@@ -74,18 +73,19 @@ BASENAB	LDA	#%10110001
 DIE	BEQ	DIE		; Loop here forever (CPYMSG returns from BEQ)
 BASGOOD	JSR	CARTI 		; want JSR (CARTINIT), but only JMP indirect exists
 	INC	TRAMSZ	; flag cartridge present
+BASREADY = *
 	;; Set text (color1) to background (color2)
 	;; This will be reset with the "GR.0" command later
-SETCLR	LDA	COLOR2
-#if 1 // Disable for debugging to see the autorun message
+#if 0 // Disable to save space; GR.0 will wipe the text quickly
+	LDA	COLOR2
 	STA	COLOR1
 #endif
 	LDX	#RUNCMD-MESSAGES
 	JSR	CPYMSG
-#if 0 // Debug to stop here
-DEAD	BNE DEAD
-#endif
 	LDA	#$0D
+#if 0 // Debug to stop here
+	RTS
+#endif
 	STA	$034A 		; IOCB 0 set to return mode for auto-input
 	RTS
 	;; Subroutines
@@ -93,29 +93,27 @@ DO_OP	LDA	E_OPEN+1	; Hack to call E handler open routine from the table
 	PHA
 	LDA	E_OPEN
 	PHA
-	RTS			; Jump to ($E400)+1
+DO_RTS	RTS			; Jump to ($E400)+1
 CARTI	JMP	(CARTINIT)
 	;; Copy Message
-	;; X is offset of start of message from MSG
+	;; X is offset of start of message from MESSAGES
 CPYMSG	LDY	#82
 CPYBYTE	LDA	MESSAGES,X
-	BEQ	CPYDONE
+	BEQ	DO_RTS
 	SEC
 	SBC	#$20
 	STA	(SAVMSC),Y
 	INY
 	INX
 	BPL	CPYBYTE		; Unconditional (INX won't hit zero)
-CPYDONE	RTS
 MESSAGES = *	
 FAILMSG	.asc "NEED BASIC"
 	.byte $00		; Flag end of message
 	;; Run command should be no more than 38 bytes
-	;; Doesn't need closing quote or extra space; space reserved for longer names
-	;; Could add one more character and a drive number in some weird case
-RUNCMD	.asc "POKE842,12:GR.0:RUN",$22,"H:RUNFILE.BAS",$22," "
+	;; Doesn't need closing quote; space reserved for 8.3 names
+RUNCMD	.asc "POKE842,12:GR.0:RUN",$22,"H:RUNFILE.BAS",$22
 	.byte $00		; Flag end of command
 END	.word INITAD
 	.word INITAD+1
 	*= INITAD
-	.word $0600
+	.word START
