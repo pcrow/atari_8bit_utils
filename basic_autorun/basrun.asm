@@ -39,9 +39,8 @@
 	.word START
 	.word END-1
 	*= START
-CHKBAS	LDA 	TRAMSZ		; set to 1 if cartridge is present
-	BNE	BASREADY
 	;; Reduce RAMTOP to 40K unless it's already at or below
+	;; Does nothing if BASIC already loaded
 NOBAS   LDA	#$A0		; See if we can enable BASIC in XL/XE PORTB
 	CMP	RAMTOP
 	BCS	GR0		; Already <= 40K, do not modify
@@ -49,7 +48,11 @@ NOBAS   LDA	#$A0		; See if we can enable BASIC in XL/XE PORTB
 	;; Set graphics 0 to adjust display below new RAMTP
 	;; OS listing shows a close of E: does nothing: just re-open it
 	;; Call the handler from the table to save code
+	;; Also guarantees no garbage on the screen and resets the cursor position
 GR0	JSR	DO_OP
+
+CHKBAS	LDA 	TRAMSZ		; set to 1 if cartridge is present
+	BNE	BASREADY
 
 	;; Enable BASIC in PORTB
 	;; Should be 10110001 on XE
