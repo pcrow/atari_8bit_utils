@@ -72,11 +72,11 @@ BASENAB	LDA	#%10110001
 	;LDX	#$00	    	; Already zero
 	STX	CARTINIT+1	; Should be ROM if PORTB enabled BASIC
 	LDX	CARTINIT+1	; Page of init address must be in A0-BF range
-	BNE	BASGOOD		; Branch if we found it
-	;; Here we were unable to enable BASIC
-	;; LDX	#FAILMSG-MESSAGES ; That's zero, which is already there from above
-	JSR	CPYMSG
-DIE	BEQ	DIE		; Loop here forever (CPYMSG returns from BEQ)
+	;; FIXME -- If no cart and < 48K RAM, will read $FF, not $00
+	;; Must be binary -- 101x xxxx
+	BEQ	BASBAD		; Write worked, cart is RAM; X is zero, offset of FAILMSG
+	INX
+	BEQ	BASBAD		; Write failed, but read $FF because <48K of RAM
 BASGOOD	JSR	CARTI 		; want JSR (CARTINIT), but only JMP indirect exists
 	INC	TRAMSZ	; flag cartridge present
 BASREADY = *
@@ -86,8 +86,23 @@ BASREADY = *
 	LDA	#$94		; default COLOR2 as set by GR.0 above
 	STA	COLOR1
 #endif
+
+	;; Copy the BASIC command to the screen
 	LDX	#RUNCMD-MESSAGES
-	JSR	CPYMSG
+BASBAD = *
+CPYMSG	LDY	#82
+CPYBYTE	LDA	MESSAGES,X
+	BEQ	MSG_DONE
+	SEC
+	SBC	#$20
+	STA	(SAVMSC),Y
+	INY
+	INX
+	BPL	CPYBYTE		; Unconditional (INX won't hit zero)
+MSG_DONE CPX	#RUNCMD-FAILMSG-1
+DIE	BEQ	DIE		; Loop here forever (CPYMSG returns from BEQ)
+
+	;; Activate the command
 	LDA	#$0C		; key code for RETURN
 #if 0 // Debug to stop here
 	RTS
@@ -103,15 +118,6 @@ DO_RTS	RTS			; Jump to ($E400)+1
 CARTI	JMP	(CARTINIT)
 	;; Copy Message
 	;; X is offset of start of message from MESSAGES
-CPYMSG	LDY	#82
-CPYBYTE	LDA	MESSAGES,X
-	BEQ	DO_RTS
-	SEC
-	SBC	#$20
-	STA	(SAVMSC),Y
-	INY
-	INX
-	BPL	CPYBYTE		; Unconditional (INX won't hit zero)
 MESSAGES = *	
 FAILMSG	.asc "NO BASIC"
 	.byte $00		; Flag end of message

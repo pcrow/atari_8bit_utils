@@ -1,10 +1,10 @@
 This AUTORUN.SYS file will run a BASIC program, but first it makes sure a cartridge is inserted.  If not, it will enable BASIC or display a message if it is unable to do so.
 
-I wanted to get it down to 124 bytes so that it will fit in one sector, and I've managed to do that.  It's now 123 bytes, so I have one byte to spare.  I would like to set the text color to the background color to hide the command, but that requires 5 bytes, and I only have 1 to spare.
+I wanted to get it down to 124 bytes so that it will fit in one sector, and I've managed to do that.  It's now 122 bytes, so I have 2 bytes to spare.  I would like to set the text color to the background color to hide the command, but that requires 5 bytes.
 
 Things I could do to save space:
 
-Save 11 bytes:
+Save upto 11 bytes:
 Limit to a one-character file name
 
 Save 1 byte:
