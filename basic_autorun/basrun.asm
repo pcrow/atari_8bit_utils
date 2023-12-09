@@ -82,10 +82,10 @@ BASGOOD	JSR	CARTI 		; want JSR (CARTINIT), but only JMP indirect exists
 BASREADY = *
 	;; Set text (color1) to background (color2)
 	;; This will be reset with the "GR.0" command later
-#if 0 // Disable to save space; GR.0 will wipe the text quickly
-	LDA	#$94		; default COLOR2 as set by GR.0 above
-	STA	COLOR1
-#endif
+	;; Since this is always standard GR.0, COLOR2 is $94 and COLOR1 is $CA
+	;; Instead of loading the target value, we are lucky that we can just do
+	;; a shift to get it
+	ASL	COLOR1		; $ca << 1 is $0194 and $94 happens to be color0 for GR.0
 
 	;; Copy the BASIC command to the screen
 	LDX	#RUNCMD-MESSAGES
