@@ -1,6 +1,16 @@
-This AUTORUN.SYS file will run a BASIC program, but first it makes sure a cartridge is inserted.  If not, it will enable BASIC or display a message if it is unable to do so.
+There are tons of AUTORUN.SYS files that will run a BASIC program, but this one has a number of nice features that you probably won't find elsewhere:
 
-With lots of help from AtariAge forum members, I managed to get it down to 124 bytes to fit in one sector.
+ * Fits in one sector (124 bytes max)
+ * BASIC is enabled on XL/XE if not already active
+ * An error is displayed if BASIC is missing on 400/800/1200XL
+ * Space in the command for any 8.3 filename
+ * Text is in ATASCII in the binary for easy editing
+ * The command text does not flash on the screen
+ * Runs in the cassette buffer, leaving Page 6 clean
+
+The only downside is there is one keypress click.  I could turn that off with three bytes (decrement NOCLK $2DB), I couldn't turn it back on without a poke in the BASIC command, making it just as bad as using auto-return mode.  I can live with that.
+
+Thanks to lots of help from AtariAge forum members.  I wouldn't have gotten this down to 124 bytes on my own.
 
 Things I could do to save even space:
 
@@ -13,8 +23,5 @@ Change "NO BASIC" to simply "BASIC?"
 Save 3 bytes:
 Store messages in screen-memory character numbers (i.e., pre-subract $20)
 
-Save 1 byte:
-Use page 6 and assume next byte is zero to avoid including the last data byte
-
 Save 8 bytes:
-Don't issue GR.0 before the RUN, which also requires not setting the command text color to match the backgroun.
+Don't issue GR.0 before the RUN (5 bytes), which also requires not setting the command text color to match the background (3 bytes).
