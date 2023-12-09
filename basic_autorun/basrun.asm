@@ -71,7 +71,7 @@ BASENAB	LDA	#%10110001
 	;LDX	#$00	    	; Already zero
 	STX	CARTINIT+1	; Should be ROM if PORTB enabled BASIC
 	LDX	CARTINIT+1	; Page of init address must be in A0-BF range
-	;; FIXME -- If no cart and < 48K RAM, will read $FF, not $00
+	;; If no cart and < 48K RAM, will read $FF, not $00
 	;; Must be binary -- 101x xxxx
 	BEQ	BASBAD		; Write worked, cart is RAM; X is zero, offset of FAILMSG
 	INX
