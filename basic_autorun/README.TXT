@@ -10,7 +10,7 @@ There are tons of AUTORUN.SYS files that will run a BASIC program, but this one 
 
 The only downside is there is one keypress click.  I could turn that off with three bytes (decrement NOCLK $2DB), I couldn't turn it back on without a poke in the BASIC command, making it just as bad as using auto-return mode.  I can live with that.
 
-There is a slight risk of misdetecting BASIC on 400/800/1200XL with no cartridge present.  If there is at least 48K of RAM and the last character is an inverse '@' or 'A' then it will think there is a cartridge, though that won't happen on boot.  On a 400 or 800 with less than 48K, a read from non-memory can return bus reflections or stale data, and testing on real hardware is needed to verify that the read of BFFF won't return $Ax or $Bx.
+There is a slight risk of misdetecting BASIC on 400/800/1200XL with no cartridge present.  If there is at least 48K of RAM and the last character is an inverse character in '@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_' then it will think there is a cartridge, though that won't happen on boot.  On a 400 or 800 with less than 48K, a read from non-memory can return bus reflections or stale data, and testing on real hardware is needed to verify that the read of BFFF won't return $Ax or $Bx.
 
 Thanks to lots of help from AtariAge forum members.  I wouldn't have gotten this down to 124 bytes or less on my own.
 
@@ -29,3 +29,6 @@ Store messages in screen-memory character numbers (i.e., pre-subract $20)
 
 Save 8 bytes:
 Don't issue GR.0 before the RUN (5 bytes), which also requires not setting the command text color to match the background (3 bytes).
+
+Save 4 bytes:
+Don't check and set TRAMSZ.  It's supposed to be 1 if a cartridge is present, including internal BASIC, but does anything really check this?
