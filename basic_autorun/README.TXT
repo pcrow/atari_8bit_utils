@@ -10,7 +10,11 @@ There are tons of AUTORUN.SYS files that will run a BASIC program, but this one 
 
 The only downside is there is one keypress click.  I could turn that off with three bytes (decrement NOCLK $2DB), I couldn't turn it back on without a poke in the BASIC command, making it just as bad as using auto-return mode.  I can live with that.
 
-Thanks to lots of help from AtariAge forum members.  I wouldn't have gotten this down to 124 bytes on my own.
+I am concerned about behavior on a 400/800 with < 48K when it reads memory.  My understanding is that a 600XL will return all 1s on such reads, but it's not as clear on a 400 or 800.
+
+Thanks to lots of help from AtariAge forum members.  I wouldn't have gotten this down to 124 bytes or less on my own.
+
+It's currently 121 bytes.
 
 Things I could do to save even space:
 
