@@ -51,33 +51,31 @@ NOBAS   LDA	#$A0		; See if we can enable BASIC in XL/XE PORTB
 	;; Also guarantees no garbage on the screen and resets the cursor position
 GR0	JSR	DO_GR0
 
-#if 0 // Just always try to enable BASIC and save 4 bytes
-CHKBAS	LDA 	TRAMSZ		; set to 1 if cartridge is present
+CHKBAS	LDX 	TRAMSZ		; set to 1 if cartridge is present
 	BNE	BASREADY
-#endif
 
 	;; Enable BASIC in PORTB
-	;; Should be 10110001 on XE
-#if 0
-BASENAB	LDA	PORTB		; I see $FF, so maybe it's write-only?
-	AND	#$FD		; Mask off #$02 to enable BASIC
-#else
-BASENAB	LDA	#%10110001
-#endif
+	;; Should be 1x11xx01 on XE, second xx should be 0 on 1200XL for LEDs off
+BASENAB	LDA	#%10110001	; Save 3 bytes by not read/and old value
 	STA	PORTB
-	LDX	#$00
+	;; Note X is zero from TRAMSZ check above
 	STX	BASICF		; Set flag to keep BASIC enabled in PORTB on reset
 	;; Init BASIC
-	;LDX	#$00	    	; Already zero
-	STX	CARTINIT+1	; Should be ROM if PORTB enabled BASIC
-	LDX	CARTINIT+1	; Page of init address must be in A0-BF range
-	;; If no cart and < 48K RAM, will read $FF, not $00
-	;; Must be binary -- 101x xxxx
-	BEQ	BASBAD		; Write worked, cart is RAM; X is zero, offset of FAILMSG
-	INX
-	BEQ	BASBAD		; Write failed, but read $FF because <48K of RAM
+	;; STX	CARTINIT+1	; last character on screen if RAM on 400/800/1200XL without cart
+	;; Write is irrelevant unless last character on screen was inverse @ or inverse A
+	LDA	CARTINIT+1	; Page of init address must be in A0-BF range
+	;; BASIC is enabled on all but 400/800/1200XL
+	;; If 1200XL without BASIC or 400/800 with 48K and no cart, will read zero
+	;; If BASIC was enabled or cart is present, will read Ax or Bx.
+	;; Check binary -- 101x xxxx
+	;; If 400/800 with < 48K and no BASIC, value may be unpredictable
+	;; Small chance this check will fail and it will crash.
+	;; Note that emulators may return $FF; real hardware reflects busses.
+	AND	#%11100000	; A is 1010, B is 1011
+	CMP	#%10100000
+	BNE	BASBAD		; Write failed, but read $FF because <48K of RAM
 BASGOOD	JSR	CARTI 		; want JSR (CARTINIT), but only JMP indirect exists
-	INC	TRAMSZ	; flag cartridge present
+	INC	TRAMSZ		; flag cartridge present
 BASREADY = *
 	;; Set text (color1) to background (color2)
 	;; This will be reset with the "GR.0" command later
@@ -117,7 +115,7 @@ MESSAGES = *
 FAILMSG	.asc "NO BASIC"	     ; End detected by comparison
 	;; Run command should be no more than 38 bytes
 	;; Doesn't need closing quote; space reserved for 8.3 names
-RUNCMD	.asc "GR.0:RUN",$22,"D:RUNFILE.BAS",$22
+RUNCMD	.asc "GR.0:RUN",$22,"D:AUTORUN.BAS",$22
 	.byte $8C		; Flag end of command ($8C is also keycode for Shift+Return)
 END	.word INITAD
 	.word INITAD+1

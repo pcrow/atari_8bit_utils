@@ -10,7 +10,7 @@ There are tons of AUTORUN.SYS files that will run a BASIC program, but this one 
 
 The only downside is there is one keypress click.  I could turn that off with three bytes (decrement NOCLK $2DB), I couldn't turn it back on without a poke in the BASIC command, making it just as bad as using auto-return mode.  I can live with that.
 
-I am concerned about behavior on a 400/800 with < 48K when it reads memory.  My understanding is that a 600XL will return all 1s on such reads, but it's not as clear on a 400 or 800.
+There is a slight risk of misdetecting BASIC on 400/800/1200XL with no cartridge present.  If there is at least 48K of RAM and the last character is an inverse '@' or 'A' then it will think there is a cartridge, though that won't happen on boot.  On a 400 or 800 with less than 48K, a read from non-memory can return bus reflections or stale data, and testing on real hardware is needed to verify that the read of BFFF won't return $Ax or $Bx.
 
 Thanks to lots of help from AtariAge forum members.  I wouldn't have gotten this down to 124 bytes or less on my own.
 
