@@ -30,8 +30,5 @@ Store messages in screen-memory character numbers (i.e., pre-subract $20)
 Save 8 bytes:
 Don't issue GR.0 before the RUN (5 bytes), which also requires not setting the command text color to match the background (3 bytes).
 
-Save 4 bytes:
-Don't check and set TRAMSZ.  It's supposed to be 1 if a cartridge is present, including internal BASIC, but does anything really check this?
-
 Save 3 bytes:
 Assume the last byte of screen memory was already zero on 1200XL so no need to write a zero before seeing if BASIC loaded in that address.  (This check isn't reached on 400/800, and BASIC will already be loaded on all other XL/XE systems.)
