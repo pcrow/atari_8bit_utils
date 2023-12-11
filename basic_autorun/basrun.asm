@@ -41,7 +41,7 @@
 	*= START
 	;; Reduce RAMTOP to 40K unless it's already at or below
 	;; Does nothing if BASIC already loaded
-NOBAS   LDA	#$A0		; See if we can enable BASIC in XL/XE PORTB
+	LDA	#$A0		; See if we can enable BASIC in XL/XE PORTB
 	CMP	RAMTOP
 	BCS	GR0		; Already <= 40K, do not modify
 	STA	RAMTOP
@@ -54,26 +54,19 @@ GR0	JSR	DO_GR0
 CHKBAS	LDX 	TRAMSZ		; set to 1 if cartridge is present
 	BNE	BASREADY
 
+	LDY	#82		; Screen offset for failure message
 	;; Enable BASIC in PORTB
 	;; Should be 1x11xx01 on XE, second xx should be 0 on 1200XL for LEDs off
-BASENAB	LDA	#%10110001	; Save 3 bytes by not read/and old value
+	LDA	#%10110001	; Save 3 bytes by not read/and old value
 	STA	PORTB
 	;; Note X is zero from TRAMSZ check above
-	STX	BASICF		; Set flag to keep BASIC enabled in PORTB on reset
-	;; Init BASIC
-	;; STX	CARTINIT+1	; last character on screen if RAM on 400/800/1200XL without cart
-	;; Write is irrelevant unless last character on screen was inverse @ or inverse A
+	EOR	PORTB
+	BNE	BASBAD		; 400/800 - PORTB write didn't stick, so no BASIC
+	;; If 1200XL, the next three instructions will trigger it as BASIC can't be loaded
+	STX	CARTINIT+1	; last character on screen if RAM on 1200XL without cart (normally already zero)
 	LDA	CARTINIT+1	; Page of init address must be in A0-BF range
-	;; BASIC is enabled on all but 400/800/1200XL
-	;; If 1200XL without BASIC or 400/800 with 48K and no cart, will read zero
-	;; If BASIC was enabled or cart is present, will read Ax or Bx.
-	;; Check binary -- 101x xxxx
-	;; If 400/800 with < 48K and no BASIC, value may be unpredictable
-	;; Small chance this check will fail and it will crash.
-	;; Note that emulators may return $FF; real hardware reflects busses.
-	AND	#%11100000	; A is 1010, B is 1011
-	CMP	#%10100000
-	BNE	BASBAD		; Write failed, but read $FF because <48K of RAM
+	BEQ	BASBAD
+	STX	BASICF		; Set flag to keep BASIC enabled in PORTB on reset
 BASGOOD	JSR	CARTI 		; want JSR (CARTINIT), but only JMP indirect exists
 	INC	TRAMSZ		; flag cartridge present
 BASREADY = *
@@ -85,18 +78,15 @@ BASREADY = *
 	ASL	COLOR1		; $ca << 1 is $0194 and $94 happens to be color0 for GR.0
 
 	;; Copy the BASIC command to the screen
-	LDX	#RUNCMD-MESSAGES
+	LDY	#RUNCMD-MESSAGES + 82
 BASBAD = *
-CPYMSG	LDY	#82
-CPYBYTE	LDA	MESSAGES,X
+CPYBYTE	LDA	MESSAGES - 82,Y
 	BMI	STO_CH
 	SEC
 	SBC	#$20
 	STA	(SAVMSC),Y
 	INY
-	INX
-
-	CPX	#RUNCMD-FAILMSG
+	CPY	#RUNCMD-FAILMSG+82
 DIE	BEQ	DIE		; Loop here forever if FAILMSG displayed
 	BNE	CPYBYTE		; Unconditional
 
@@ -113,11 +103,15 @@ CARTI	JMP	(CARTINIT)
 	;; X is offset of start of message from MESSAGES
 MESSAGES = *	
 FAILMSG	.asc "NO BASIC"	     ; End detected by comparison
-	;; Run command should be no more than 38 bytes
+	;; Both messages together must be no more than 38 bytes
 	;; Doesn't need closing quote; space reserved for 8.3 names
 RUNCMD	.asc "GR.0:RUN",$22,"D:AUTORUN.BAS",$22
 	.byte $8C		; Flag end of command ($8C is also keycode for Shift+Return)
-END	.word INITAD
+END	=*
+	;; AUTORUN.SYS does an init address but not a run address
+	;; The loader doesn't initialize this to zero, so both bytes have to be written
+	.word INITAD
 	.word INITAD+1
 	*= INITAD
 	.word START
+

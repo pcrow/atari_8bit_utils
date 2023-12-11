@@ -10,11 +10,11 @@ There are tons of AUTORUN.SYS files that will run a BASIC program, but this one 
 
 The only downside is there is one keypress click.  I could turn that off with three bytes (decrement NOCLK $2DB), I couldn't turn it back on without a poke in the BASIC command, making it just as bad as using auto-return mode.  I can live with that.
 
-There is a slight risk of misdetecting BASIC on 400/800/1200XL with no cartridge present.  If there is at least 48K of RAM and the last character is an inverse character in '@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_' then it will think there is a cartridge, though that won't happen on boot.  On a 400 or 800 with less than 48K, a read from non-memory can return bus reflections or stale data, and testing on real hardware is needed to verify that the read of BFFF won't return $Ax or $Bx.
+Detecting BASIC is tricky.  If it's not a 400/800/1200XL, then we will enable it with the write to Port B.  But if it's a 400/800, there might be less than 48K, and we can't be sure what will be returned if nothing responds to the memory reqeust.  I'm told it could be from a data buffer or address reflection, and the 400 and 800 behave differently.  So I verify the Port B write, which will catch the 400/800 cases where Port B is configured for input.  For the 1200XL, I write zero to the upper byte of the cartridge init address which must be in the A0-BF range, and then I read it to see if it's non-zero.  These checks use a lot of bytes, but it should be perfect in all cases now.
 
 Thanks to lots of help from AtariAge forum members.  I wouldn't have gotten this down to 124 bytes or less on my own.
 
-It's currently 121 bytes.
+It's currently 124 bytes.
 
 Things I could do to save even space:
 
@@ -32,3 +32,6 @@ Don't issue GR.0 before the RUN (5 bytes), which also requires not setting the c
 
 Save 4 bytes:
 Don't check and set TRAMSZ.  It's supposed to be 1 if a cartridge is present, including internal BASIC, but does anything really check this?
+
+Save 3 bytes:
+Assume the last byte of screen memory was already zero on 1200XL so no need to write a zero before seeing if BASIC loaded in that address.  (This check isn't reached on 400/800, and BASIC will already be loaded on all other XL/XE systems.)
