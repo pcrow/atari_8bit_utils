@@ -29,7 +29,7 @@ struct special_files {
    char *name;
    int (*getattr)(const char *,struct stat *);
    int (*read)(const char *,char *,size_t,off_t);
-   void *write; // If we allow writing to boot sectors
+   int (*write)(const char *,const char *,size_t,off_t);
    char *(*textdata)(void);
 };
 
@@ -39,6 +39,7 @@ struct special_files {
 int special_getattr(const char *path, struct stat *stbuf);
 int special_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
 int special_read(const char *path, char *buf, size_t size, off_t offset);
+int special_write(const char *path, const char *buf, size_t size, off_t offset);
 char *fsinfo_textdata(void);
 char *bootinfo_textdata(void);
 
@@ -49,6 +50,7 @@ const struct fs_ops special_ops = {
    .fs_getattr = special_getattr,
    .fs_readdir = special_readdir,
    .fs_read = special_read,
+   .fs_write = special_write,
 };
 
 const struct special_files files[] = {
@@ -74,7 +76,10 @@ int special_getattr(const char *path, struct stat *stbuf)
       {
          if ( strcmp(files[i].name,path+1)==0 )
          {
-            stbuf->st_mode = MODE_RO(stbuf->st_mode); // These files are never writable
+            if ( i!=1 ) // not .bootsectors
+            {
+               stbuf->st_mode = MODE_RO(stbuf->st_mode); // Not writable
+            }
             stbuf->st_ino = 0x100000000 + i;
             // file-specific getattr
             // If this gets any more complicated, use a table of functions
@@ -162,6 +167,37 @@ int special_read(const char *path, char *buf, size_t size, off_t offset)
       }
    }
    return 0; // Indicates non-special file
+}
+
+/*
+ * special_write()
+ *
+ * Write directly to bootsectors.
+ */
+int special_write(const char *path, const char *buf, size_t size, off_t offset)
+{
+   if ( *path != '/' ) return 0;
+   if ( strcmp(files[1].name,path+1)!=0 ) return 0; // Not .bootsectors
+
+   if ( options.debug ) fprintf(stderr,"DEBUG: %s %s Special file: %s\n",__FUNCTION__,path,files[1].name);
+   if ( offset < 0 ) return -EINVAL; // Can't have a negative offset, but it's a signed type
+   unsigned char *s=SECTOR(1);
+   struct sector1 *sec1=SECTOR(1);
+   int boot_sectors = sec1->boot_sectors;
+   if ( offset < 2 && offset + size >= 2 ) boot_sectors = ((const unsigned char *)buf)[1 - offset];
+   if ( boot_sectors > 3 && atrfs.sectorsize != 128 )
+   {
+      return -EFBIG; // Can't have more than 3 boot sectors unless single density
+   }
+
+   int bytes = boot_sectors * 128;
+   if ( offset >= bytes ) return -EOF;
+   s += offset;
+   bytes -= offset;
+   if ( (size_t)bytes > size ) bytes = size;
+   if ( options.debug ) fprintf(stderr,"DEBUG: %s %s Wrote %d bytes for %d boot sectors\n",__FUNCTION__,path,bytes,boot_sectors);
+   memcpy(s,buf,bytes);
+   return bytes;
 }
 
 char *fsinfo_textdata(void)
