@@ -537,7 +537,7 @@ int atr_chmod(const char *path, mode_t mode
    {
       return (fs_ops[atrfs.fstype]->fs_chmod)(path,mode);
    }
-   return -EIO; // Seems like the right error for not supported
+   return 0; // Fake success if not implemented
 }
 int atr_statfs(const char *path, struct statvfs *stfsbuf)
 {
