@@ -367,7 +367,7 @@ int dos_dirent_sanity(const struct dos2_dirent *dirent)
 {
    struct dos2_dirent zero;
    memset(&zero,0,sizeof(zero));
-   if ( memcmp(&zero,dirent,sizeof(zero)) == 0 ) return 1;
+   if ( atrfs_memcmp(&zero,dirent,sizeof(zero)) == 0 ) return 1;
    if ( (dirent->flags & FLAGS_DELETED) && (dirent->flags & ~FLAGS_DELETED) ) return -1;
    if ( dirent->flags == 0 ) return -1; // Not unless full directory is empty
    if ( (dirent->flags & FLAGS_UNDEF) ) return -1; // Should never be set
@@ -763,7 +763,7 @@ int mydos_path(const char *path,int *sector,int *parent_dir_sector,int *count,in
          *isdir = 1;
          return 0;
       }
-      if ( strcmp(path,".info")==0 )
+      if ( atrfs_strcmp(path,".info")==0 )
       {
          *isinfo = 1;
          return 0;      
@@ -781,7 +781,7 @@ int mydos_path(const char *path,int *sector,int *parent_dir_sector,int *count,in
             ++path;
          }
       }
-      if ( strncmp(path,".info",5)==0 )
+      if ( atrfs_strncmp(path,".info",5)==0 )
       {
          *isinfo=1;
          path += 5;
@@ -798,7 +798,7 @@ int mydos_path(const char *path,int *sector,int *parent_dir_sector,int *count,in
             ++path;
          }
       }
-      if ( strncmp(path,".info",5)==0 )
+      if ( atrfs_strncmp(path,".info",5)==0 )
       {
          *isinfo=1;
          path += 5;
@@ -819,7 +819,7 @@ int mydos_path(const char *path,int *sector,int *parent_dir_sector,int *count,in
          //if ( options.debug ) fprintf(stderr,"DEBUG: %s: entry %d:%d %11.11s flags %02x\n",__FUNCTION__,i,j,dirent[j].name,dirent[j].flags);
          if ( dirent[j].flags == 0 ) break;
          if ( dirent[j].flags & FLAGS_DELETED ) continue;
-         if ( strncmp((char *)dirent[j].name,(char *)name,8+3) != 0 ) continue;
+         if ( atrfs_strncmp((char *)dirent[j].name,(char *)name,8+3) != 0 ) continue;
          *entry = i;
          // subdirectories: MyDOS only, but MyDOS could add them on any compatible disk except DOS 2.5
          //if ( atrfs.fstype == ATR_MYDOS )
@@ -1376,7 +1376,7 @@ int mydos_write(const char *path, const char *buf, size_t size, off_t offset)
    }
 
    // If start of DOS.SYS, check to see if the boot sectors match the version of DOS
-   if ( offset == 0 && size > 16 && strcmp(path,"/DOS.SYS") == 0 )
+   if ( offset == 0 && size > 16 && atrfs_strcmp(path,"/DOS.SYS") == 0 )
    {
       enum atrfstype dostype;
       switch ((unsigned char)(buf[0]))
@@ -1729,7 +1729,7 @@ int mydos_rename(const char *old, const char *new, unsigned int flags)
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
    if ( isinfo ) return -ENOENT;
-   if ( isdir ) if ( strncmp(old,new,strlen(old)) == 0 ) return -EINVAL; // attempt to make a directory a subdirectory of itself
+   if ( isdir ) if ( atrfs_strncmp(old,new,strlen(old)) == 0 ) return -EINVAL; // attempt to make a directory a subdirectory of itself
 
    dirent1 = SECTOR(parent_dir_sector);
    dirent1 += entry + ((atrfs.sectorsize == 256 ) ? entry/8 * 8 : 0 ); // Point to this directory entry
@@ -1742,7 +1742,7 @@ int mydos_rename(const char *old, const char *new, unsigned int flags)
    if ( isdir2 && !(flags & RENAME_EXCHANGE) ) return -EISDIR;
    if ( r==0 && locked ) return -EACCES;
    if ( r==0 && sector==sector2 ) return -EINVAL; // Rename to self
-   if ( (flags & RENAME_EXCHANGE) && isdir2 && strncmp(old,new,strlen(new)) == 0 ) return -EINVAL;
+   if ( (flags & RENAME_EXCHANGE) && isdir2 && atrfs_strncmp(old,new,strlen(new)) == 0 ) return -EINVAL;
 
    if ( r == 0 )
    {
@@ -1947,7 +1947,7 @@ int mydos_create(const char *path, mode_t mode)
    {
       buf[atrfs.sectorsize-3] = entry << 2;
    }
-   if ( strcmp(path,"/DOS.SYS")==0 )
+   if ( atrfs_strcmp(path,"/DOS.SYS")==0 )
    {
       /*
        * Except for DOS 1:

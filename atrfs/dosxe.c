@@ -553,7 +553,7 @@ int dosxe_path(const char *path,struct dosxe_dir_entry **entry,struct dosxe_dir_
       }
 
       // If it's just ".info" then it's for the directory
-      if ( strcmp(path,".info") == 0 )
+      if ( atrfs_strcmp(path,".info") == 0 )
       {
          *isdir = 1;
          *isinfo = 1;
@@ -573,7 +573,7 @@ int dosxe_path(const char *path,struct dosxe_dir_entry **entry,struct dosxe_dir_
             ++path;
          }
       }
-      if ( strcmp(path,".info")==0 )
+      if ( atrfs_strcmp(path,".info")==0 )
       {
          *isinfo=1;
          path += 5;
@@ -590,7 +590,7 @@ int dosxe_path(const char *path,struct dosxe_dir_entry **entry,struct dosxe_dir_
             ++path;
          }
       }
-      if ( strcmp(path,".info")==0 )
+      if ( atrfs_strcmp(path,".info")==0 )
       {
          *isinfo=1;
          path += 5;
@@ -618,7 +618,7 @@ int dosxe_path(const char *path,struct dosxe_dir_entry **entry,struct dosxe_dir_
             }
             if ( e->status == 0 ) break;
             if ( e->status == FLAGS_DELETED ) continue;
-            if ( strncmp(e->file_name,name,8+3) != 0 ) continue;
+            if ( atrfs_strncmp(e->file_name,name,8+3) != 0 ) continue;
             // Found a match!
             if ( *path && (e->status & FLAGS_DIR) && !*isinfo )
             {
@@ -751,7 +751,7 @@ int dosxe_getattr(const char *path, struct stat *stbuf)
    }
 
    // Magic cluster files always work; expose them with high debugging options
-   if ( strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
+   if ( atrfs_strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
    {
       int sec = string_to_sector(path);
       if ( sec > 3 && sec <= MAX_PHYSICAL_CLUSTER )
@@ -900,7 +900,7 @@ int dosxe_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t off
          for (int sec=4; sec<=MAX_PHYSICAL_CLUSTER; ++sec)
          {
             unsigned char *s = CLUSTER(sec);
-            if ( memcmp(s,zero,256) == 0 ) continue; // Skip empty sectors
+            if ( atrfs_memcmp(s,zero,256) == 0 ) continue; // Skip empty sectors
             sprintf(name,".cluster%0*d",digits,sec);
             filler(buf,name,FILLER_NULL);
          }
@@ -916,7 +916,7 @@ int dosxe_read(const char *path, char *buf, size_t size, off_t offset)
 {
 
    // Magic /.cluster### files
-   if ( strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
+   if ( atrfs_strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
    {
       int sec = string_to_sector(path);
       if ( sec <= 3 || sec > MAX_PHYSICAL_CLUSTER ) return -ENOENT;

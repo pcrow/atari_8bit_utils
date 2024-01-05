@@ -211,7 +211,7 @@ int dos3_get_dir_entry(const char *path,struct dos3_dir_entry **dirent_found,int
    *isinfo = 0;
    while (*path == '/') ++path;
    if ( strchr(path,'/') ) return -ENOENT; // No subdirectories alowed
-   if ( strcmp(path,".info")==0 )
+   if ( atrfs_strcmp(path,".info")==0 )
    {
       *isinfo = 1;
       return 0;      
@@ -229,7 +229,7 @@ int dos3_get_dir_entry(const char *path,struct dos3_dir_entry **dirent_found,int
          ++path;
       }
    }
-   if ( strcmp(path,".info")==0 )
+   if ( atrfs_strcmp(path,".info")==0 )
    {
       *isinfo=1;
       path += 5;
@@ -246,7 +246,7 @@ int dos3_get_dir_entry(const char *path,struct dos3_dir_entry **dirent_found,int
          ++path;
       }
    }
-   if ( strcmp(path,".info")==0 )
+   if ( atrfs_strcmp(path,".info")==0 )
    {
       *isinfo=1;
       path += 5;
@@ -271,7 +271,7 @@ int dos3_get_dir_entry(const char *path,struct dos3_dir_entry **dirent_found,int
          continue; // Not in use
       }
       if ( (dirent[i].status & FLAGS_OPEN) ) continue; // Hidden; incomplete writes
-      if ( memcmp(name,dirent[i].file_name,8+3)!=0 ) continue;
+      if ( atrfs_memcmp(name,dirent[i].file_name,8+3)!=0 ) continue;
 
       *dirent_found = &dirent[i];
       return 0;
@@ -353,7 +353,7 @@ int dos3_sanity(void)
    struct dos3_dir_head *head = SECTOR(16);
    unsigned char zeros[14];
    memset(zeros,0,sizeof(zeros));
-   if ( memcmp(zeros,head->zeros,sizeof(zeros)) != 0 ) return 1;
+   if ( atrfs_memcmp(zeros,head->zeros,sizeof(zeros)) != 0 ) return 1;
    if ( head->dos_id != 0xA5 ) return 1;
 
    if ( !atrfs.readonly ) // FIXME: No write support yet
@@ -382,7 +382,7 @@ int dos3_getattr(const char *path, struct stat *stbuf)
    }
 
    // Special files for 1K blocks or clusters
-   if ( strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
+   if ( atrfs_strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
    {
       int sec = string_to_sector(path);
       if ( sec >= 0 && sec*8+25+7<=atrfs.sectors )
@@ -463,7 +463,7 @@ int dos3_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
       for (int sec=s1->boot_sectors + 1; sec<=atrfs.sectors && sec< 25; ++sec)
       {
          unsigned char *s = SECTOR(sec);
-         if ( memcmp(s,zero,atrfs.sectorsize) == 0 ) continue; // Skip empty sectors
+         if ( atrfs_memcmp(s,zero,atrfs.sectorsize) == 0 ) continue; // Skip empty sectors
          sprintf(name,".sector%0*d",digits,sec);
          filler(buf,name,FILLER_NULL);
       }
@@ -480,7 +480,7 @@ int dos3_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
       for (int sec=0; sec*8+25+7<=atrfs.sectors; ++sec)
       {
          unsigned char *s = CLUSTER(sec);
-         if ( memcmp(s,zero,1024) == 0 ) continue; // Skip empty sectors
+         if ( atrfs_memcmp(s,zero,1024) == 0 ) continue; // Skip empty sectors
          sprintf(name,".cluster%0*d",digits,sec);
          filler(buf,name,FILLER_NULL);
       }
@@ -497,7 +497,7 @@ int dos3_read(const char *path, char *buf, size_t size, off_t offset)
 {
 
    // Magic /.cluster### files
-   if ( strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
+   if ( atrfs_strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
    {
       int sec = string_to_sector(path);
       if ( sec < 0 || sec*8+25+7>atrfs.sectors ) return -ENOENT;

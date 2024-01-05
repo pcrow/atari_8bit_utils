@@ -354,7 +354,7 @@ int litedos_path(const char *path,int *sector,int *count,int *locked,int *fileno
       *isdir = 1; // Root directory; fix calling code to never hit this case
       return 0;
    }
-   if ( strcmp(path,".info")==0 )
+   if ( atrfs_strcmp(path,".info")==0 )
    {
       *isinfo = 1;
       return 0;      
@@ -372,7 +372,7 @@ int litedos_path(const char *path,int *sector,int *count,int *locked,int *fileno
          ++path;
       }
    }
-   if ( strcmp(path,".info")==0 )
+   if ( atrfs_strcmp(path,".info")==0 )
    {
       *isinfo=1;
       path += 5;
@@ -389,7 +389,7 @@ int litedos_path(const char *path,int *sector,int *count,int *locked,int *fileno
          ++path;
       }
    }
-   if ( strcmp(path,".info")==0 )
+   if ( atrfs_strcmp(path,".info")==0 )
    {
       *isinfo=1;
       path += 5;
@@ -414,7 +414,7 @@ int litedos_path(const char *path,int *sector,int *count,int *locked,int *fileno
          if ( firstfree < 0 ) firstfree = i;
          continue;
       }
-      if ( strncmp((char *)dirent->name,(char *)name,8+3) != 0 ) continue;
+      if ( atrfs_strncmp((char *)dirent->name,(char *)name,8+3) != 0 ) continue;
       *entry = i;
       *sector = BYTES2(dirent->start);
       *count = BYTES2(dirent->sectors);
@@ -819,7 +819,7 @@ int litedos_write(const char *path, const char *buf, size_t size, off_t offset)
    }
 
    // If start of DOS.SYS, check to see if the boot sectors match the version of DOS
-   if ( offset == 0 && size > 16 && strcmp(path,"/DOS.SYS") == 0 )
+   if ( offset == 0 && size > 16 && atrfs_strcmp(path,"/DOS.SYS") == 0 )
    {
       if ( 0 ) // FIXME
       {
@@ -1185,7 +1185,7 @@ int litedos_create(const char *path, mode_t mode)
       buf[atrfs.sectorsize-2] = entry << 2;
    }
 #if 0 // FIXME: Make this work; but I think it's covered in write()
-   if ( strcmp(path,"/DOS.SYS")==0 )
+   if ( atrfs_strcmp(path,"/DOS.SYS")==0 )
    {
       /*
        * When writing /DOS.SYS, check first sector for known patterns and adjust boot

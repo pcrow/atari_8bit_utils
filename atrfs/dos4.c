@@ -317,7 +317,7 @@ int dos4_get_dir_entry(const char *path,struct dos4_dir_entry **dirent_found,int
    *isinfo = 0;
    while (*path == '/') ++path;
    if ( strchr(path,'/') ) return -ENOENT; // No subdirectories alowed
-   if ( strcmp(path,".info")==0 )
+   if ( atrfs_strcmp(path,".info")==0 )
    {
       *isinfo = 1;
       return 0;      
@@ -335,7 +335,7 @@ int dos4_get_dir_entry(const char *path,struct dos4_dir_entry **dirent_found,int
          ++path;
       }
    }
-   if ( strcmp(path,".info")==0 )
+   if ( atrfs_strcmp(path,".info")==0 )
    {
       *isinfo=1;
       path += 5;
@@ -352,7 +352,7 @@ int dos4_get_dir_entry(const char *path,struct dos4_dir_entry **dirent_found,int
          ++path;
       }
    }
-   if ( strcmp(path,".info")==0 )
+   if ( atrfs_strcmp(path,".info")==0 )
    {
       *isinfo=1;
       path += 5;
@@ -377,7 +377,7 @@ int dos4_get_dir_entry(const char *path,struct dos4_dir_entry **dirent_found,int
          continue; // Not in use
       }
       if ( (dirent[i].status & FLAGS_OPEN) ) continue; // Hidden; incomplete writes
-      if ( memcmp(name,dirent[i].file_name,8+3)!=0 ) continue;
+      if ( atrfs_memcmp(name,dirent[i].file_name,8+3)!=0 ) continue;
 
       *dirent_found = &dirent[i];
       return 0;
@@ -546,7 +546,7 @@ int dos4_sanity(void)
    for (int i=0;i<DIR_ENTRIES;++i)
    {
       if ( dirent[i].status == 0 ) blank=1;
-      if ( blank && memcmp(&blank_entry,&dirent[i],sizeof(blank_entry)) != 0 ) return 1;
+      if ( blank && atrfs_memcmp(&blank_entry,&dirent[i],sizeof(blank_entry)) != 0 ) return 1;
    }
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: End of DIR scan sane\n",__FUNCTION__);
 
@@ -581,7 +581,7 @@ int dos4_getattr(const char *path, struct stat *stbuf)
       stbuf->st_mode = MODE_RO(stbuf->st_mode);
       return 0;
    }
-   if ( strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
+   if ( atrfs_strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
    {
       int sec = string_to_sector(path);
       if ( sec >= 0 && sec*CLUSTER_SIZE+1<=atrfs.sectors && sec != 0x80 )
@@ -666,7 +666,7 @@ int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
          unsigned char *s = CLUSTER(sec);
          char *note="";
          if ( sec == 128 ) continue; // No such cluster
-         if ( memcmp(s,zero,CLUSTER_BYTES) == 0 ) continue; // Skip empty sectors
+         if ( atrfs_memcmp(s,zero,CLUSTER_BYTES) == 0 ) continue; // Skip empty sectors
          if ( sec == VTOC_CLUSTER || sec == VTOC_CLUSTER+1 ) note="-dir_vtoc";
          sprintf(name,".cluster%0*d%s",digits,sec,note);
          filler(buf,name,FILLER_NULL);
@@ -684,7 +684,7 @@ int dos4_read(const char *path, char *buf, size_t size, off_t offset)
 {
 
    // Magic /.cluster### files
-   if ( strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
+   if ( atrfs_strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
    {
       int sec = string_to_sector(path);
       if ( sec < 0 || sec*CLUSTER_SIZE+1>atrfs.sectors || sec==128 ) return -ENOENT;

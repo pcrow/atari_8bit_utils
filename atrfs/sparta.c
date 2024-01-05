@@ -499,7 +499,7 @@ int sparta_path(const char *path,int *inode,int *parent_dir_inode,int *size,int 
       }
 
       // If it's just ".info" then it's for the directory
-      if ( strcmp(path,".info") == 0 )
+      if ( strcasecmp(path,".info") == 0 )
       {
          r = sparta_get_dirent((void *)&dir_header,*inode,0);
          if ( r < 0 ) return r;
@@ -522,7 +522,7 @@ int sparta_path(const char *path,int *inode,int *parent_dir_inode,int *size,int 
             ++path;
          }
       }
-      if ( strncmp(path,".info",5)==0 )
+      if ( strncasecmp(path,".info",5)==0 )
       {
          *isinfo=1;
          path += 5;
@@ -539,7 +539,7 @@ int sparta_path(const char *path,int *inode,int *parent_dir_inode,int *size,int 
             ++path;
          }
       }
-      if ( strncmp(path,".info",5)==0 )
+      if ( strncasecmp(path,".info",5)==0 )
       {
          *isinfo=1;
          path += 5;
@@ -573,7 +573,7 @@ int sparta_path(const char *path,int *inode,int *parent_dir_inode,int *size,int 
             if ( firstfree < 0 ) firstfree = i;
             break; // Should hit the loop condition if continuing; break to be safe
          }
-         if ( strncmp((char *)dir_entry.file_name,(char *)name,8+3) != 0 ) continue;
+         if ( atrfs_strncmp((char *)dir_entry.file_name,(char *)name,8+3) != 0 ) continue;
          *entry = i;
          // subdirectories
          //if ( atrfs.fstype == ATR_SPARTA )
@@ -855,7 +855,7 @@ int sparta_extend_directory(int inode,int *newentry)
          if ( dir_entry.status == 0 ) return -EIO; // Bad directory links
          if ( dir_entry.status & FLAGS_DELETED ) continue;
          if ( !(dir_entry.status & FLAGS_DIR) ) continue;
-         if ( memcmp(dir_header.dir_name,dir_entry.file_name,8+3) != 0 ) continue;
+         if ( atrfs_memcmp(dir_header.dir_name,dir_entry.file_name,8+3) != 0 ) continue;
          break; // Found it
       }
    }
@@ -1502,7 +1502,7 @@ int sparta_rename(const char *old, const char *new, unsigned int flags)
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
    if ( isinfo ) return -EACCES;
-   if ( isdir ) if ( strncmp(old,new,strlen(old)) == 0 ) return -EINVAL; // attempt to make a directory a subdirectory of itself
+   if ( isdir ) if ( atrfs_strncmp(old,new,strlen(old)) == 0 ) return -EINVAL; // attempt to make a directory a subdirectory of itself
    r2 = r = sparta_path(new,&inode2,&parent_dir_inode2,&size2,&locked2,&entry2,&isdir2,&isinfo);
    if ( r<0 ) return r;
    if ( isinfo ) return -EACCES;
@@ -1511,7 +1511,7 @@ int sparta_rename(const char *old, const char *new, unsigned int flags)
    if ( isdir2 && !(flags & RENAME_EXCHANGE) ) return -EISDIR;
    if ( r==0 && locked2 ) return -EACCES;
    if ( r==0 && inode==inode2 ) return -EINVAL; // Rename to self
-   if ( (flags & RENAME_EXCHANGE) && isdir2 && strncmp(old,new,strlen(new)) == 0 ) return -EINVAL;
+   if ( (flags & RENAME_EXCHANGE) && isdir2 && atrfs_strncmp(old,new,strlen(new)) == 0 ) return -EINVAL;
 
    r = sparta_get_dirent(&dir_entry,parent_dir_inode,entry);
    if ( r<0 ) return r;

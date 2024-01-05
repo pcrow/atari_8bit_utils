@@ -84,6 +84,8 @@ struct options {
    int debug;
    int info;
    int create;
+   int upcase;
+   int lowcase;
    // Following only matter if create is specified:
    unsigned int sectors;
    unsigned int secsize;
@@ -146,6 +148,11 @@ char *atr_info(const char *path,int filesize);
 char *fsinfo_textdata(void);
 // common.c functions
 int string_to_sector(const char *path);
+int atrfs_strncmp(const char *s1, const char *s2, size_t n);
+int atrfs_strcmp(const char *s1, const char *s2);
+int atrfs_memcmp(const void *s1, const void *s2, size_t n);
+char *strcpy_upcase(char *dst,const char *src);
+char *strcpy_lowcase(char *dst,const char *src);
 
 /*
  * Global variables

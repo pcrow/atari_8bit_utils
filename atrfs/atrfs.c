@@ -17,12 +17,22 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/mman.h>
+#include <sys/param.h>
 #include <unistd.h>
 #include "atrfs.h"
 
 /*
  * Macros and defines
  */
+// upcase_path() Create a copy of the path that is optionally converted to upper case
+#define upcase_path(_path) \
+   char _path ## _copy[PATH_MAX]; \
+   strcpy_upcase( _path ## _copy, _path); \
+   _path = _path ## _copy
+#define lowcase_path(_path) \
+   char _path ## _copy[PATH_MAX]; \
+   strcpy_lowcase( _path ## _copy, _path); \
+   _path = _path ## _copy
 
 /*
  * Data types
@@ -295,6 +305,7 @@ int atr_preinit(void)
 void *atr_init(struct fuse_conn_info *conn, struct fuse_config *cfg)
 {
    (void)conn; // unused parameter
+   if ( options.lowcase ) options.upcase = 1;
    cfg->use_ino = 1; // Use sector numbers as inode number
    return NULL;
 }
@@ -309,6 +320,7 @@ int atr_getattr(const char *path, struct stat *stbuf
 #if (FUSE_USE_VERSION >= 30)
    (void)fi;
 #endif
+   upcase_path(path);
    memset(stbuf,0,sizeof(*stbuf));
 
    if ( options.debug > 1 ) fprintf(stderr,"DEBUG: %s %s\n",__FUNCTION__,path);
@@ -324,7 +336,7 @@ int atr_getattr(const char *path, struct stat *stbuf
    stbuf->st_mode = MODE_FILE(atrfs.atrstat.st_mode & 0777);
 
    // Magic ".sector###" files
-   if ( strncmp(path,"/.sector",sizeof("/.sector")-1) == 0 )
+   if ( strncasecmp(path,"/.sector",sizeof("/.sector")-1) == 0 )
    {
       int sec = string_to_sector(path);
       if ( sec > 0 && sec <= atrfs.sectors )
@@ -350,6 +362,22 @@ int atr_getattr(const char *path, struct stat *stbuf
    return -EIO;
 }
 
+static fuse_fill_dir_t save_filler;
+int atrfs_filler(void *buf,const char *name,
+                 const struct stat *stbuf, off_t off
+#if (FUSE_USE_VERSION >= 30)
+                 ,enum fuse_fill_dir_flags flags
+#endif
+   )
+{
+   lowcase_path(name);
+   return save_filler(buf,name,stbuf,off
+#if (FUSE_USE_VERSION >= 30)
+                      ,flags
+#endif
+      );
+}
+
 int atr_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi
 #if (FUSE_USE_VERSION >= 30)
                 , enum fuse_readdir_flags flags
@@ -360,6 +388,12 @@ int atr_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offse
 #if (FUSE_USE_VERSION >= 30)
    (void)flags;
 #endif
+   if ( options.lowcase )
+   {
+      save_filler = filler;
+      filler = atrfs_filler;
+   }
+   upcase_path(path);
 #if 0 // Have FUSE call getattr() for stat information
    // No subdirectories yet
    struct stat st;
@@ -394,10 +428,11 @@ int atr_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offse
 int atr_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
    (void)fi;
+   upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s %ld bytes at %lu\n",__FUNCTION__,path,size,offset);
 
    // Magic .sector### files: Read a raw sector
-   if ( strncmp(path,"/.sector",sizeof("/.sector")-1) == 0 )
+   if ( strncasecmp(path,"/.sector",sizeof("/.sector")-1) == 0 )
    {
       int sec = string_to_sector(path);
       if ( sec <= 0 || sec > atrfs.sectors ) return -ENOENT;
@@ -432,11 +467,12 @@ int atr_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
 int atr_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
    (void)fi;
+   upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s %ld bytes at %lu\n",__FUNCTION__,path,size,offset);
    if ( atrfs.readonly ) return -EROFS;
 
    // Magic .sector### files: Write a raw sector
-   if ( strncmp(path,"/.sector",sizeof("/.sector")-1) == 0 )
+   if ( strncasecmp(path,"/.sector",sizeof("/.sector")-1) == 0 )
    {
       int sec = string_to_sector(path);
       if ( sec <= 0 || sec > atrfs.sectors ) return -ENOENT;
@@ -470,6 +506,7 @@ int atr_write(const char *path, const char *buf, size_t size, off_t offset, stru
 
 int atr_mkdir(const char *path,mode_t mode)
 {
+   upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( atrfs.readonly ) return -EROFS;
    if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_mkdir )
@@ -481,6 +518,7 @@ int atr_mkdir(const char *path,mode_t mode)
 
 int atr_rmdir(const char *path)
 {
+   upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( atrfs.readonly ) return -EROFS;
    if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_rmdir )
@@ -492,6 +530,7 @@ int atr_rmdir(const char *path)
 
 int atr_unlink(const char *path)
 {
+   upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( atrfs.readonly ) return -EROFS;
    if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_unlink )
@@ -507,6 +546,8 @@ int atr_rename(const char *path1, const char *path2
 #endif
    )
 {
+   upcase_path(path1);
+   upcase_path(path2);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( atrfs.readonly ) return -EROFS;
 
@@ -531,6 +572,7 @@ int atr_chmod(const char *path, mode_t mode
 #if (FUSE_USE_VERSION >= 30)
    (void)fi;
 #endif
+   upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( atrfs.readonly ) return -EROFS;
    if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_chmod )
@@ -541,6 +583,7 @@ int atr_chmod(const char *path, mode_t mode
 }
 int atr_statfs(const char *path, struct statvfs *stfsbuf)
 {
+   upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_statfs )
    {
@@ -551,6 +594,7 @@ int atr_statfs(const char *path, struct statvfs *stfsbuf)
 int atr_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
    (void)fi;
+   upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( atrfs.readonly ) return -EROFS;
    if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_create )
@@ -569,6 +613,7 @@ int atr_truncate(const char *path,
 #if (FUSE_USE_VERSION >= 30)
    (void)fi;
 #endif   
+   upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( atrfs.readonly ) return -EROFS;
    if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_truncate )
@@ -583,6 +628,7 @@ int atr_truncate(const char *path,
 int atr_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi)
 {
    (void)fi;
+   upcase_path(path);
    if ( atrfs.readonly ) return -EROFS;
    
    if ( options.debug )
@@ -604,6 +650,7 @@ int atr_utimens(const char *path, const struct timespec tv[2], struct fuse_file_
 #else
 int atr_utime(const char *path, struct utimbuf *utimbuf)
 {
+   upcase_path(path);
    if ( atrfs.readonly ) return -EROFS;
    if ( options.debug > 1 ) fprintf(stderr,"DEBUG: %s %s\n",__FUNCTION__,path);
 
@@ -718,6 +765,8 @@ const struct fuse_opt option_spec[] = {
    OPTION("--info", info),
    OPTION("-i", info),
    OPTION("--create", create),
+   OPTION("--upcase", upcase),
+   OPTION("--lowcase", lowcase),
    OPTION("--secsize=%u", secsize),
    OPTION("--sectors=%u", sectors),
    OPTION("--fs=%s", fstype),
@@ -778,6 +827,8 @@ int main(int argc,char *argv[])
              "    --atrdebug    (extra debugging from atrfs)\n"
              "    --info        (display image info)\n"
              "    --create      (create new image)\n"
+             "    --upcase      (new files are create uppercase; operations are case insensitive)\n"
+             "    --lowcase     (present all files as lower-case; implies --upcase)\n"
              " Options used with --create:\n"
              "    --secsize=<#> (sector size if creating; default 128)\n"
              "    --sectors=<#> (number of sectors in image; default 720)\n"

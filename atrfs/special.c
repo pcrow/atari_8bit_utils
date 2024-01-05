@@ -74,7 +74,7 @@ int special_getattr(const char *path, struct stat *stbuf)
    {
       for (int i=0;(long unsigned)i<sizeof(files)/sizeof(files[0]);++i)
       {
-         if ( strcmp(files[i].name,path+1)==0 )
+         if ( atrfs_strcmp(files[i].name,path+1)==0 )
          {
             if ( i!=1 ) // not .bootsectors
             {
@@ -129,7 +129,7 @@ int special_read(const char *path, char *buf, size_t size, off_t offset)
    {
       for (int i=0;(long unsigned)i<sizeof(files)/sizeof(files[0]);++i)
       {
-         if ( strcmp(files[i].name,path+1)==0 )
+         if ( atrfs_strcmp(files[i].name,path+1)==0 )
          {
             // If this gets any more complicated, use a switch with function tables
             if ( i==1 )
@@ -177,7 +177,7 @@ int special_read(const char *path, char *buf, size_t size, off_t offset)
 int special_write(const char *path, const char *buf, size_t size, off_t offset)
 {
    if ( *path != '/' ) return 0;
-   if ( strcmp(files[1].name,path+1)!=0 ) return 0; // Not .bootsectors
+   if ( atrfs_strcmp(files[1].name,path+1)!=0 ) return 0; // Not .bootsectors
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s Special file: %s\n",__FUNCTION__,path,files[1].name);
    if ( offset < 0 ) return -EINVAL; // Can't have a negative offset, but it's a signed type
