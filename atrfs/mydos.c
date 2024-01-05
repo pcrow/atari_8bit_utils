@@ -941,6 +941,7 @@ int mydos_bitmap(int sector,int allocate)
          else
          {
             vtoc=1024;
+            bitmap_offset = 0;
             bitmap_start = 48;
          }
          break;
