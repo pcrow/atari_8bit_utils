@@ -79,6 +79,7 @@ const struct fs_ops unknown_ops = {
  *
  * This is not intended to be a comprehensive table for all commercial disks.
  * If false positives or negatives arise, then we need to find different sector ranges to check.
+ * Please let me know and send me a copy of the image so that I can find something that works.
  * Ideally this should exclude sectors most often hacked to bypass copy protection.
  */
 const struct disk_checksums disk_checksums[] = {
@@ -86,6 +87,10 @@ const struct disk_checksums disk_checksums[] = {
    {1,3,"beade5644d8b2c83698149e46b7c80c8","Ultima IV Towne Disk (Disk 1, Side B)"},
    {1,3,"05c8594da63bd65e1a21930d66ea36e5","Ultima IV Britannia Disk (Disk 2, Side A)"}, // Also player disk
    {1,3,"fe7ce56a369b0366eb9941f46aad2e43","Ultima IV Underworld Disk (Disk 2, Side B)"},
+   {1,3,"b3c7939e81fc8de1bef96884235e084d","Alternate Reality The City (disk 1)"},
+   {1,3,"115e6f9fc5af77aa1f3a41b752811d84","Alternate Reality The City (disk 2)"},
+   {18,3,"e5f39f71d38297d58b267c4a3f1159e3","Alternate Reality The City (disk 3)"},
+   {18,3,"08eac44021fddad107db650fa6a1ea52","Alternate Reality The City (disk 4)"},
 };
 
 int matching_checksum;
