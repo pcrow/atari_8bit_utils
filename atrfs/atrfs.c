@@ -278,7 +278,22 @@ int atr_preinit(void)
    if ( atrfs.atrmem ) atrfs.mem=((char *)atrfs.atrmem)+sizeof(struct atr_head);
 
    // Validate that this is an ATR file and fill in struct values
-   if ( !valid_atr_file(atrfs.atrmem) ) return 1;
+   if ( !valid_atr_file(atrfs.atrmem) )
+   {
+      // Check for raw SD disk (i.e., XFD file)
+      if ( atrfs.atrstat.st_size == 128 * 720 )
+      {
+         fprintf(stderr,"Assuming this is a raw 90K image from the file size (perhaps XFD image)\n");
+         atrfs.mem = atrfs.atrmem;
+         atrfs.ssbytes = 0;
+         atrfs.sectors = 720;
+         atrfs.sectorsize = 128;
+      }
+      else
+      {
+         return 1;
+      }
+   }
 
    // Determine file system type
    for (int i=0;i<ATR_MAXFSTYPE;++i)

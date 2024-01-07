@@ -55,7 +55,7 @@ mirror_subdir()
             return;
         fi
         [ -d "${ENTRY}" ] && continue # recurse in a second pass
-        if hexdump --length 2 "${ENTRY}" | grep -q 0296; then
+        if hexdump --length 2 "${ENTRY}" | grep -q 0296 || [ $(wc --bytes < "${ENTRY}") == 92160 ]; then
             cd "$2"
             mkdir "${ENTRY}"
             echo "$1/${ENTRY}"
@@ -138,7 +138,7 @@ check_source()
         return 1
     fi
     cd "${SOURCE}"
-    ATRFILES=$(find . -type f -exec hexdump --length 2 '{}' \; | grep 0296 | wc --lines)
+    ATRFILES=$((find . -type f -exec hexdump --length 2 '{}' \; | grep 0296;find . -size 92160c) | wc --lines)
     if [ ${ATRFILES} == 0 ]; then
         echo "ERROR: No ATR disk image files found: ${SOURCE}"
         return 1
