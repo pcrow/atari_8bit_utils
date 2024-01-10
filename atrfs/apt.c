@@ -633,15 +633,19 @@ char *apt_fsinfo(void)
          b+=sprintf(b,"  label: %.40s\n",partitions[i].meta->partition_name);
       b+=sprintf(b,"  type: %02x %s\n",partitions[i].entry->partition_type,
                  partitions[i].entry->partition_type == 0x00 ? "Atari DOS" :
-                 partitions[i].entry->partition_type == 0x00 ? "Firmware Config" :
-                 partitions[i].entry->partition_type == 0x00 ? "Floppy Drawer" :
-                 partitions[i].entry->partition_type == 0x00 ? "External FAT" :
+                 partitions[i].entry->partition_type == 0x01 ? "Firmware Config" :
+                 partitions[i].entry->partition_type == 0x02 ? "Floppy Drawer" :
+                 partitions[i].entry->partition_type == 0x03 ? "External FAT" :
                  "Unknown");
       b+=sprintf(b,"  bytes per sector: %d\n",partitions[i].bytes_per_sector);
       if ( partitions[i].bytes_per_sector < 512 )
       {
          b+=sprintf(b,"  %s per 512-byte sector\n",(partitions[i].bytes_access & 0x01)?"two sectors":"one sector");
          b+=sprintf(b,"  sector interleave: %s\n",(partitions[i].bytes_access & 0x01)?"sector":"byte");
+      }
+      if ( partitions[i].entry->partition_type == 0x02 )
+      {
+         b+=sprintf(b,"  chunk size (per floppy): %d sectors\n",BYTES2(partitions[i].entry->partition_type_details));
       }
    }
 
