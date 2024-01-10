@@ -58,6 +58,7 @@ enum atrfstype {
    ATR_DOS4, // 1450 XLD DOS: Not planning to implement
    ATR_DOSXE,
    ATR_LITEDOS, // http://www.mr-atari.com/Mr.Atari/LiteDOS/
+   ATR_APT, // Atari Partition Table; present subdirectories for each partition
    ATR_UNKNOWN, // Just do the special files
    ATR_MAXFSTYPE
 };
@@ -126,6 +127,7 @@ struct fs_ops {
    int (*fs_unlink)(const char *);
    int (*fs_rename)(const char *, const char *, unsigned int);
    int (*fs_chmod)(const char *, mode_t);
+   int (*fs_readlink)(const char *, char *,size_t);
    int (*fs_create )(const char *, mode_t);
    int (*fs_statfs)(const char *, struct statvfs *);
    int (*fs_truncate) (const char *, off_t);
@@ -153,6 +155,7 @@ int atrfs_strcmp(const char *s1, const char *s2);
 int atrfs_memcmp(const void *s1, const void *s2, size_t n);
 char *strcpy_upcase(char *dst,const char *src);
 char *strcpy_lowcase(char *dst,const char *src);
+char *strcpy_case(char *dst,const char *src);
 
 /*
  * Global variables
@@ -172,4 +175,5 @@ extern const struct fs_ops dos3_ops;
 extern const struct fs_ops dos4_ops;
 extern const struct fs_ops dosxe_ops;
 extern const struct fs_ops litedos_ops;
+extern const struct fs_ops apt_ops;
 extern const struct fs_ops unknown_ops;

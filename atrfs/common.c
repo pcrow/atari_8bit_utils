@@ -151,3 +151,13 @@ char *strcpy_lowcase(char *dst,const char *src)
    }
    return strcpy(dst,src);
 }
+
+/*
+ * strcpy_case()
+ */
+char *strcpy_case(char *dst,const char *src)
+{
+   if (options.lowcase) return strcpy_lowcase(dst,src);
+   if (options.upcase) return strcpy_upcase(dst,src);
+   return strcpy(dst,src);
+}

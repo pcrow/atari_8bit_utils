@@ -65,6 +65,7 @@ const struct fs_ops *fs_ops[ATR_MAXFSTYPE] = {
    [ATR_DOS4] = &dos4_ops,
    [ATR_DOSXE] = &dosxe_ops,
    [ATR_LITEDOS] = &litedos_ops,
+   [ATR_APT] = &apt_ops,
    [ATR_UNKNOWN] = &unknown_ops,
 };
 char *cwd; // FUSE sets working director to '/' before we open the ATR file
@@ -277,6 +278,22 @@ int atr_preinit(void)
    }
    if ( atrfs.atrmem ) atrfs.mem=((char *)atrfs.atrmem)+sizeof(struct atr_head);
 
+   // Special case for disk image files with partition tables
+   struct atr_head *head = atrfs.atrmem;
+   if ( ( head->h0 != 0x96 || head->h1 != 0x02 ) && atrfs.atrstat.st_size > 128*720 )
+   {
+      for (int i = ATR_APT;i<=ATR_APT;++i) // Currently only APT, but code for other options
+      if ( fs_ops[i] && fs_ops[i]->fs_sanity )
+      {
+         if ( (fs_ops[i]->fs_sanity)() == 0 )
+         {
+            atrfs.fstype = i;
+            if ( options.debug ) fprintf(stderr,"DEBUG: %s detected %s image\n",__FUNCTION__,fs_ops[i]->name);
+            return 0;
+         }
+      }
+   }
+   
    // Validate that this is an ATR file and fill in struct values
    if ( !valid_atr_file(atrfs.atrmem) )
    {
@@ -596,6 +613,16 @@ int atr_chmod(const char *path, mode_t mode
    }
    return 0; // Fake success if not implemented
 }
+int atr_readlink(const char *path, char *buf, size_t size )
+{
+   upcase_path(path);
+   if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
+   if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_readlink )
+   {
+      return (fs_ops[atrfs.fstype]->fs_readlink)(path,buf,size);
+   }
+   return -ENOENT; // Not implemented; shouldn't be reached
+}
 int atr_statfs(const char *path, struct statvfs *stfsbuf)
 {
    upcase_path(path);
@@ -706,6 +733,7 @@ static const struct fuse_operations atr_oper = {
         .unlink         = atr_unlink,
         .rename         = atr_rename,
         .chmod          = atr_chmod,
+        .readlink       = atr_readlink,
         .create         = atr_create,
         .truncate       = atr_truncate,
 #if (FUSE_USE_VERSION >= 30)

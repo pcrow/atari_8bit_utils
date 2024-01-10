@@ -22,7 +22,7 @@ LIBS = -lfuse
 endif
 
 CFLAGS += -D_FILE_OFFSET_BITS=64 # Important for older FUSE versions
-OBJ = atrfs.o common.o special.o info.o mydos.o sparta.o dosxe.o dos3.o dos4.o litedos.o unknown.o
+OBJ = atrfs.o common.o special.o info.o mydos.o sparta.o dosxe.o dos3.o dos4.o litedos.o apt.o unknown.o
 HEADERS = atrfs.h
 CFLAGS += -Wno-deprecated-declarations # MD5 is deprecated in OpenSSL 3.0
 LIBS += -lcrypto

@@ -113,6 +113,7 @@ int special_getattr(const char *path, struct stat *stbuf)
 int special_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
 {
    (void)offset; // Ignored in our usage mode
+   if ( atrfs.fstype == ATR_APT ) return 0;
    if ( !options.nodotfiles && strcmp(path,"/") == 0 )
    {
       for (int i=0;(long unsigned)i<sizeof(files)/sizeof(files[0]);++i)
