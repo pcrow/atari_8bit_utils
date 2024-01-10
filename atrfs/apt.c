@@ -136,6 +136,8 @@ struct apt_partition {
    void *mem;
    unsigned int start;
    unsigned int sectors;
+   int bytes_per_sector;
+   int bytes_access;
    struct partition_table_entry *entry;
    struct metadata_leader *meta;
    char *name;
@@ -169,10 +171,10 @@ const struct fs_ops apt_ops = {
    .fs_getattr = apt_getattr,
    .fs_readdir = apt_readdir,
    .fs_read = apt_read,
-   // .fs_write = apt_write,
+   .fs_write = apt_write,
    // .fs_unlink = apt_unlink,
    // .fs_rename = apt_rename,
-   // .fs_chmod = apt_chmod,
+   .fs_chmod = apt_chmod,
    .fs_readlink = apt_readlink,
    // .fs_create = apt_create,
    // .fs_truncate = apt_truncate,
@@ -261,6 +263,13 @@ int scan_apt_partitions(void *mem,int header_offset,int first)
       this->start = le32toh(this->entry->starting_sector);
       this->mem = SECTORMEM(this->start);
       this->sectors = le32toh(this->entry->sector_count);
+      if ( entry->access_flags & 0x80 ) // Deleted or otherwise reserved
+      {
+         this->start = this->sectors = 0;
+         this->mem = NULL;
+         this->name = "";
+         continue;
+      }
       if ( (this->start+1) * 512 > atrfs.atrstat.st_size )
       {
          fprintf(stderr,"ATP partition says it starts at sector %u which is past the end of the file\n",this->start);
@@ -272,7 +281,17 @@ int scan_apt_partitions(void *mem,int header_offset,int first)
          this->sectors = atrfs.atrstat.st_size/512 - this->start;
          fprintf(stderr,"ATP partition adjusted to %u sectors\n",this->sectors);
       }
+      this->bytes_per_sector = 64 << (entry->access_flags & 0x03);
+      this->bytes_access = (entry->access_flags >> 2) & 0x03;
       this->meta = (void *)((char *)(atrfs.atrmem) + this->start * 512 - 512);
+      if ( entry->partition_type == 0x03 ) // meta location is different
+      {
+         int lba = BYTES3(&(entry->partition_type_details[1]));
+         if ( lba && lba < atrfs.atrstat.st_size/512 )
+         {
+            this->meta = (void *)((char *)(atrfs.atrmem) + lba * 512);
+         }
+      }
       if ( this->meta->apt_signature[0] != 'A' ||
            this->meta->apt_signature[1] != 'P' ||
            this->meta->apt_signature[2] != 'T' ||
@@ -346,7 +365,6 @@ int apt_sanity(void)
    if ( apt_table->header_entry_offset > 31 ) return 1;
    if ( apt_table->header_entry_prev_offset ) return 1; // must be zero for first entry
    if ( apt_table->prev_sector_in_table_chain ) return 1; // prev must be zero for the first sector
-   atrfs.readonly = 1; // FIXME: No write support yet
    scan_apt_partitions(apt_table,0,1);
    if ( options.debug ) apt_info(); // DEBUG
    return 0;
@@ -380,12 +398,18 @@ int apt_getattr(const char *path, struct stat *stbuf)
    }
    for (int i=0;i<num_partitions;++i)
    {
+      if ( !partitions[i].start ) continue; // It might be a reserved or deleted partition
       if ( strcasecmp(path+1,partitions[i].name) == 0 )
       {
          stbuf->st_ino = 0x30000 + i;
          stbuf->st_size = 0;
          stbuf->st_mode = MODE_DIR(stbuf->st_mode);
-         stbuf->st_mode = MODE_RO(stbuf->st_mode);
+         // Some partitions have a read-only option:
+         if ( ( partitions[i].entry->partition_type == 0x00 || partitions[i].entry->partition_type == 0x03 ) &&
+              partitions[i].entry->partition_type_details[0] & 0x80 )
+         {
+            stbuf->st_mode = MODE_RO(stbuf->st_mode);
+         }
          if ( options.debug ) fprintf(stderr,"DEBUG: %s: found as table entry %d\n",__FUNCTION__,i);
          return 0;
       }
@@ -394,7 +418,6 @@ int apt_getattr(const char *path, struct stat *stbuf)
       if ( strcasecmp(path,match) != 0 ) continue;
       stbuf->st_ino = 0x40000+i;
       stbuf->st_size = partitions[i].sectors*512;
-      stbuf->st_mode = MODE_RO(stbuf->st_mode);
       return 0;
    }
    return -ENOENT;
@@ -421,6 +444,7 @@ int apt_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offse
       }
       for (int i=0;i<num_partitions;++i)
       {
+         if ( !partitions[i].start ) continue;
          filler(buf,partitions[i].name,FILLER_NULL);
       }
       return 0;
@@ -463,26 +487,103 @@ int apt_read(const char *path, char *buf, size_t size, off_t offset)
       memcpy(buf,partitions[i].mem+offset,size);
       return size;
    }
-   return -ENOENT; // FIXME
+   return -ENOENT; // Should not be reached
 }
 
-// FIXME: Implement these for read-write support.
-// If the path is to an ATR file, pass these into the appropriate file system type
-int apt_write(const char *path, const char *buf, size_t size, off_t offset);
+/*
+ * apt_write()
+ */
+int apt_write(const char *path, const char *buf, size_t size, off_t offset)
+{
+   for (int i=0;i<num_partitions;++i)
+   {
+      char match[128];
+      sprintf(match,"/%s/.raw",partitions[i].name);
+      if ( strcasecmp(path,match) != 0 ) continue;
+
+      if ( offset >= partitions[i].sectors*512 )
+      {
+         return 0;
+      }
+      if ( offset + size > (size_t)partitions[i].sectors * 512 )
+      {
+         size = partitions[i].sectors*512 - offset;
+      }
+      memcpy(partitions[i].mem+offset,buf,size);
+      return size;
+   }
+   return -ENOENT; // Should not be reached
+}
+
+/*
+ * apt_unlink()
+ *
+ * Only allow the special case of unlinking a mapping symlink
+ */
 int apt_unlink(const char *path);
+
+/*
+ * apt_rename()
+ *
+ * Only allow renaming a partition where the source and dest are the same
+ * directory, so the meta label is changed.
+ *
+ * Only works if there is a meta label.
+ */
 int apt_rename(const char *path1, const char *path2, unsigned int flags);
-int apt_chmod(const char *path, mode_t mode);
+
+/*
+ * apt_chmod()
+ *
+ * For Atari DOS partitions partition_type_details[0] bit 7 is write-protect.
+ * Same for MBR FAT partitions.  (Type 00 and 03 respectively)
+ */
+int apt_chmod(const char *path, mode_t mode)
+{
+   for (int i=0;i<num_partitions;++i)
+   {
+      if ( !partitions[i].start ) continue; // It might be a reserved or deleted partition
+      if ( partitions[i].entry->partition_type != 0x00 && partitions[i].entry->partition_type != 0x03 ) continue;
+      if ( strcasecmp(path+1,partitions[i].name) == 0 )
+      {
+         // Use mode & 0200 to clear or set the write protect
+         if ( mode & 0200 )
+         {
+            partitions[i].entry->partition_type_details[0] &= ~0x80; // Not write protected
+         }
+         else
+         {
+            partitions[i].entry->partition_type_details[0] |= 0x80;
+         }
+      }
+   }
+   return 0; // Fake success for anything else
+}
+
+/*
+ * I don't expect these to have meaning
+ */
 int apt_create(const char *path, mode_t mode);
 int apt_truncate(const char *path, off_t size);
 int apt_newfs(void);
 
 /*
  * apt_statfs()
+ *
+ * This isn't a regular file system, so statfs doesn't make a lot of sense,
+ * but things break without it.
  */
 int apt_statfs(const char *path, struct statvfs *stfsbuf)
 {
    (void)path; // meaningless
-   (void)stfsbuf;
+   stfsbuf->f_bsize = 512;
+   stfsbuf->f_frsize = 512;
+   stfsbuf->f_blocks = atrfs.atrstat.st_size/512;
+   stfsbuf->f_bfree = 0; // In theory, we could determine the amount of space free in the file or MBR partition that isn't in any partition
+   stfsbuf->f_bavail = stfsbuf->f_bfree;
+   stfsbuf->f_files = num_partitions;
+   stfsbuf->f_ffree = 0;
+   stfsbuf->f_namemax = 40;
    return 0; // FIXME
 }
 
@@ -510,6 +611,39 @@ char *apt_fsinfo(void)
    char *buf=malloc(16*1024);
    if ( !buf ) return NULL;
    char *b = buf;
-   b+=sprintf(b,"APT disk image; no additional information is available\n");
+   b+=sprintf(b,"APT disk image\n");
+   int mappings_count = 0;
+   for (int i=0;i<15;++i)
+   {
+      if ( mappings[i].start )
+      {
+         if ( !mappings_count ) b+=sprintf(b,"Drive mappings:\n");
+         ++mappings_count;
+         b+=sprintf(b," D%d: partition %d   start at sector %u, total sectors %u\n",i+1,le16toh(mappings[i].entry->partition_id),mappings[i].start,mappings[i].sectors);
+      }
+   }
+
+   b+=sprintf(b,"Partitions: (%d)\n",num_partitions);
+   for (int i=0;i<num_partitions;++i)
+   {
+      if ( !partitions[i].start ) continue; // Deleted
+      b+=sprintf(b,"Partition %d:\n",i+1);
+      b+=sprintf(b,"  start %d sectors %d\n",partitions[i].start,partitions[i].sectors);
+      if ( partitions[i].meta )
+         b+=sprintf(b,"  label: %.40s\n",partitions[i].meta->partition_name);
+      b+=sprintf(b,"  type: %02x %s\n",partitions[i].entry->partition_type,
+                 partitions[i].entry->partition_type == 0x00 ? "Atari DOS" :
+                 partitions[i].entry->partition_type == 0x00 ? "Firmware Config" :
+                 partitions[i].entry->partition_type == 0x00 ? "Floppy Drawer" :
+                 partitions[i].entry->partition_type == 0x00 ? "External FAT" :
+                 "Unknown");
+      b+=sprintf(b,"  bytes per sector: %d\n",partitions[i].bytes_per_sector);
+      if ( partitions[i].bytes_per_sector < 512 )
+      {
+         b+=sprintf(b,"  %s per 512-byte sector\n",(partitions[i].bytes_access & 0x01)?"two sectors":"one sector");
+         b+=sprintf(b,"  sector interleave: %s\n",(partitions[i].bytes_access & 0x01)?"sector":"byte");
+      }
+   }
+
    return buf;
 }
