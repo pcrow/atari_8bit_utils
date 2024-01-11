@@ -40,6 +40,11 @@
  *
  * The mapping entries are implemented as symlinks to the partition entries.
  *
+ *
+ * My overall impression of the APT spec is that it is overly complicated with
+ * a bunch of features that aren't needed.  I'm guessing behind each one there's
+ * some history to explain it.  Too many "normally zero" fields.
+ *
  */
 
 #include FUSE_INCLUDE
@@ -138,6 +143,9 @@ struct apt_partition {
    unsigned int sectors;
    int bytes_per_sector;
    int bytes_access;
+   int chunks;
+   int chunk_size;
+   int size_divisor;
    struct partition_table_entry *entry;
    struct metadata_leader *meta;
    char *name;
@@ -261,8 +269,14 @@ int scan_apt_partitions(void *mem,int header_offset,int first)
       this->entry = entry;
 
       this->start = le32toh(this->entry->starting_sector);
-      this->mem = SECTORMEM(this->start);
       this->sectors = le32toh(this->entry->sector_count);
+      if ( entry->partition_type == 0x00 )
+      {
+         // Usually zero, but the spec says there can be reserved sectors at the start
+         this->start += BYTES2(&entry->partition_type_details[2]);
+         this->sectors -= BYTES2(&entry->partition_type_details[2]);
+      }
+      this->mem = SECTORMEM(this->start);
       if ( entry->access_flags & 0x80 ) // Deleted or otherwise reserved
       {
          this->start = this->sectors = 0;
@@ -283,7 +297,15 @@ int scan_apt_partitions(void *mem,int header_offset,int first)
       }
       this->bytes_per_sector = 64 << (entry->access_flags & 0x03);
       this->bytes_access = (entry->access_flags >> 2) & 0x03;
-      this->meta = (void *)((char *)(atrfs.atrmem) + this->start * 512 - 512);
+      this->meta = (void *)((char *)(atrfs.atrmem) + le32toh(this->entry->starting_sector) * 512 - 512);
+      this->chunk_size = this->sectors; // Most types have one big chunk
+      this->chunks = 1;
+      this->size_divisor = 1; // FIXME: Adjust to 2 or 4 if only 1 256-byte or 128-byte sector stored per sector.
+      if ( entry->partition_type == 0x02 ) // floppy drawer; note chunk size
+      {
+         this->chunk_size = BYTES2(entry->partition_type_details);
+         this->chunks = this->sectors / this->chunk_size;
+      }
       if ( entry->partition_type == 0x03 ) // meta location is different
       {
          int lba = BYTES3(&(entry->partition_type_details[1]));
@@ -414,11 +436,25 @@ int apt_getattr(const char *path, struct stat *stbuf)
          return 0;
       }
       char match[128];
-      sprintf(match,"/%s/.raw",partitions[i].name);
-      if ( strcasecmp(path,match) != 0 ) continue;
-      stbuf->st_ino = 0x40000+i;
-      stbuf->st_size = partitions[i].sectors*512;
-      return 0;
+      if ( partitions[i].chunks > 1 )
+      {
+         for (int j=0;j<partitions[i].chunks;++j)
+         {
+            sprintf(match,"/%s/.raw%d",partitions[i].name,j);
+            if ( strcasecmp(path,match) != 0 ) continue;
+            stbuf->st_ino = 0x1000000+(i<<16)+j;
+            stbuf->st_size = partitions[i].chunk_size*512/partitions[i].size_divisor;
+         return 0;
+         }
+      }
+      else
+      {
+         sprintf(match,"/%s/.raw",partitions[i].name);
+         if ( strcasecmp(path,match) != 0 ) continue;
+         stbuf->st_ino = 0x40000+i;
+         stbuf->st_size = partitions[i].sectors*512/partitions[i].size_divisor;
+         return 0;
+      }
    }
    return -ENOENT;
 }
@@ -453,7 +489,19 @@ int apt_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offse
    for (int i=0;i<num_partitions;++i)
    {
       if ( strcasecmp(path+1,partitions[i].name) != 0 ) continue;
-      filler(buf,".raw",FILLER_NULL);
+      if ( partitions[i].chunks > 1 )
+      {
+         for (int j=0;j<partitions[i].chunks;++j)
+         {
+            char name[16];
+            sprintf(name,".raw%d",j);
+            filler(buf,name,FILLER_NULL);
+         }
+      }
+      else
+      {
+         filler(buf,".raw",FILLER_NULL);
+      }
       // FIXME: Create a subdirectory for the contents
       return 0;
    }
@@ -468,23 +516,37 @@ int apt_read(const char *path, char *buf, size_t size, off_t offset)
 {
    for (int i=0;i<num_partitions;++i)
    {
+      int chunk = 0;
       char match[128];
-      sprintf(match,"/%s/.raw",partitions[i].name);
-      if ( strcasecmp(path,match) != 0 ) continue;
+      if ( partitions[i].entry->partition_type == 0x02 ) // floppy drawer; use chunks
+      {
+         for ( chunk=0;chunk < partitions[i].chunks;++chunk )
+         {
+            sprintf(match,"/%s/.raw%d",partitions[i].name,chunk);
+            if ( strcasecmp(path,match) != 0 ) continue;
+            goto found;
+         }
+      }
+      else
+      {
+         sprintf(match,"/%s/.raw",partitions[i].name);
+         if ( strcasecmp(path,match) != 0 ) continue;
+      }
       // Read from this partition
+   found:
+      if ( offset >= partitions[i].chunk_size*512/partitions[i].size_divisor )
+      {
+         return 0;
+      }
+      if ( offset + size > (size_t)partitions[i].chunk_size * 512 / partitions[i].size_divisor )
+      {
+         size = partitions[i].chunk_size*512 / partitions[i].size_divisor - offset;
+      }
       // FIXME:
       //   There are partition types that pack smaller sectors in non-linear ways.
       //   This includes some that interleave bytes and some that have unused bytes.
       //   The code here needs to be updated to skip the unused bytes.
-      if ( offset >= partitions[i].sectors*512 )
-      {
-         return 0;
-      }
-      if ( offset + size > (size_t)partitions[i].sectors * 512 )
-      {
-         size = partitions[i].sectors*512 - offset;
-      }
-      memcpy(buf,partitions[i].mem+offset,size);
+      memcpy(buf,partitions[i].mem+offset+chunk*partitions[i].chunk_size,size);
       return size;
    }
    return -ENOENT; // Should not be reached
@@ -645,7 +707,7 @@ char *apt_fsinfo(void)
       }
       if ( partitions[i].entry->partition_type == 0x02 )
       {
-         b+=sprintf(b,"  chunk size (per floppy): %d sectors\n",BYTES2(partitions[i].entry->partition_type_details));
+         b+=sprintf(b,"  chunk size (per floppy): %d sectors\n",partitions[i].chunk_size);
       }
    }
 
