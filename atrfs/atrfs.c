@@ -880,6 +880,7 @@ int main(int argc,char *argv[])
              "    --create      (create new image)\n"
              "    --upcase      (new files are create uppercase; operations are case insensitive)\n"
              "    --lowcase     (present all files as lower-case; implies --upcase)\n"
+             "    --secsize=<#> (sector size to use if no ATR header is present)\n"
              " Options used with --create:\n"
              "    --secsize=<#> (sector size if creating; default 128)\n"
              "    --sectors=<#> (number of sectors in image; default 720)\n"
