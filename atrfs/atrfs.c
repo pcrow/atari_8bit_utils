@@ -297,14 +297,22 @@ int atr_preinit(void)
    // Validate that this is an ATR file and fill in struct values
    if ( !valid_atr_file(atrfs.atrmem) )
    {
+      // If sector size specified, use that
+      if ( options.secsize == 128 || options.secsize == 256 || options.secsize == 512 )
+      {
+         atrfs.mem = atrfs.atrmem;
+         atrfs.ssbytes = 0;
+         atrfs.sectorsize = options.secsize;
+         atrfs.sectors = atrfs.atrstat.st_size / atrfs.sectorsize;
+      }
       // Check for raw SD disk (i.e., XFD file)
-      if ( atrfs.atrstat.st_size == 128 * 720 )
+      else if ( atrfs.atrstat.st_size == 128 * 720 )
       {
          fprintf(stderr,"Assuming this is a raw 90K image from the file size (perhaps XFD image)\n");
          atrfs.mem = atrfs.atrmem;
          atrfs.ssbytes = 0;
-         atrfs.sectors = 720;
          atrfs.sectorsize = 128;
+         atrfs.sectors = 720;
       }
       else
       {
