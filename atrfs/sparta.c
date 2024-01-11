@@ -407,22 +407,27 @@ int sparta_sanity(void)
 {
    if ( atrfs.sectors < 6*1024/atrfs.sectorsize ) return 1; // I think 6K is the minimum to have bitmaps, directory, and a one-byte file
    struct sector1_sparta *sec1 = SECTOR(1);
-   if ( sec1->boot_sectors != 3 ) return 1; // Must have 3 boot sectors
+   if ( !( sec1->boot_sectors == 1 && atrfs.sectorsize == 512 ) &&
+        ( sec1->boot_sectors != 3 ) )
+   {
+      return 1; // Must have 3 boot sectors unless 512-byte sectors (then 1)
+   }
 
    if ( BYTES2(sec1->dir) > atrfs.sectors )
    {
       if ( options.debug ) printf("Not SpartaDOS: Main directory sector map > sector count: %d > %d\n",BYTES2(sec1->dir), atrfs.sectors);
       return 1;
    }
-   if ( BYTES2(sec1->sectors) != atrfs.sectors )
-   {
-      if ( options.debug ) printf("Not SpartaDOS: Sparta sector count != image sector count %d != %d\n",BYTES2(sec1->sectors), atrfs.sectors);
-      return 1;
-   }
    if ( BYTES2(sec1->free) >= atrfs.sectors )
    {
       if ( options.debug ) printf("Not SpartaDOS: Free sector count >= sector count %d != %d\n",BYTES2(sec1->free), atrfs.sectors);
       return 1;
+   }
+   if ( BYTES2(sec1->sectors) != atrfs.sectors )
+   {
+      if ( options.debug ) printf("Not SpartaDOS: Sparta sector count != image sector count %d != %d\n",BYTES2(sec1->sectors), atrfs.sectors);
+      fprintf(stderr,"SpartaDOS: Sparta sector count != image sector count %d != %d; truncated file -- proceed with caution\n",BYTES2(sec1->sectors), atrfs.sectors);
+      // return 1;
    }
    if ( !sec1->bitmap_sectors )
    {
