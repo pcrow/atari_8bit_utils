@@ -365,7 +365,7 @@ int atr_getattr(const char *path, struct stat *stbuf
 
    if ( options.debug > 1 ) fprintf(stderr,"DEBUG: %s %s\n",__FUNCTION__,path);
 
-   // Copy time stamps from image file; adjust if SpartaDOS
+   // Copy time stamps from image file; adjust if SpartaDOS or other file system supports time stamps
    stbuf->st_atim = master_atrfs.atrstat.st_atim;
    stbuf->st_mtim = master_atrfs.atrstat.st_mtim;
    stbuf->st_ctim = master_atrfs.atrstat.st_ctim;
@@ -375,31 +375,7 @@ int atr_getattr(const char *path, struct stat *stbuf
    stbuf->st_nlink = 1;
    stbuf->st_mode = MODE_FILE(master_atrfs.atrstat.st_mode & 0777);
 
-   // Magic ".sector###" files
-   if ( strncasecmp(path,"/.sector",sizeof("/.sector")-1) == 0 )
-   {
-      int sec = string_to_sector(path);
-      if ( sec > 0 && sec <= master_atrfs.sectors )
-      {
-         // stbuf->st_mode = MODE_RO(stbuf->st_mode);
-         stbuf->st_size = 128;
-         stbuf->st_ino = sec;
-         if ( !master_atrfs.ssbytes || sec > 3 ) stbuf->st_size = master_atrfs.sectorsize;
-         return 0; // Good, can read this sector
-      }
-   }
-
-   if ( fs_ops[ATR_SPECIAL] && fs_ops[ATR_SPECIAL]->fs_getattr )
-   {
-      int r = (fs_ops[ATR_SPECIAL]->fs_getattr)(&master_atrfs,path, stbuf);
-      if ( r == 0 ) return r;
-   }
-   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_getattr )
-   {
-      return (fs_ops[master_atrfs.fstype]->fs_getattr)(&master_atrfs,path, stbuf);
-   }
-   if ( options.debug ) fprintf(stderr,"DEBUG: %s %s failure: EIO\n",__FUNCTION__,path);
-   return -EIO;
+   return (generic_ops.fs_getattr)(&master_atrfs,path, stbuf);
 }
 
 static fuse_fill_dir_t save_filler;
@@ -454,15 +430,7 @@ int atr_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offse
    filler(buf, "..", FILLER_NULL);
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s\n",__FUNCTION__,path);
-   if ( fs_ops[ATR_SPECIAL] && fs_ops[ATR_SPECIAL]->fs_readdir )
-   {
-      (fs_ops[ATR_SPECIAL]->fs_readdir)(&master_atrfs,path, buf, filler,offset);
-   }
-   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_readdir )
-   {
-      return (fs_ops[master_atrfs.fstype]->fs_readdir)(&master_atrfs,path, buf, filler,offset);
-   }
-   return 0; // At least the standard files work
+   return (generic_ops.fs_readdir)(&master_atrfs,path, buf, filler,offset);
 }
 
 int atr_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
@@ -470,38 +438,7 @@ int atr_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
    (void)fi;
    upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s %ld bytes at %lu\n",__FUNCTION__,path,size,offset);
-
-   // Magic .sector### files: Read a raw sector
-   if ( strncasecmp(path,"/.sector",sizeof("/.sector")-1) == 0 )
-   {
-      int sec = string_to_sector(path);
-      if ( sec <= 0 || sec > master_atrfs.sectors ) return -ENOENT;
-
-      int bytes = 128;
-      if ( !master_atrfs.ssbytes || sec > 3 ) bytes = master_atrfs.sectorsize;
-
-      if (offset >= bytes ) return -EOF;
-      unsigned char *s = MSECTOR(sec);
-      bytes -= offset;
-      s += offset;
-      if ( (size_t)bytes > size ) bytes = size;
-      memcpy(buf,s,bytes);
-      return bytes;
-   }
- 
-   if ( fs_ops[ATR_SPECIAL] && fs_ops[ATR_SPECIAL]->fs_read )
-   {
-      int r;
-      r = (fs_ops[ATR_SPECIAL]->fs_read)(&master_atrfs,path,buf,size,offset);
-      if ( options.debug ) fprintf(stderr,"DEBUG: %s %s special returned %d\n",__FUNCTION__,path,r);
-      if ( r != 0 ) return r;
-      // If 'r' is zero, then it wasn't handled.
-   }
-   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_read )
-   {
-      return (fs_ops[master_atrfs.fstype]->fs_read)(&master_atrfs,path,buf,size,offset);
-   }
-   return -ENOENT;
+   return (generic_ops.fs_read)(&master_atrfs,path,buf,size,offset);
 }
 
 int atr_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
@@ -510,38 +447,7 @@ int atr_write(const char *path, const char *buf, size_t size, off_t offset, stru
    upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s %ld bytes at %lu\n",__FUNCTION__,path,size,offset);
    if ( master_atrfs.readonly ) return -EROFS;
-
-   // Magic .sector### files: Write a raw sector
-   if ( strncasecmp(path,"/.sector",sizeof("/.sector")-1) == 0 )
-   {
-      int sec = string_to_sector(path);
-      if ( sec <= 0 || sec > master_atrfs.sectors ) return -ENOENT;
-
-      int bytes = 128;
-      if ( !master_atrfs.ssbytes || sec > 3 ) bytes = master_atrfs.sectorsize;
-
-      if (offset >= bytes ) return -ENOSPC; // -EOF doesn't stop 'dd' from writing
-      unsigned char *s = MSECTOR(sec);
-      bytes -= offset;
-      s += offset;
-      if ( (size_t)bytes > size ) bytes = size;
-      memcpy(s,buf,bytes);
-      return bytes;
-   }
-
-   if ( fs_ops[ATR_SPECIAL] && fs_ops[ATR_SPECIAL]->fs_write )
-   {
-      int r;
-      r = (fs_ops[ATR_SPECIAL]->fs_write)(&master_atrfs,path,buf,size,offset);
-      if ( options.debug ) fprintf(stderr,"DEBUG: %s %s special returned %d\n",__FUNCTION__,path,r);
-      if ( r != 0 ) return r;
-      // If 'r' is zero, then it wasn't handled.
-   }
-   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_write )
-   {
-      return (fs_ops[master_atrfs.fstype]->fs_write)(&master_atrfs,path,buf,size,offset);
-   }
-   return -ENOENT;
+   return (generic_ops.fs_write)(&master_atrfs,path,buf,size,offset);
 }
 
 int atr_mkdir(const char *path,mode_t mode)
@@ -549,11 +455,7 @@ int atr_mkdir(const char *path,mode_t mode)
    upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( master_atrfs.readonly ) return -EROFS;
-   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_mkdir )
-   {
-      return (fs_ops[master_atrfs.fstype]->fs_mkdir)(&master_atrfs,path,mode);
-   }
-   return -EPERM; // mkdir(2) man page says EPERM if directory creation not supported
+   return (generic_ops.fs_mkdir)(&master_atrfs,path,mode);
 }
 
 int atr_rmdir(const char *path)
@@ -561,11 +463,7 @@ int atr_rmdir(const char *path)
    upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( master_atrfs.readonly ) return -EROFS;
-   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_rmdir )
-   {
-      return (fs_ops[master_atrfs.fstype]->fs_rmdir)(&master_atrfs,path);
-   }
-   return -EIO; // Seems like the right error for not supported
+   return (generic_ops.fs_rmdir)(&master_atrfs,path);
 }
 
 int atr_unlink(const char *path)
@@ -573,11 +471,7 @@ int atr_unlink(const char *path)
    upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( master_atrfs.readonly ) return -EROFS;
-   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_unlink )
-   {
-      return (fs_ops[master_atrfs.fstype]->fs_unlink)(&master_atrfs,path);
-   }
-   return -EIO; // Seems like the right error for not supported
+   return (generic_ops.fs_unlink)(&master_atrfs,path);
 }
 
 int atr_rename(const char *path1, const char *path2
@@ -586,23 +480,17 @@ int atr_rename(const char *path1, const char *path2
 #endif
    )
 {
+#if (FUSE_USE_VERSION < 30)
+   unsigned int flags = 0; // Default value if not supported
+#endif
+   
    upcase_path(path1);
    upcase_path(path2);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( master_atrfs.readonly ) return -EROFS;
-
-   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_rename )
-   {
-      return (fs_ops[master_atrfs.fstype]->fs_rename)(&master_atrfs,path1,path2,
-#if (FUSE_USE_VERSION >= 30)
-                                               flags
-#else
-                                               0
-#endif
-         );
-   }
-   return -EIO; // Seems like the right error for not supported
+   return (generic_ops.fs_rename)(&master_atrfs,path1,path2,flags);
 }
+
 int atr_chmod(const char *path, mode_t mode
 #if (FUSE_USE_VERSION >= 30)
               , struct fuse_file_info *fi
@@ -615,44 +503,32 @@ int atr_chmod(const char *path, mode_t mode
    upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( master_atrfs.readonly ) return -EROFS;
-   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_chmod )
-   {
-      return (fs_ops[master_atrfs.fstype]->fs_chmod)(&master_atrfs,path,mode);
-   }
-   return 0; // Fake success if not implemented
+   return (generic_ops.fs_chmod)(&master_atrfs,path,mode);
 }
+
 int atr_readlink(const char *path, char *buf, size_t size )
 {
    upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
-   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_readlink )
-   {
-      return (fs_ops[master_atrfs.fstype]->fs_readlink)(&master_atrfs,path,buf,size);
-   }
-   return -ENOENT; // Not implemented; shouldn't be reached
+   return (generic_ops.fs_readlink)(&master_atrfs,path,buf,size);
 }
+
 int atr_statfs(const char *path, struct statvfs *stfsbuf)
 {
    upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
-   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_statfs )
-   {
-      return (fs_ops[master_atrfs.fstype]->fs_statfs)(&master_atrfs,path,stfsbuf);
-   }
-   return -EIO; // Seems like the right error for not supported
+   return (generic_ops.fs_statfs)(&master_atrfs,path,stfsbuf);
 }
+
 int atr_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
    (void)fi;
    upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( master_atrfs.readonly ) return -EROFS;
-   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_create )
-   {
-      return (fs_ops[master_atrfs.fstype]->fs_create)(&master_atrfs,path,mode);
-   }
-   return -EIO; // Seems like the right error for not supported
+   return (generic_ops.fs_create)(&master_atrfs,path,mode);
 }
+
 int atr_truncate(const char *path,
                  off_t size
 #if (FUSE_USE_VERSION >= 30)
@@ -666,13 +542,8 @@ int atr_truncate(const char *path,
    upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
    if ( master_atrfs.readonly ) return -EROFS;
-   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_truncate )
-   {
-      return (fs_ops[master_atrfs.fstype]->fs_truncate)(&master_atrfs,path,size);
-   }
-   return -EIO; // Seems like the right error for not supported
+   return (generic_ops.fs_truncate)(&master_atrfs,path,size);
 }
-
 
 #if (FUSE_USE_VERSION >= 30)
 int atr_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi)
@@ -691,11 +562,7 @@ int atr_utimens(const char *path, const struct timespec tv[2], struct fuse_file_
       else if ( tv[1].tv_nsec == UTIME_OMIT ) fprintf(stderr,"OMIT, ");
       else fprintf(stderr,"%lu, ",tv[1].tv_sec);
    }
-   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_utimens )
-   {
-      return (fs_ops[master_atrfs.fstype]->fs_utimens)(&master_atrfs,path,tv);
-   }
-   return 0; // Fake success on file systems that don't have time stamps
+   return (generic_ops.fs_utimens)(&master_atrfs,path,tv);
 }
 #else
 int atr_utime(const char *path, struct utimbuf *utimbuf)
@@ -704,11 +571,7 @@ int atr_utime(const char *path, struct utimbuf *utimbuf)
    if ( master_atrfs.readonly ) return -EROFS;
    if ( options.debug > 1 ) fprintf(stderr,"DEBUG: %s %s\n",__FUNCTION__,path);
 
-   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_utime )
-   {
-      return (fs_ops[master_atrfs.fstype]->fs_utime)(&master_atrfs,path,utimbuf);
-   }
-   return 0; // Fake success on file systems that don't have time stamps
+   return (generic_ops.fs_utime)(&master_atrfs,path,utimbuf);
 }
 #endif
 

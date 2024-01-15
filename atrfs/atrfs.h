@@ -165,6 +165,7 @@ char *strcpy_case(char *dst,const char *src);
 extern struct atrfs master_atrfs;
 extern struct options options;
 extern const struct fs_ops *fs_ops[ATR_MAXFSTYPE];
+extern const struct fs_ops generic_ops;
 extern const struct fs_ops special_ops;
 extern const struct fs_ops dos1_ops;
 extern const struct fs_ops dos2_ops;
