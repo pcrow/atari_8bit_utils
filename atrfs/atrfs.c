@@ -51,7 +51,7 @@ struct atr_head {
  * Global variables
  */
 
-struct atrfs atrfs;
+struct atrfs master_atrfs;
 struct options options;
 const struct fs_ops *fs_ops[ATR_MAXFSTYPE] = {
    [ATR_SPECIAL] = &special_ops,
@@ -84,30 +84,30 @@ int valid_atr_file(struct atr_head *head)
       fprintf(stderr,"File does not have ATR signature\n");
       return 0;
    }
-   atrfs.sectorsize=BYTES2(head->secsize);
-   switch(atrfs.sectorsize)
+   master_atrfs.sectorsize=BYTES2(head->secsize);
+   switch(master_atrfs.sectorsize)
    {
       case 128:
       case 256:
       case 512:
          break; // Those are valid
       default:
-         fprintf(stderr,"Sector size in ATR file is invalid: %d\n",atrfs.sectorsize);
+         fprintf(stderr,"Sector size in ATR file is invalid: %d\n",master_atrfs.sectorsize);
          return 0;
    }
    int atrbytes = (BYTES2(head->bytes16count) + (BYTES2(head->hibytes16count) << 16)) * 16;
-   if ( atrbytes % atrfs.sectorsize && atrfs.sectorsize == 256 )
+   if ( atrbytes % master_atrfs.sectorsize && master_atrfs.sectorsize == 256 )
    {
-      atrfs.shortsectors=3; // First three sectors are optionally 128 bytes
+      master_atrfs.shortsectors=3; // First three sectors are optionally 128 bytes
    }
-   atrfs.ssbytes = atrfs.shortsectors * (atrfs.sectorsize-128);
-   atrfs.sectors = (atrbytes + atrfs.ssbytes) / atrfs.sectorsize;
+   master_atrfs.ssbytes = master_atrfs.shortsectors * (master_atrfs.sectorsize-128);
+   master_atrfs.sectors = (atrbytes + master_atrfs.ssbytes) / master_atrfs.sectorsize;
 
-   size_t expected = sizeof(struct atr_head) + atrfs.sectors*atrfs.sectorsize - atrfs.ssbytes;
-   if ( atrfs.atrsize != expected )
+   size_t expected = sizeof(struct atr_head) + master_atrfs.sectors*master_atrfs.sectorsize - master_atrfs.ssbytes;
+   if ( master_atrfs.atrsize != expected )
    {
-      fprintf(stderr,"ATR file size unexpected value, expected %lu bytes, found %lu bytes\n",expected,atrfs.atrsize);
-      if ( atrfs.atrsize < expected ) return 0;
+      fprintf(stderr,"ATR file size unexpected value, expected %lu bytes, found %lu bytes\n",expected,master_atrfs.atrsize);
+      if ( master_atrfs.atrsize < expected ) return 0;
       fprintf(stderr,"There is more data in the file than the ATR header indicates should be present.\n");
       // else it's just a warning
    }
@@ -146,52 +146,52 @@ int atr_preinit(void)
          fprintf(stderr,"Creating new image: Invalid sectors count: %d\n",options.sectors);
          return 1;
       }
-      atrfs.fd=open(options.filename,O_CREAT|O_RDWR|O_EXCL,0644);
-      if ( atrfs.fd < 0 )
+      master_atrfs.fd=open(options.filename,O_CREAT|O_RDWR|O_EXCL,0644);
+      if ( master_atrfs.fd < 0 )
       {
          fprintf(stderr,"creation of %s failed\n",options.filename);
          return 1;
       }
       // truncate to set the file size
-      atrfs.atrsize = options.secsize*options.sectors+sizeof(struct atr_head);
-      atrfs.sectorsize = options.secsize;
-      atrfs.shortsectors = 0;
-      atrfs.ssbytes = 0;
-      atrfs.sectors = options.sectors;
-      if ( atrfs.sectorsize == 256 && atrfs.sectors > 3 ) // This is optional, but may make emulators work better
+      master_atrfs.atrsize = options.secsize*options.sectors+sizeof(struct atr_head);
+      master_atrfs.sectorsize = options.secsize;
+      master_atrfs.shortsectors = 0;
+      master_atrfs.ssbytes = 0;
+      master_atrfs.sectors = options.sectors;
+      if ( master_atrfs.sectorsize == 256 && master_atrfs.sectors > 3 ) // This is optional, but may make emulators work better
       {
-         atrfs.ssbytes = 128 * 3;
-         atrfs.shortsectors = 3;
-         atrfs.atrsize -= 128 * 3;
+         master_atrfs.ssbytes = 128 * 3;
+         master_atrfs.shortsectors = 3;
+         master_atrfs.atrsize -= 128 * 3;
       }
-      r=ftruncate(atrfs.fd,atrfs.atrsize);
+      r=ftruncate(master_atrfs.fd,master_atrfs.atrsize);
       if ( r != 0 )
       {
          fprintf(stderr,"Failed to set size of new image: %s\n",options.filename);
          return 1;
       }
       // memmap
-      atrfs.atrmem = mmap(NULL,atrfs.atrsize,PROT_READ|PROT_WRITE,MAP_SHARED,atrfs.fd,0);
-      if ( atrfs.atrmem == MAP_FAILED )
+      master_atrfs.atrmem = mmap(NULL,master_atrfs.atrsize,PROT_READ|PROT_WRITE,MAP_SHARED,master_atrfs.fd,0);
+      if ( master_atrfs.atrmem == MAP_FAILED )
       {
          perror("mmap of new image file failed");
          return 1;
       }
-      atrfs.mem=((char *)atrfs.atrmem)+sizeof(struct atr_head);
+      master_atrfs.mem=((char *)master_atrfs.atrmem)+sizeof(struct atr_head);
       // Create ATR Head
-      struct atr_head *head = atrfs.atrmem;
+      struct atr_head *head = master_atrfs.atrmem;
       head->h0 = 0x96;
       head->h1 = 0x02;
       head->secsize[0] = options.secsize & 0xff;
       head->secsize[1] = options.secsize >> 8;
-      int imagesize16 = (options.secsize*options.sectors - atrfs.ssbytes) >> 4;
+      int imagesize16 = (options.secsize*options.sectors - master_atrfs.ssbytes) >> 4;
       head->bytes16count[0] = imagesize16 & 0xff;
       head->bytes16count[1] = (imagesize16 >> 8 ) & 0xff;
       head->hibytes16count[0] = (imagesize16 >> 16 ) & 0xff;
       head->hibytes16count[1] = (imagesize16 >> 24 ) & 0xff;
 
       // Save stat of image file
-      r=fstat(atrfs.fd,&atrfs.atrstat); // Before opening for r/w
+      r=fstat(master_atrfs.fd,&master_atrfs.atrstat); // Before opening for r/w
       if ( r!=0 )
       {
          fprintf(stderr,"Unable to stat new image file\n");
@@ -199,34 +199,34 @@ int atr_preinit(void)
       }
 
       // Set file system type
-      atrfs.fstype = ATR_SPECIAL; // Invalid for creation
+      master_atrfs.fstype = ATR_SPECIAL; // Invalid for creation
       if ( options.fstype )
       {
          for (int i=0;i<ATR_MAXFSTYPE;++i)
          {
             if ( fs_ops[i] && fs_ops[i]->fstype && strcmp(options.fstype,fs_ops[i]->fstype) == 0 )
             {
-               atrfs.fstype = i;
+               master_atrfs.fstype = i;
                break;
             }
          }
       }
-      if ( atrfs.fstype == ATR_SPECIAL)
+      if ( master_atrfs.fstype == ATR_SPECIAL)
       {
          if ( options.fstype )
          {
             fprintf(stderr,"Unable to create specified image type: %s\n",options.fstype);
             return 1;
          }
-         if ( atrfs.sectors < 368 ) atrfs.fstype = ATR_SPARTA; // Too short for DOS 2
-         else if ( atrfs.sectors <= 720 && atrfs.sectorsize == 128 ) atrfs.fstype = ATR_DOS2;
-         else if ( atrfs.sectors == 1040 && atrfs.sectorsize == 128 ) atrfs.fstype = ATR_DOS25;
-         else if ( atrfs.sectors == 1024 && atrfs.sectorsize == 128 ) atrfs.fstype = ATR_DOS25; // short enhanced-density image
-         else atrfs.fstype = ATR_MYDOS;
+         if ( master_atrfs.sectors < 368 ) master_atrfs.fstype = ATR_SPARTA; // Too short for DOS 2
+         else if ( master_atrfs.sectors <= 720 && master_atrfs.sectorsize == 128 ) master_atrfs.fstype = ATR_DOS2;
+         else if ( master_atrfs.sectors == 1040 && master_atrfs.sectorsize == 128 ) master_atrfs.fstype = ATR_DOS25;
+         else if ( master_atrfs.sectors == 1024 && master_atrfs.sectorsize == 128 ) master_atrfs.fstype = ATR_DOS25; // short enhanced-density image
+         else master_atrfs.fstype = ATR_MYDOS;
       }
-      if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_newfs )
+      if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_newfs )
       {
-         (fs_ops[atrfs.fstype]->fs_newfs)();
+         (fs_ops[master_atrfs.fstype]->fs_newfs)(&master_atrfs);
          return 0;
       }
       fprintf(stderr,"Unable to create new file system\n");
@@ -234,7 +234,7 @@ int atr_preinit(void)
    }
    else
    {
-      r=stat(options.filename,&atrfs.atrstat); // Before opening for r/w
+      r=stat(options.filename,&master_atrfs.atrstat); // Before opening for r/w
       if ( r )
       {
          fprintf(stderr,"stat of %s failed: %d\n",options.filename,r);
@@ -246,48 +246,48 @@ int atr_preinit(void)
       // actual write is made, so this is harmless.
       // Also, I can't figure out how to tell if it's mounted read-only, and
       // we would have to intercept any request to remount read-write.
-      atrfs.fd=open(options.filename,O_RDWR);
+      master_atrfs.fd=open(options.filename,O_RDWR);
    }
-   if ( atrfs.fd < 0 )
+   if ( master_atrfs.fd < 0 )
    {
       // Try read-only image file.  Will fail any write attempts with EROFS
       // FIXME: Find a way to tell FUSE to force this to be a read-only mount
-      atrfs.fd=open(options.filename,O_RDONLY);
-      if ( atrfs.fd >= 0 )
+      master_atrfs.fd=open(options.filename,O_RDONLY);
+      if ( master_atrfs.fd >= 0 )
       {
          fprintf(stderr,"NOTE: Image %s is read-only\n",options.filename);
-         atrfs.readonly = 1;
+         master_atrfs.readonly = 1;
       }
    }
-   if ( atrfs.fd < 0 )
+   if ( master_atrfs.fd < 0 )
    {
       fprintf(stderr,"Failed to open %s; must have write permission\n",options.filename);
       return 1;
    }
-   atrfs.atrsize = atrfs.atrstat.st_size;
-   if ( atrfs.atrsize < 16 )
+   master_atrfs.atrsize = master_atrfs.atrstat.st_size;
+   if ( master_atrfs.atrsize < 16 )
    {
-      fprintf(stderr,"File is too small to be a valid ATR file: %lu bytes in %s\n",atrfs.atrsize,options.filename);
+      fprintf(stderr,"File is too small to be a valid ATR file: %lu bytes in %s\n",master_atrfs.atrsize,options.filename);
       return 1;
    }
-   atrfs.atrmem = mmap(NULL,atrfs.atrsize,PROT_READ|(atrfs.readonly?0:PROT_WRITE),MAP_SHARED,atrfs.fd,0);
-   if ( atrfs.atrmem == MAP_FAILED )
+   master_atrfs.atrmem = mmap(NULL,master_atrfs.atrsize,PROT_READ|(master_atrfs.readonly?0:PROT_WRITE),MAP_SHARED,master_atrfs.fd,0);
+   if ( master_atrfs.atrmem == MAP_FAILED )
    {
       fprintf(stderr,"mmap of %s failed\n",options.filename);
       return 1;
    }
-   if ( atrfs.atrmem ) atrfs.mem=((char *)atrfs.atrmem)+sizeof(struct atr_head);
+   if ( master_atrfs.atrmem ) master_atrfs.mem=((char *)master_atrfs.atrmem)+sizeof(struct atr_head);
 
    // Special case for disk image files with partition tables
-   struct atr_head *head = atrfs.atrmem;
-   if ( ( head->h0 != 0x96 || head->h1 != 0x02 ) && atrfs.atrstat.st_size > 128*720 )
+   struct atr_head *head = master_atrfs.atrmem;
+   if ( ( head->h0 != 0x96 || head->h1 != 0x02 ) && master_atrfs.atrstat.st_size > 128*720 )
    {
       for (int i = ATR_APT;i<=ATR_APT;++i) // Currently only APT, but code for other options
       if ( fs_ops[i] && fs_ops[i]->fs_sanity )
       {
-         if ( (fs_ops[i]->fs_sanity)() == 0 )
+         if ( (fs_ops[i]->fs_sanity)(&master_atrfs) == 0 )
          {
-            atrfs.fstype = i;
+            master_atrfs.fstype = i;
             if ( options.debug ) fprintf(stderr,"DEBUG: %s detected %s image\n",__FUNCTION__,fs_ops[i]->name);
             return 0;
          }
@@ -295,24 +295,24 @@ int atr_preinit(void)
    }
    
    // Validate that this is an ATR file and fill in struct values
-   if ( !valid_atr_file(atrfs.atrmem) )
+   if ( !valid_atr_file(master_atrfs.atrmem) )
    {
       // If sector size specified, use that
       if ( options.secsize == 128 || options.secsize == 256 || options.secsize == 512 )
       {
-         atrfs.mem = atrfs.atrmem;
-         atrfs.ssbytes = 0;
-         atrfs.sectorsize = options.secsize;
-         atrfs.sectors = atrfs.atrstat.st_size / atrfs.sectorsize;
+         master_atrfs.mem = master_atrfs.atrmem;
+         master_atrfs.ssbytes = 0;
+         master_atrfs.sectorsize = options.secsize;
+         master_atrfs.sectors = master_atrfs.atrstat.st_size / master_atrfs.sectorsize;
       }
       // Check for raw SD disk (i.e., XFD file)
-      else if ( atrfs.atrstat.st_size == 128 * 720 )
+      else if ( master_atrfs.atrstat.st_size == 128 * 720 )
       {
          fprintf(stderr,"Assuming this is a raw 90K image from the file size (perhaps XFD image)\n");
-         atrfs.mem = atrfs.atrmem;
-         atrfs.ssbytes = 0;
-         atrfs.sectorsize = 128;
-         atrfs.sectors = 720;
+         master_atrfs.mem = master_atrfs.atrmem;
+         master_atrfs.ssbytes = 0;
+         master_atrfs.sectorsize = 128;
+         master_atrfs.sectors = 720;
       }
       else
       {
@@ -325,16 +325,16 @@ int atr_preinit(void)
    {
       if ( fs_ops[i] && fs_ops[i]->fs_sanity )
       {
-         if ( (fs_ops[i]->fs_sanity)() == 0 )
+         if ( (fs_ops[i]->fs_sanity)(&master_atrfs) == 0 )
          {
-            atrfs.fstype = i;
+            master_atrfs.fstype = i;
             if ( options.debug ) fprintf(stderr,"DEBUG: %s detected %s image\n",__FUNCTION__,fs_ops[i]->name);
             return 0;
          }
       }
    }
    fprintf(stderr,"Unable to determine file system type; expose raw non-zero sectors\n");
-   atrfs.fstype = ATR_UNKNOWN;
+   master_atrfs.fstype = ATR_UNKNOWN;
    return 0;
 }
 
@@ -366,37 +366,37 @@ int atr_getattr(const char *path, struct stat *stbuf
    if ( options.debug > 1 ) fprintf(stderr,"DEBUG: %s %s\n",__FUNCTION__,path);
 
    // Copy time stamps from image file; adjust if SpartaDOS
-   stbuf->st_atim = atrfs.atrstat.st_atim;
-   stbuf->st_mtim = atrfs.atrstat.st_mtim;
-   stbuf->st_ctim = atrfs.atrstat.st_ctim;
-   stbuf->st_uid = atrfs.atrstat.st_uid;
-   stbuf->st_gid = atrfs.atrstat.st_gid;
-   stbuf->st_blksize = atrfs.sectorsize;
+   stbuf->st_atim = master_atrfs.atrstat.st_atim;
+   stbuf->st_mtim = master_atrfs.atrstat.st_mtim;
+   stbuf->st_ctim = master_atrfs.atrstat.st_ctim;
+   stbuf->st_uid = master_atrfs.atrstat.st_uid;
+   stbuf->st_gid = master_atrfs.atrstat.st_gid;
+   stbuf->st_blksize = master_atrfs.sectorsize;
    stbuf->st_nlink = 1;
-   stbuf->st_mode = MODE_FILE(atrfs.atrstat.st_mode & 0777);
+   stbuf->st_mode = MODE_FILE(master_atrfs.atrstat.st_mode & 0777);
 
    // Magic ".sector###" files
    if ( strncasecmp(path,"/.sector",sizeof("/.sector")-1) == 0 )
    {
       int sec = string_to_sector(path);
-      if ( sec > 0 && sec <= atrfs.sectors )
+      if ( sec > 0 && sec <= master_atrfs.sectors )
       {
          // stbuf->st_mode = MODE_RO(stbuf->st_mode);
          stbuf->st_size = 128;
          stbuf->st_ino = sec;
-         if ( !atrfs.ssbytes || sec > 3 ) stbuf->st_size = atrfs.sectorsize;
+         if ( !master_atrfs.ssbytes || sec > 3 ) stbuf->st_size = master_atrfs.sectorsize;
          return 0; // Good, can read this sector
       }
    }
 
    if ( fs_ops[ATR_SPECIAL] && fs_ops[ATR_SPECIAL]->fs_getattr )
    {
-      int r = (fs_ops[ATR_SPECIAL]->fs_getattr)(path, stbuf);
+      int r = (fs_ops[ATR_SPECIAL]->fs_getattr)(&master_atrfs,path, stbuf);
       if ( r == 0 ) return r;
    }
-   if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_getattr )
+   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_getattr )
    {
-      return (fs_ops[atrfs.fstype]->fs_getattr)(path, stbuf);
+      return (fs_ops[master_atrfs.fstype]->fs_getattr)(&master_atrfs,path, stbuf);
    }
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s failure: EIO\n",__FUNCTION__,path);
    return -EIO;
@@ -443,9 +443,9 @@ int atr_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offse
    st.st_nlink = 1;
    st.st_rdev = 0; // Not used
    st.st_size = 0; // Fill in below
-   st.st_blksize = atrfs.sectorsize;
+   st.st_blksize = master_atrfs.sectorsize;
    st.st_blocks = 0; // Fill in below
-   st.st_mode = MODE_DIR(atrfs.atrstat.st_mode); // dir; adjust below
+   st.st_mode = MODE_DIR(master_atrfs.atrstat.st_mode); // dir; adjust below
 #endif
 
    if ( options.debug > 1 ) fprintf(stderr,"DEBUG: %s %s\n",__FUNCTION__,path);
@@ -456,11 +456,11 @@ int atr_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offse
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s\n",__FUNCTION__,path);
    if ( fs_ops[ATR_SPECIAL] && fs_ops[ATR_SPECIAL]->fs_readdir )
    {
-      (fs_ops[ATR_SPECIAL]->fs_readdir)(path, buf, filler,offset);
+      (fs_ops[ATR_SPECIAL]->fs_readdir)(&master_atrfs,path, buf, filler,offset);
    }
-   if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_readdir )
+   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_readdir )
    {
-      return (fs_ops[atrfs.fstype]->fs_readdir)(path, buf, filler,offset);
+      return (fs_ops[master_atrfs.fstype]->fs_readdir)(&master_atrfs,path, buf, filler,offset);
    }
    return 0; // At least the standard files work
 }
@@ -475,13 +475,13 @@ int atr_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
    if ( strncasecmp(path,"/.sector",sizeof("/.sector")-1) == 0 )
    {
       int sec = string_to_sector(path);
-      if ( sec <= 0 || sec > atrfs.sectors ) return -ENOENT;
+      if ( sec <= 0 || sec > master_atrfs.sectors ) return -ENOENT;
 
       int bytes = 128;
-      if ( !atrfs.ssbytes || sec > 3 ) bytes = atrfs.sectorsize;
+      if ( !master_atrfs.ssbytes || sec > 3 ) bytes = master_atrfs.sectorsize;
 
       if (offset >= bytes ) return -EOF;
-      unsigned char *s = SECTOR(sec);
+      unsigned char *s = MSECTOR(sec);
       bytes -= offset;
       s += offset;
       if ( (size_t)bytes > size ) bytes = size;
@@ -492,14 +492,14 @@ int atr_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
    if ( fs_ops[ATR_SPECIAL] && fs_ops[ATR_SPECIAL]->fs_read )
    {
       int r;
-      r = (fs_ops[ATR_SPECIAL]->fs_read)(path,buf,size,offset);
+      r = (fs_ops[ATR_SPECIAL]->fs_read)(&master_atrfs,path,buf,size,offset);
       if ( options.debug ) fprintf(stderr,"DEBUG: %s %s special returned %d\n",__FUNCTION__,path,r);
       if ( r != 0 ) return r;
       // If 'r' is zero, then it wasn't handled.
    }
-   if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_read )
+   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_read )
    {
-      return (fs_ops[atrfs.fstype]->fs_read)(path,buf,size,offset);
+      return (fs_ops[master_atrfs.fstype]->fs_read)(&master_atrfs,path,buf,size,offset);
    }
    return -ENOENT;
 }
@@ -509,19 +509,19 @@ int atr_write(const char *path, const char *buf, size_t size, off_t offset, stru
    (void)fi;
    upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s %ld bytes at %lu\n",__FUNCTION__,path,size,offset);
-   if ( atrfs.readonly ) return -EROFS;
+   if ( master_atrfs.readonly ) return -EROFS;
 
    // Magic .sector### files: Write a raw sector
    if ( strncasecmp(path,"/.sector",sizeof("/.sector")-1) == 0 )
    {
       int sec = string_to_sector(path);
-      if ( sec <= 0 || sec > atrfs.sectors ) return -ENOENT;
+      if ( sec <= 0 || sec > master_atrfs.sectors ) return -ENOENT;
 
       int bytes = 128;
-      if ( !atrfs.ssbytes || sec > 3 ) bytes = atrfs.sectorsize;
+      if ( !master_atrfs.ssbytes || sec > 3 ) bytes = master_atrfs.sectorsize;
 
       if (offset >= bytes ) return -ENOSPC; // -EOF doesn't stop 'dd' from writing
-      unsigned char *s = SECTOR(sec);
+      unsigned char *s = MSECTOR(sec);
       bytes -= offset;
       s += offset;
       if ( (size_t)bytes > size ) bytes = size;
@@ -532,14 +532,14 @@ int atr_write(const char *path, const char *buf, size_t size, off_t offset, stru
    if ( fs_ops[ATR_SPECIAL] && fs_ops[ATR_SPECIAL]->fs_write )
    {
       int r;
-      r = (fs_ops[ATR_SPECIAL]->fs_write)(path,buf,size,offset);
+      r = (fs_ops[ATR_SPECIAL]->fs_write)(&master_atrfs,path,buf,size,offset);
       if ( options.debug ) fprintf(stderr,"DEBUG: %s %s special returned %d\n",__FUNCTION__,path,r);
       if ( r != 0 ) return r;
       // If 'r' is zero, then it wasn't handled.
    }
-   if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_write )
+   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_write )
    {
-      return (fs_ops[atrfs.fstype]->fs_write)(path,buf,size,offset);
+      return (fs_ops[master_atrfs.fstype]->fs_write)(&master_atrfs,path,buf,size,offset);
    }
    return -ENOENT;
 }
@@ -548,10 +548,10 @@ int atr_mkdir(const char *path,mode_t mode)
 {
    upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
-   if ( atrfs.readonly ) return -EROFS;
-   if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_mkdir )
+   if ( master_atrfs.readonly ) return -EROFS;
+   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_mkdir )
    {
-      return (fs_ops[atrfs.fstype]->fs_mkdir)(path,mode);
+      return (fs_ops[master_atrfs.fstype]->fs_mkdir)(&master_atrfs,path,mode);
    }
    return -EPERM; // mkdir(2) man page says EPERM if directory creation not supported
 }
@@ -560,10 +560,10 @@ int atr_rmdir(const char *path)
 {
    upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
-   if ( atrfs.readonly ) return -EROFS;
-   if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_rmdir )
+   if ( master_atrfs.readonly ) return -EROFS;
+   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_rmdir )
    {
-      return (fs_ops[atrfs.fstype]->fs_rmdir)(path);
+      return (fs_ops[master_atrfs.fstype]->fs_rmdir)(&master_atrfs,path);
    }
    return -EIO; // Seems like the right error for not supported
 }
@@ -572,10 +572,10 @@ int atr_unlink(const char *path)
 {
    upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
-   if ( atrfs.readonly ) return -EROFS;
-   if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_unlink )
+   if ( master_atrfs.readonly ) return -EROFS;
+   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_unlink )
    {
-      return (fs_ops[atrfs.fstype]->fs_unlink)(path);
+      return (fs_ops[master_atrfs.fstype]->fs_unlink)(&master_atrfs,path);
    }
    return -EIO; // Seems like the right error for not supported
 }
@@ -589,11 +589,11 @@ int atr_rename(const char *path1, const char *path2
    upcase_path(path1);
    upcase_path(path2);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
-   if ( atrfs.readonly ) return -EROFS;
+   if ( master_atrfs.readonly ) return -EROFS;
 
-   if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_rename )
+   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_rename )
    {
-      return (fs_ops[atrfs.fstype]->fs_rename)(path1,path2,
+      return (fs_ops[master_atrfs.fstype]->fs_rename)(&master_atrfs,path1,path2,
 #if (FUSE_USE_VERSION >= 30)
                                                flags
 #else
@@ -614,10 +614,10 @@ int atr_chmod(const char *path, mode_t mode
 #endif
    upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
-   if ( atrfs.readonly ) return -EROFS;
-   if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_chmod )
+   if ( master_atrfs.readonly ) return -EROFS;
+   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_chmod )
    {
-      return (fs_ops[atrfs.fstype]->fs_chmod)(path,mode);
+      return (fs_ops[master_atrfs.fstype]->fs_chmod)(&master_atrfs,path,mode);
    }
    return 0; // Fake success if not implemented
 }
@@ -625,9 +625,9 @@ int atr_readlink(const char *path, char *buf, size_t size )
 {
    upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
-   if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_readlink )
+   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_readlink )
    {
-      return (fs_ops[atrfs.fstype]->fs_readlink)(path,buf,size);
+      return (fs_ops[master_atrfs.fstype]->fs_readlink)(&master_atrfs,path,buf,size);
    }
    return -ENOENT; // Not implemented; shouldn't be reached
 }
@@ -635,9 +635,9 @@ int atr_statfs(const char *path, struct statvfs *stfsbuf)
 {
    upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
-   if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_statfs )
+   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_statfs )
    {
-      return (fs_ops[atrfs.fstype]->fs_statfs)(path,stfsbuf);
+      return (fs_ops[master_atrfs.fstype]->fs_statfs)(&master_atrfs,path,stfsbuf);
    }
    return -EIO; // Seems like the right error for not supported
 }
@@ -646,10 +646,10 @@ int atr_create(const char *path, mode_t mode, struct fuse_file_info *fi)
    (void)fi;
    upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
-   if ( atrfs.readonly ) return -EROFS;
-   if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_create )
+   if ( master_atrfs.readonly ) return -EROFS;
+   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_create )
    {
-      return (fs_ops[atrfs.fstype]->fs_create)(path,mode);
+      return (fs_ops[master_atrfs.fstype]->fs_create)(&master_atrfs,path,mode);
    }
    return -EIO; // Seems like the right error for not supported
 }
@@ -665,10 +665,10 @@ int atr_truncate(const char *path,
 #endif   
    upcase_path(path);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s\n",__FUNCTION__);
-   if ( atrfs.readonly ) return -EROFS;
-   if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_truncate )
+   if ( master_atrfs.readonly ) return -EROFS;
+   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_truncate )
    {
-      return (fs_ops[atrfs.fstype]->fs_truncate)(path,size);
+      return (fs_ops[master_atrfs.fstype]->fs_truncate)(&master_atrfs,path,size);
    }
    return -EIO; // Seems like the right error for not supported
 }
@@ -679,7 +679,7 @@ int atr_utimens(const char *path, const struct timespec tv[2], struct fuse_file_
 {
    (void)fi;
    upcase_path(path);
-   if ( atrfs.readonly ) return -EROFS;
+   if ( master_atrfs.readonly ) return -EROFS;
    
    if ( options.debug )
    {
@@ -691,9 +691,9 @@ int atr_utimens(const char *path, const struct timespec tv[2], struct fuse_file_
       else if ( tv[1].tv_nsec == UTIME_OMIT ) fprintf(stderr,"OMIT, ");
       else fprintf(stderr,"%lu, ",tv[1].tv_sec);
    }
-   if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_utimens )
+   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_utimens )
    {
-      return (fs_ops[atrfs.fstype]->fs_utimens)(path,tv);
+      return (fs_ops[master_atrfs.fstype]->fs_utimens)(&master_atrfs,path,tv);
    }
    return 0; // Fake success on file systems that don't have time stamps
 }
@@ -701,12 +701,12 @@ int atr_utimens(const char *path, const struct timespec tv[2], struct fuse_file_
 int atr_utime(const char *path, struct utimbuf *utimbuf)
 {
    upcase_path(path);
-   if ( atrfs.readonly ) return -EROFS;
+   if ( master_atrfs.readonly ) return -EROFS;
    if ( options.debug > 1 ) fprintf(stderr,"DEBUG: %s %s\n",__FUNCTION__,path);
 
-   if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_utime )
+   if ( fs_ops[master_atrfs.fstype] && fs_ops[master_atrfs.fstype]->fs_utime )
    {
-      return (fs_ops[atrfs.fstype]->fs_utime)(path,utimbuf);
+      return (fs_ops[master_atrfs.fstype]->fs_utime)(&master_atrfs,path,utimbuf);
    }
    return 0; // Fake success on file systems that don't have time stamps
 }
@@ -760,7 +760,7 @@ static const struct fuse_operations atr_oper = {
  */
 void atrfs_info(void)
 {
-   struct atr_head *head = atrfs.atrmem;
+   struct atr_head *head = master_atrfs.atrmem;
    unsigned long bytes16 = (BYTES2(head->bytes16count)|(BYTES2(head->hibytes16count) << 16));
 
    printf("\n\n"
@@ -772,20 +772,20 @@ void atrfs_info(void)
           "  Size in bytes:           %lu (plus 16-byte header)\n",
           BYTES2(head->secsize),bytes16,bytes16*16
       );
-   printf("  Computed sectors:        %d\n",atrfs.sectors);
-   if ( atrfs.shortsectors )
+   printf("  Computed sectors:        %d\n",master_atrfs.sectors);
+   if ( master_atrfs.shortsectors )
    {
       printf("The first three sectors in the image are only 128 bytes each\n");
    }
-   if ( atrfs.atrstat.st_size != (off_t)bytes16*16+16 )
+   if ( master_atrfs.atrstat.st_size != (off_t)bytes16*16+16 )
    {
-      printf("The raw file size is %lu, not %lu as would be expected from the header\n",atrfs.atrstat.st_size,bytes16*16+16);
+      printf("The raw file size is %lu, not %lu as would be expected from the header\n",master_atrfs.atrstat.st_size,bytes16*16+16);
       int exp_sectors;
       int exp_short_sectors = 0;
       int exp_garbage;
-      if ( atrfs.sectorsize == 256 && ((atrfs.atrstat.st_size - 16) % atrfs.sectorsize) == 128 ) exp_short_sectors = 3;
-      exp_sectors = (atrfs.atrstat.st_size - 16 + 128 * exp_short_sectors) / atrfs.sectorsize;
-      exp_garbage = (atrfs.atrstat.st_size - 16 + 128 * exp_short_sectors) % atrfs.sectorsize;
+      if ( master_atrfs.sectorsize == 256 && ((master_atrfs.atrstat.st_size - 16) % master_atrfs.sectorsize) == 128 ) exp_short_sectors = 3;
+      exp_sectors = (master_atrfs.atrstat.st_size - 16 + 128 * exp_short_sectors) / master_atrfs.sectorsize;
+      exp_garbage = (master_atrfs.atrstat.st_size - 16 + 128 * exp_short_sectors) % master_atrfs.sectorsize;
       printf("  Sectors from file size:  %d\n",exp_sectors);
       if ( exp_short_sectors ) printf("  First three sectors are 128-bytes long\n");
       if ( exp_garbage ) printf("  Stray bytes at end of image: %d\n", exp_garbage);
@@ -793,7 +793,7 @@ void atrfs_info(void)
       
    }
    printf("\n");
-   char *buf = fsinfo_textdata();
+   char *buf = fsinfo_textdata(&master_atrfs);
    if ( buf )
    {
       printf("%s",buf);

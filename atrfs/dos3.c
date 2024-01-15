@@ -39,8 +39,8 @@
  */
 #define CLUSTER_TO_SECTOR(n)  ((n)*8+25) // 1K blocks starting with '0' at sector 25
 #define CLUSTER(n)            SECTOR(CLUSTER_TO_SECTOR(n))
-#define TOTAL_CLUSTERS        ((atrfs.sectors-24)/8) // Count of clusters
-#define MAX_CLUSTER           ((atrfs.sectors-32)/8) // 0--MAX_CLUSTER are valid
+#define TOTAL_CLUSTERS        ((atrfs->sectors-24)/8) // Count of clusters
+#define MAX_CLUSTER           ((atrfs->sectors-32)/8) // 0--MAX_CLUSTER are valid
 
 
 /*
@@ -81,19 +81,19 @@ enum dos3_vtoc_entry {
 /*
  * Function prototypes
  */
-int dos3_sanity(void);
-int dos3_getattr(const char *path, struct stat *stbuf);
-int dos3_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
-int dos3_read(const char *path, char *buf, size_t size, off_t offset);
-int dos3_write(const char *path, const char *buf, size_t size, off_t offset);
-int dos3_unlink(const char *path);
-int dos3_rename(const char *path1, const char *path2, unsigned int flags);
-int dos3_chmod(const char *path, mode_t mode);
-int dos3_create(const char *path, mode_t mode);
-int dos3_truncate(const char *path, off_t size);
-int dos3_statfs(const char *path, struct statvfs *stfsbuf);
-int dos3_newfs(void);
-char *dos3_fsinfo(void);
+int dos3_sanity(struct atrfs *atrfs);
+int dos3_getattr(struct atrfs *atrfs,const char *path, struct stat *stbuf);
+int dos3_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
+int dos3_read(struct atrfs *atrfs,const char *path, char *buf, size_t size, off_t offset);
+int dos3_write(struct atrfs *atrfs,const char *path, const char *buf, size_t size, off_t offset);
+int dos3_unlink(struct atrfs *atrfs,const char *path);
+int dos3_rename(struct atrfs *atrfs,const char *path1, const char *path2, unsigned int flags);
+int dos3_chmod(struct atrfs *atrfs,const char *path, mode_t mode);
+int dos3_create(struct atrfs *atrfs,const char *path, mode_t mode);
+int dos3_truncate(struct atrfs *atrfs,const char *path, off_t size);
+int dos3_statfs(struct atrfs *atrfs,const char *path, struct statvfs *stfsbuf);
+int dos3_newfs(struct atrfs *atrfs);
+char *dos3_fsinfo(struct atrfs *atrfs);
 
 /*
  * Global variables
@@ -200,7 +200,7 @@ const unsigned char bootsectors[] = {
 /*
  * dos3_get_dir_entry()
  */
-int dos3_get_dir_entry(const char *path,struct dos3_dir_entry **dirent_found,int *isinfo)
+int dos3_get_dir_entry(struct atrfs *atrfs,const char *path,struct dos3_dir_entry **dirent_found,int *isinfo)
 {
    struct dos3_dir_entry *junk;
    if ( !dirent_found ) dirent_found = &junk; // Avoid NULL check later
@@ -290,7 +290,7 @@ int dos3_get_dir_entry(const char *path,struct dos3_dir_entry **dirent_found,int
  *
  * The pointer returned should be 'free()'d after use.
  */
-char *dos3_info(const char *path,struct dos3_dir_entry *dirent)
+char *dos3_info(struct atrfs *atrfs,const char *path,struct dos3_dir_entry *dirent)
 {
    char *buf,*b;
    int filesize;
@@ -340,13 +340,13 @@ char *dos3_info(const char *path,struct dos3_dir_entry *dirent)
 }
 
 /*
- * dos3_sanity()
+ * dos3_sanity(atrfs)
  *
  * Return 0 if this is a valid Atari DOS 3 file system
  */
-int dos3_sanity(void)
+int dos3_sanity(struct atrfs *atrfs)
 {
-   if ( atrfs.sectorsize != 128 ) return 1; // Must be SD
+   if ( atrfs->sectorsize != 128 ) return 1; // Must be SD
    struct sector1 *sec1 = SECTOR(1);
    if ( sec1->boot_sectors != 9 ) return 1; // Nice to have a different number
    // FIXME: Would be nice to have a little more structure verification on sector 1
@@ -356,10 +356,10 @@ int dos3_sanity(void)
    if ( atrfs_memcmp(zeros,head->zeros,sizeof(zeros)) != 0 ) return 1;
    if ( head->dos_id != 0xA5 ) return 1;
 
-   if ( !atrfs.readonly ) // FIXME: No write support yet
+   if ( !atrfs->readonly ) // FIXME: No write support yet
    {
       fprintf(stderr,"DOS 3 write support not implemented; read-only mode forced\n");
-      atrfs.readonly = 1;
+      atrfs->readonly = 1;
    }
    return 0;
 }
@@ -367,7 +367,7 @@ int dos3_sanity(void)
 /*
  * dos3_getattr()
  */
-int dos3_getattr(const char *path, struct stat *stbuf)
+int dos3_getattr(struct atrfs *atrfs,const char *path, struct stat *stbuf)
 {
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
 
@@ -385,7 +385,7 @@ int dos3_getattr(const char *path, struct stat *stbuf)
    if ( atrfs_strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
    {
       int sec = string_to_sector(path);
-      if ( sec >= 0 && sec*8+25+7<=atrfs.sectors )
+      if ( sec >= 0 && sec*8+25+7<=atrfs->sectors )
       {
          stbuf->st_mode = MODE_RO(stbuf->st_mode);
          stbuf->st_size = 1024;
@@ -398,13 +398,13 @@ int dos3_getattr(const char *path, struct stat *stbuf)
    struct dos3_dir_entry *dirent;
    int isinfo;
    int r;
-   r = dos3_get_dir_entry(path,&dirent,&isinfo);
+   r = dos3_get_dir_entry(atrfs,path,&dirent,&isinfo);
    if ( r ) return r;
    stbuf->st_ino = dirent ? CLUSTER_TO_SECTOR(dirent->start) : 0;
    if ( isinfo )
    {
       stbuf->st_ino += 0x10000;
-      char *info = dos3_info(path,dirent);
+      char *info = dos3_info(atrfs,path,dirent);
       stbuf->st_size = strlen(info);
       free(info);
       return 0;
@@ -416,7 +416,7 @@ int dos3_getattr(const char *path, struct stat *stbuf)
 /*
  * dos3_readdir()
  */
-int dos3_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
+int dos3_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
 {
    (void)path; // Always "/"
    (void)offset;
@@ -456,14 +456,14 @@ int dos3_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
    // Create .sector4 ... .sector24 as appropriate
    {
       struct sector1 *s1 = SECTOR(1);
-      unsigned char *zero = calloc(1,atrfs.sectorsize);
+      unsigned char *zero = calloc(1,atrfs->sectorsize);
       if ( !zero ) return -ENOMEM; // Weird
       char name[32];
       int digits = 2;
-      for (int sec=s1->boot_sectors + 1; sec<=atrfs.sectors && sec< 25; ++sec)
+      for (int sec=s1->boot_sectors + 1; sec<=atrfs->sectors && sec< 25; ++sec)
       {
          unsigned char *s = SECTOR(sec);
-         if ( atrfs_memcmp(s,zero,atrfs.sectorsize) == 0 ) continue; // Skip empty sectors
+         if ( atrfs_memcmp(s,zero,atrfs->sectorsize) == 0 ) continue; // Skip empty sectors
          sprintf(name,".sector%0*d",digits,sec);
          filler(buf,name,FILLER_NULL);
       }
@@ -477,7 +477,7 @@ int dos3_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
       if ( !zero ) return -ENOMEM; // Weird
       char name[32];
       int digits = 3;
-      for (int sec=0; sec*8+25+7<=atrfs.sectors; ++sec)
+      for (int sec=0; sec*8+25+7<=atrfs->sectors; ++sec)
       {
          unsigned char *s = CLUSTER(sec);
          if ( atrfs_memcmp(s,zero,1024) == 0 ) continue; // Skip empty sectors
@@ -493,14 +493,14 @@ int dos3_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
 /*
  * dos3_read()
  */
-int dos3_read(const char *path, char *buf, size_t size, off_t offset)
+int dos3_read(struct atrfs *atrfs,const char *path, char *buf, size_t size, off_t offset)
 {
 
    // Magic /.cluster### files
    if ( atrfs_strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
    {
       int sec = string_to_sector(path);
-      if ( sec < 0 || sec*8+25+7>atrfs.sectors ) return -ENOENT;
+      if ( sec < 0 || sec*8+25+7>atrfs->sectors ) return -ENOENT;
 
       int bytes = 1024;
       if (offset >= bytes ) return -EOF;
@@ -516,13 +516,13 @@ int dos3_read(const char *path, char *buf, size_t size, off_t offset)
    struct dos3_dir_entry *dirent;
    int isinfo;
    int r;
-   r = dos3_get_dir_entry(path,&dirent,&isinfo);
+   r = dos3_get_dir_entry(atrfs,path,&dirent,&isinfo);
    if ( r ) return r;
 
    // Info files
    if ( isinfo )
    {
-      char *info = dos3_info(path,dirent);
+      char *info = dos3_info(atrfs,path,dirent);
       char *i = info;
       int bytes = strlen(info);
       if ( offset >= bytes )
@@ -584,29 +584,29 @@ int dos3_read(const char *path, char *buf, size_t size, off_t offset)
 }
 
 // Implement these for read-write support
-int dos3_write(const char *path, const char *buf, size_t size, off_t offset);
-int dos3_unlink(const char *path);
-int dos3_rename(const char *path1, const char *path2, unsigned int flags);
-int dos3_chmod(const char *path, mode_t mode);
-int dos3_create(const char *path, mode_t mode);
-int dos3_truncate(const char *path, off_t size);
+int dos3_write(struct atrfs *atrfs,const char *path, const char *buf, size_t size, off_t offset);
+int dos3_unlink(struct atrfs *atrfs,const char *path);
+int dos3_rename(struct atrfs *atrfs,const char *path1, const char *path2, unsigned int flags);
+int dos3_chmod(struct atrfs *atrfs,const char *path, mode_t mode);
+int dos3_create(struct atrfs *atrfs,const char *path, mode_t mode);
+int dos3_truncate(struct atrfs *atrfs,const char *path, off_t size);
 
 /*
  * dos3_newfs()
  */
-int dos3_newfs(void)
+int dos3_newfs(struct atrfs *atrfs)
 {
-   if ( atrfs.sectorsize != 128 )
+   if ( atrfs->sectorsize != 128 )
    {
       fprintf(stderr,"ERROR: DOS 3 only works with SD disks\n");
       return -EINVAL;
    }
-   if ( atrfs.sectors > 1048 ) // Yes, you can add one extra block and it will work.
+   if ( atrfs->sectors > 1048 ) // Yes, you can add one extra block and it will work.
    {
       fprintf(stderr,"ERROR: DOS 3 only supports up to 1048 sectors\n");
       return -EINVAL;
    }
-   if ( atrfs.sectors < 32 )
+   if ( atrfs->sectors < 32 )
    {
       fprintf(stderr,"ERROR: DOS 3 needs 24 sectors plus 8 sectors per data block\n");
       return -EINVAL;
@@ -629,12 +629,12 @@ int dos3_newfs(void)
 /*
  * dos3_statfs()
  */
-int dos3_statfs(const char *path, struct statvfs *stfsbuf)
+int dos3_statfs(struct atrfs *atrfs,const char *path, struct statvfs *stfsbuf)
 {
    (void)path; // meaningless
    stfsbuf->f_bsize = 1024;
    stfsbuf->f_frsize = 1024;
-   stfsbuf->f_blocks = (atrfs.sectors - 24) / 8;
+   stfsbuf->f_blocks = (atrfs->sectors - 24) / 8;
    unsigned char *vtoc = SECTOR(24);
    stfsbuf->f_bfree = 0;
    for ( int i=0;i<0x80;++i )
@@ -660,7 +660,7 @@ int dos3_statfs(const char *path, struct statvfs *stfsbuf)
 /*
  * dos3_fsinfo()
  */
-char *dos3_fsinfo(void)
+char *dos3_fsinfo(struct atrfs *atrfs)
 {
    char *buf=malloc(16*1024);
    if ( !buf ) return NULL;

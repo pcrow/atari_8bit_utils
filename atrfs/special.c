@@ -27,21 +27,21 @@
  */
 struct special_files {
    char *name;
-   int (*getattr)(const char *,struct stat *);
-   int (*read)(const char *,char *,size_t,off_t);
-   int (*write)(const char *,const char *,size_t,off_t);
-   char *(*textdata)(void);
+   int (*getattr)(struct atrfs *,const char *,struct stat *);
+   int (*read)(struct atrfs *,const char *,char *,size_t,off_t);
+   int (*write)(struct atrfs *,const char *,const char *,size_t,off_t);
+   char *(*textdata)(struct atrfs *);
 };
 
 /*
  * Function prototypes
  */
-int special_getattr(const char *path, struct stat *stbuf);
-int special_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
-int special_read(const char *path, char *buf, size_t size, off_t offset);
-int special_write(const char *path, const char *buf, size_t size, off_t offset);
-char *fsinfo_textdata(void);
-char *bootinfo_textdata(void);
+int special_getattr(struct atrfs *atrfs,const char *path, struct stat *stbuf);
+int special_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
+int special_read(struct atrfs *atrfs,const char *path, char *buf, size_t size, off_t offset);
+int special_write(struct atrfs *atrfs,const char *path, const char *buf, size_t size, off_t offset);
+char *fsinfo_textdata(struct atrfs *atrfs);
+char *bootinfo_textdata(struct atrfs *atrfs);
 
 /*
  * Global variables
@@ -68,7 +68,7 @@ const struct special_files files[] = {
 /*
  * Functions
  */
-int special_getattr(const char *path, struct stat *stbuf)
+int special_getattr(struct atrfs *atrfs,const char *path, struct stat *stbuf)
 {
    if ( *path == '/' )
    {
@@ -86,22 +86,22 @@ int special_getattr(const char *path, struct stat *stbuf)
             if ( i == 1 )
             {
                struct sector1 *sec1=SECTOR(1);
-               if ( sec1->boot_sectors < 3 && atrfs.ssbytes )
+               if ( sec1->boot_sectors < 3 && atrfs->ssbytes )
                {
                   stbuf->st_size = sec1->boot_sectors * 128;
                }
                else
                {
-                  stbuf->st_size = sec1->boot_sectors * atrfs.sectorsize - atrfs.ssbytes;
+                  stbuf->st_size = sec1->boot_sectors * atrfs->sectorsize - atrfs->ssbytes;
                }
             }
             else if ( i == 0 )
             {
-               stbuf->st_size = strlen(bootinfo_textdata());
+               stbuf->st_size = strlen(bootinfo_textdata(atrfs));
             }
             else if ( i == 2 )
             {
-               stbuf->st_size = strlen(fsinfo_textdata());
+               stbuf->st_size = strlen(fsinfo_textdata(atrfs));
             }
             return 0;
          }
@@ -110,10 +110,10 @@ int special_getattr(const char *path, struct stat *stbuf)
    return -ENOENT; // Continue with regular file system
 }
 
-int special_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
+int special_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
 {
    (void)offset; // Ignored in our usage mode
-   if ( atrfs.fstype == ATR_APT ) return 0;
+   if ( atrfs->fstype == ATR_APT ) return 0;
    if ( !options.nodotfiles && strcmp(path,"/") == 0 )
    {
       for (int i=0;(long unsigned)i<sizeof(files)/sizeof(files[0]);++i)
@@ -124,7 +124,7 @@ int special_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t o
    return 0;
 }
 
-int special_read(const char *path, char *buf, size_t size, off_t offset)
+int special_read(struct atrfs *atrfs,const char *path, char *buf, size_t size, off_t offset)
 {
    if ( *path == '/' )
    {
@@ -138,7 +138,7 @@ int special_read(const char *path, char *buf, size_t size, off_t offset)
                if ( options.debug ) fprintf(stderr,"DEBUG: %s %s Special file 1\n",__FUNCTION__,path);
                unsigned char *s=SECTOR(1);
                struct sector1 *sec1=SECTOR(1);
-               int bytes = sec1->boot_sectors * atrfs.sectorsize - atrfs.ssbytes;
+               int bytes = sec1->boot_sectors * atrfs->sectorsize - atrfs->ssbytes;
                if ( offset >= bytes ) return -EOF;
                s += offset;
                bytes -= offset;
@@ -150,8 +150,8 @@ int special_read(const char *path, char *buf, size_t size, off_t offset)
             {
                if ( options.debug ) fprintf(stderr,"DEBUG: %s %s Special file %d\n",__FUNCTION__,path,i);
                char *b;
-               if ( i==2 ) b = fsinfo_textdata();
-               else b = bootinfo_textdata();
+               if ( i==2 ) b = fsinfo_textdata(atrfs);
+               else b = bootinfo_textdata(atrfs);
                int bytes = strlen(b);
                if (offset >= bytes) return -EOF;
                b += offset;
@@ -175,7 +175,7 @@ int special_read(const char *path, char *buf, size_t size, off_t offset)
  *
  * Write directly to bootsectors.
  */
-int special_write(const char *path, const char *buf, size_t size, off_t offset)
+int special_write(struct atrfs *atrfs,const char *path, const char *buf, size_t size, off_t offset)
 {
    if ( *path != '/' ) return 0;
    if ( atrfs_strcmp(files[1].name,path+1)!=0 ) return 0; // Not .bootsectors
@@ -186,7 +186,7 @@ int special_write(const char *path, const char *buf, size_t size, off_t offset)
    struct sector1 *sec1=SECTOR(1);
    int boot_sectors = sec1->boot_sectors;
    if ( offset < 2 && offset + size >= 2 ) boot_sectors = ((const unsigned char *)buf)[1 - offset];
-   if ( boot_sectors > 3 && atrfs.sectorsize != 128 )
+   if ( boot_sectors > 3 && atrfs->sectorsize != 128 )
    {
       return -EFBIG; // Can't have more than 3 boot sectors unless single density
    }
@@ -201,7 +201,7 @@ int special_write(const char *path, const char *buf, size_t size, off_t offset)
    return bytes;
 }
 
-char *fsinfo_textdata(void)
+char *fsinfo_textdata(struct atrfs *atrfs)
 {
    static char *buf;
    char *b;
@@ -213,17 +213,17 @@ char *fsinfo_textdata(void)
            "File system information\n"
            "Sectors: %d\n"
            "Sector size: %d",
-           atrfs.sectors,atrfs.sectorsize);
-   if ( atrfs.ssbytes )
+           atrfs->sectors,atrfs->sectorsize);
+   if ( atrfs->ssbytes )
    {
       b+=sprintf(b," (except first three sectors are 128 bytes)");
    }
    b+=sprintf(b,
               "\n"
               "File system type: ");
-   if ( fs_ops[atrfs.fstype]->name )
+   if ( fs_ops[atrfs->fstype]->name )
    {
-      b+=sprintf(b,"%s",fs_ops[atrfs.fstype]->name);
+      b+=sprintf(b,"%s",fs_ops[atrfs->fstype]->name);
    }
    else
    {
@@ -231,10 +231,10 @@ char *fsinfo_textdata(void)
    }
    b+=sprintf(b,"\n");
    // Allow each file system to have a function to call to display more information
-   if ( fs_ops[atrfs.fstype] && fs_ops[atrfs.fstype]->fs_fsinfo )
+   if ( fs_ops[atrfs->fstype] && fs_ops[atrfs->fstype]->fs_fsinfo )
    {
       char *t;
-      t=(fs_ops[atrfs.fstype]->fs_fsinfo)();
+      t=(fs_ops[atrfs->fstype]->fs_fsinfo)(atrfs);
       if ( t )
       {
          b+=sprintf(b,"%s",t);
@@ -245,7 +245,7 @@ char *fsinfo_textdata(void)
    return buf;
 }
 
-char *bootinfo_textdata(void)
+char *bootinfo_textdata(struct atrfs *atrfs)
 {
    static char *buf;
    char *b;

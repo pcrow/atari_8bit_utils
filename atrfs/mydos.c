@@ -30,7 +30,7 @@
 #define BITMAPBYTE(n)   ((n)/8)
 #define BITMAPMASK(n)   (1<<(7-((n)%8)))
 #define BITMAP(map,sector)  (map[BITMAPBYTE(sector)]&BITMAPMASK(sector))
-#define DIRENT_ENTRY(n) ((n) + ((atrfs.sectorsize == 256 ) ? (n)/8 * 8 : 0 ))
+#define DIRENT_ENTRY(n) ((n) + ((atrfs->sectorsize == 256 ) ? (n)/8 * 8 : 0 ))
 
 /*
  * File System Structures
@@ -104,24 +104,24 @@ struct dos25_vtoc2 { // sector 1024
 /*
  * Function prototypes
  */
-int mydos_sanity(void);
-int dos1_sanity(void);
-int dos2_sanity(void);
-int dos25_sanity(void);
-int mydos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
-int mydos_getattr(const char *path, struct stat *stbuf);
-int mydos_read(const char *path, char *buf, size_t size, off_t offset);
-int mydos_write(const char *path, const char *buf, size_t size, off_t offset);
-int mydos_mkdir(const char *path,mode_t mode);
-int mydos_rmdir(const char *path);
-int mydos_unlink(const char *path);
-int mydos_rename(const char *path1, const char *path2, unsigned int flags);
-int mydos_chmod(const char *path, mode_t mode);
-int mydos_create(const char *path, mode_t mode);
-int mydos_truncate(const char *path, off_t size);
-int mydos_statfs(const char *path, struct statvfs *stfsbuf);
-int mydos_newfs(void);
-char *mydos_fsinfo(void);
+int mydos_sanity(struct atrfs *atrfs);
+int dos1_sanity(struct atrfs *atrfs);
+int dos2_sanity(struct atrfs *atrfs);
+int dos25_sanity(struct atrfs *atrfs);
+int mydos_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
+int mydos_getattr(struct atrfs *atrfs,const char *path, struct stat *stbuf);
+int mydos_read(struct atrfs *atrfs,const char *path, char *buf, size_t size, off_t offset);
+int mydos_write(struct atrfs *atrfs,const char *path, const char *buf, size_t size, off_t offset);
+int mydos_mkdir(struct atrfs *atrfs,const char *path,mode_t mode);
+int mydos_rmdir(struct atrfs *atrfs,const char *path);
+int mydos_unlink(struct atrfs *atrfs,const char *path);
+int mydos_rename(struct atrfs *atrfs,const char *path1, const char *path2, unsigned int flags);
+int mydos_chmod(struct atrfs *atrfs,const char *path, mode_t mode);
+int mydos_create(struct atrfs *atrfs,const char *path, mode_t mode);
+int mydos_truncate(struct atrfs *atrfs,const char *path, off_t size);
+int mydos_statfs(struct atrfs *atrfs,const char *path, struct statvfs *stfsbuf);
+int mydos_newfs(struct atrfs *atrfs);
+char *mydos_fsinfo(struct atrfs *atrfs);
 
 /*
  * Global variables
@@ -356,14 +356,14 @@ static const char bootsectors[ATR_MAXFSTYPE][3*128] =
  */
 
 /*
- * dos_dirent_sanity()
+ * dos_dirent_sanity(atrfs)
  *
  * Return:
  *    0 - good
  *    1 - good and never allocated
  *   neg - bad
  */
-int dos_dirent_sanity(const struct dos2_dirent *dirent)
+int dos_dirent_sanity(struct atrfs *atrfs,const struct dos2_dirent *dirent)
 {
    struct dos2_dirent zero;
    memset(&zero,0,sizeof(zero));
@@ -371,15 +371,15 @@ int dos_dirent_sanity(const struct dos2_dirent *dirent)
    if ( (dirent->flags & FLAGS_DELETED) && (dirent->flags & ~FLAGS_DELETED) ) return -1;
    if ( dirent->flags == 0 ) return -1; // Not unless full directory is empty
    if ( (dirent->flags & FLAGS_UNDEF) ) return -1; // Should never be set
-   if ( BYTES2(dirent->sectors) > atrfs.sectors ) return -1; // File too large to exist
-   if ( BYTES2(dirent->start) > atrfs.sectors ) return -1; // File starts past end of image
+   if ( BYTES2(dirent->sectors) > atrfs->sectors ) return -1; // File too large to exist
+   if ( BYTES2(dirent->start) > atrfs->sectors ) return -1; // File starts past end of image
    return 0;
 }
 
 /*
- * dos_root_dir_sanity()
+ * dos_root_dir_sanity(atrfs)
  */
-int dos_root_dir_sanity(void)
+int dos_root_dir_sanity(struct atrfs *atrfs)
 {
    int at_end=0;
    int r;
@@ -388,7 +388,7 @@ int dos_root_dir_sanity(void)
    {
       struct dos2_dirent *dirent;
       dirent = SECTOR(361);
-      r = dos_dirent_sanity(&dirent[DIRENT_ENTRY(i)]);
+      r = dos_dirent_sanity(atrfs,&dirent[DIRENT_ENTRY(i)]);
       if ( r < 0 ) return r;
       if ( r == 0 && at_end ) return -1;
       if ( r == 1 ) at_end = 1;
@@ -397,20 +397,20 @@ int dos_root_dir_sanity(void)
 }
 
 /*
- * mydos_sanity()
+ * mydos_sanity(atrfs)
  *
  * Return 0 if this is a valid MyDOS file system
  */
-int mydos_sanity(void)
+int mydos_sanity(struct atrfs *atrfs)
 {
-   if ( atrfs.sectors < 368 ) return 1; // Must have the root directory
-   if ( atrfs.sectorsize > 256 ) return 1; // No support for 512-byte sectors
+   if ( atrfs->sectors < 368 ) return 1; // Must have the root directory
+   if ( atrfs->sectorsize > 256 ) return 1; // No support for 512-byte sectors
    struct sector1 *sec1 = SECTOR(1);
    if ( sec1->boot_sectors != 3 ) return 1; // Must have 3 boot sectors
    if ( sec1->pad_zero == 'X' || sec1->pad_zero == 'S' ) return 1; // Flagged as DOS XE or SpartaDOS
    struct mydos_vtoc *vtoc = SECTOR(360);
    if ( BYTES2(vtoc->total_sectors) < BYTES2(vtoc->free_sectors) ) return 1; // free must not exceed total
-   if ( dos_root_dir_sanity() ) return 1; // Root directory not sane
+   if ( dos_root_dir_sanity(atrfs) ) return 1; // Root directory not sane
 
    if ( !BYTES2(vtoc->total_sectors) ) return 1; // Must have some sectors
    if ( vtoc->bitmap[0]&0xf0 ) return 1; // sectors 0-4 are always used
@@ -418,26 +418,26 @@ int mydos_sanity(void)
 
    int vtoc_code = 2; // Small images: 2 matches DOS 2 for one sector
    int vtoc_sectors = 1;
-   if ( atrfs.sectors > 943 )
+   if ( atrfs->sectors > 943 )
    {
       // Add 1 for each 256-bytes needed (single-density sectors added in pairs)
-      const int vtoc_bytes = (atrfs.sectors - 943 + 7)/8;
+      const int vtoc_bytes = (atrfs->sectors - 943 + 7)/8;
       vtoc_code += (vtoc_bytes + 255) / 256;
    }
-   if ( atrfs.sectorsize == 128 ) vtoc_sectors = vtoc_code*2-3;
+   if ( atrfs->sectorsize == 128 ) vtoc_sectors = vtoc_code*2-3;
    else vtoc_sectors=vtoc_code-1;
 
    // Checks for which we will print warnings but not abort
    if ( vtoc->vtoc_sectors != vtoc_code ) // VTOC Code for number of sectors doesn't match
    {
-      fprintf(stderr,"Warning: MyDOS VTOC sector code should be %d, observed %d (VTOC %d sectors of %d bytes)\n",vtoc_code,vtoc->vtoc_sectors,vtoc_sectors,atrfs.sectorsize);
+      fprintf(stderr,"Warning: MyDOS VTOC sector code should be %d, observed %d (VTOC %d sectors of %d bytes)\n",vtoc_code,vtoc->vtoc_sectors,vtoc_sectors,atrfs->sectorsize);
       // return 1; // Don't abort; some disks are wrong.
    }
    int reserved_sectors = 3+vtoc_sectors+8; // 3 boot sectors, VTOC, main directory
-   if ( atrfs.sectors >= 720 ) ++reserved_sectors; // sector 720 is skipped unless it's a short image
-   if ( BYTES2(vtoc->total_sectors) != atrfs.sectors - reserved_sectors )
+   if ( atrfs->sectors >= 720 ) ++reserved_sectors; // sector 720 is skipped unless it's a short image
+   if ( BYTES2(vtoc->total_sectors) != atrfs->sectors - reserved_sectors )
    {
-      fprintf(stderr,"Warning: MyDOS total sectors reported %d; should be %d - %d = %d\n",BYTES2(vtoc->total_sectors), atrfs.sectors, reserved_sectors, atrfs.sectors - reserved_sectors);
+      fprintf(stderr,"Warning: MyDOS total sectors reported %d; should be %d - %d = %d\n",BYTES2(vtoc->total_sectors), atrfs->sectors, reserved_sectors, atrfs->sectors - reserved_sectors);
       // return 1; // Don't abort; some disks are wrong.
    }
    // We could add up the free sectors in the bitmap and validate the free count; probably overkill as this isn't fsck.
@@ -445,28 +445,28 @@ int mydos_sanity(void)
 }
 
 /*
- * dos1_sanity()
+ * dos1_sanity(atrfs)
  *
  * Return 0 if this is a valid DOS 1 file system
  */
-int dos1_sanity(void)
+int dos1_sanity(struct atrfs *atrfs)
 {
-   if ( atrfs.sectors < 368 ) return 1; // Must have the root directory
-   if ( atrfs.sectors > 720 ) return 1;
-   if ( atrfs.sectorsize > 128 ) return 1;
+   if ( atrfs->sectors < 368 ) return 1; // Must have the root directory
+   if ( atrfs->sectors > 720 ) return 1;
+   if ( atrfs->sectorsize > 128 ) return 1;
    struct sector1 *sec1 = SECTOR(1);
    if ( sec1->boot_sectors != 1 ) return 1; // Must have 1 boot sector!
    struct mydos_vtoc *vtoc = SECTOR(360);
    if ( BYTES2(vtoc->total_sectors) < BYTES2(vtoc->free_sectors) ) return 1; // free must not exceed total
-   if ( dos_root_dir_sanity() ) return 1; // Root directory not sane
+   if ( dos_root_dir_sanity(atrfs) ) return 1; // Root directory not sane
 
    if ( vtoc->vtoc_sectors != 1 ) return 1; // Code is 1 for DOS 1
    int reserved_sectors = 1+1+8+1;
    
    if ( !BYTES2(vtoc->total_sectors) ) return 1; // Must have some sectors
-   if ( BYTES2(vtoc->total_sectors) != atrfs.sectors - reserved_sectors )
+   if ( BYTES2(vtoc->total_sectors) != atrfs->sectors - reserved_sectors )
    {
-      fprintf(stderr,"Warning: DOS total sectors reported %d; should be %d - %d = %d\n",BYTES2(vtoc->total_sectors), atrfs.sectors, reserved_sectors, atrfs.sectors - reserved_sectors);
+      fprintf(stderr,"Warning: DOS total sectors reported %d; should be %d - %d = %d\n",BYTES2(vtoc->total_sectors), atrfs->sectors, reserved_sectors, atrfs->sectors - reserved_sectors);
       // return 1;
    }
    if ( vtoc->bitmap[0]&0xc0 ) return 1; // sectors 0-1 are always used
@@ -479,29 +479,29 @@ int dos1_sanity(void)
 }
 
 /*
- * dos2_sanity()
+ * dos2_sanity(atrfs)
  *
  * Return 0 if this is a valid DOS 2.0s file system
  */
-int dos2_sanity(void)
+int dos2_sanity(struct atrfs *atrfs)
 {
-   if ( atrfs.sectors < 368 ) return 1; // Must have the root directory
-   if ( atrfs.sectors > 720 ) return 1;
-   if ( atrfs.sectorsize > 128 ) return 1; // DOS 2.0d separate
+   if ( atrfs->sectors < 368 ) return 1; // Must have the root directory
+   if ( atrfs->sectors > 720 ) return 1;
+   if ( atrfs->sectorsize > 128 ) return 1; // DOS 2.0d separate
    struct sector1 *sec1 = SECTOR(1);
    if ( sec1->boot_sectors != 3 ) return 1; // Must have 3 boot sectors
    if ( sec1->pad_zero == 'X' || sec1->pad_zero == 'S' ) return 1; // Flagged as DOS XE or SpartaDOS
    struct mydos_vtoc *vtoc = SECTOR(360);
    if ( BYTES2(vtoc->total_sectors) < BYTES2(vtoc->free_sectors) ) return 1; // free must not exceed total
-   if ( dos_root_dir_sanity() ) return 1; // Root directory not sane
+   if ( dos_root_dir_sanity(atrfs) ) return 1; // Root directory not sane
 
    if ( vtoc->vtoc_sectors != 2 ) return 1; // Code is 2 for DOS 2
    int reserved_sectors = 3+1+8+1; // boot; vtoc; dir(8); 720
    
    if ( !BYTES2(vtoc->total_sectors) ) return 1; // Must have some sectors
-   if ( BYTES2(vtoc->total_sectors) != atrfs.sectors - reserved_sectors )
+   if ( BYTES2(vtoc->total_sectors) != atrfs->sectors - reserved_sectors )
    {
-      fprintf(stderr,"Warning: DOS total sectors reported %d; should be %d - %d = %d\n",BYTES2(vtoc->total_sectors), atrfs.sectors, reserved_sectors, atrfs.sectors - reserved_sectors);
+      fprintf(stderr,"Warning: DOS total sectors reported %d; should be %d - %d = %d\n",BYTES2(vtoc->total_sectors), atrfs->sectors, reserved_sectors, atrfs->sectors - reserved_sectors);
       // return 1;
    }
    if ( vtoc->bitmap[0]&0xf0 ) return 1; // sectors 0-4 are always used
@@ -514,27 +514,27 @@ int dos2_sanity(void)
 }
 
 /*
- * dos25_sanity()
+ * dos25_sanity(atrfs)
  *
  * Return 0 if this is a valid DOS 2.5 file system
  */
-int dos25_sanity(void)
+int dos25_sanity(struct atrfs *atrfs)
 {
-   if ( atrfs.sectors < 1024 ) return 1; // Need sector 1024 for VTOC 2
-   if ( atrfs.sectors > 1040 ) return 1; // No large drive support
-   if ( atrfs.sectorsize > 128 ) return 1; // No DD support
+   if ( atrfs->sectors < 1024 ) return 1; // Need sector 1024 for VTOC 2
+   if ( atrfs->sectors > 1040 ) return 1; // No large drive support
+   if ( atrfs->sectorsize > 128 ) return 1; // No DD support
    struct sector1 *sec1 = SECTOR(1);
    if ( sec1->boot_sectors != 3 ) return 1; // Must have 3 boot sectors
    if ( sec1->pad_zero == 'X' || sec1->pad_zero == 'S' ) return 1; // Flagged as DOS XE or SpartaDOS
    struct mydos_vtoc *vtoc = SECTOR(360);
    if ( BYTES2(vtoc->total_sectors) < BYTES2(vtoc->free_sectors) ) return 1; // free must not exceed total
-   if ( dos_root_dir_sanity() ) return 1; // Root directory not sane
+   if ( dos_root_dir_sanity(atrfs) ) return 1; // Root directory not sane
 
    if ( vtoc->vtoc_sectors != 2 ) return 1; // Code is 2 for DOS 2
    int reserved_sectors = 1+3+1+8+1; // Counts sector zero
    
    if ( !BYTES2(vtoc->total_sectors) ) return 1; // Must have some sectors
-   int total_sec = atrfs.sectors;
+   int total_sec = atrfs->sectors;
    if ( total_sec > 1024 ) total_sec = 1024;
    if ( BYTES2(vtoc->total_sectors) != total_sec - reserved_sectors )
    {
@@ -570,7 +570,7 @@ int dos25_sanity(void)
  * If fileno is 0-63, expect the fileno to be at the end of the sectors (DOS 2 mode).
  * Return 0 on success, non-zero if chain fails, but array is still valid as far as the file is readable.
  */
-int mydos_trace_file(int sector,int fileno,int dos1,int *size,int **sectors)
+int mydos_trace_file(struct atrfs *atrfs,int sector,int fileno,int dos1,int *size,int **sectors)
 {
    unsigned char *s;
    int r=0;
@@ -581,21 +581,21 @@ int mydos_trace_file(int sector,int fileno,int dos1,int *size,int **sectors)
 
    while (1)
    {
-      if ( sector > atrfs.sectors )
+      if ( sector > atrfs->sectors )
       {
-         if ( options.debug ) fprintf(stderr,"DEBUG: %s: block %d sector %d max %d (fileno %d)\n",__FUNCTION__,block,sector,atrfs.sectors,fileno);
+         if ( options.debug ) fprintf(stderr,"DEBUG: %s: block %d sector %d max %d (fileno %d)\n",__FUNCTION__,block,sector,atrfs->sectors,fileno);
          r = 1;
          break;
       }
       s=SECTOR(sector);
-      int next = s[atrfs.sectorsize-3] * 256 + s[atrfs.sectorsize-2]; // Reverse order from normal
+      int next = s[atrfs->sectorsize-3] * 256 + s[atrfs->sectorsize-2]; // Reverse order from normal
       if ( fileno >=0 && fileno < 64 )
       {
          next &= 0x3ff; // Mask off file number
-         if ( fileno != s[atrfs.sectorsize-3]>>2 ) // File number mismatch; don't use the block
+         if ( fileno != s[atrfs->sectorsize-3]>>2 ) // File number mismatch; don't use the block
          {
             r=164;
-            if ( options.debug ) fprintf(stderr,"DEBUG: %s: block %d sector %d fileno mismatch %d should be %d\n",__FUNCTION__,block,sector,s[atrfs.sectorsize-3]>>2,fileno);
+            if ( options.debug ) fprintf(stderr,"DEBUG: %s: block %d sector %d fileno mismatch %d should be %d\n",__FUNCTION__,block,sector,s[atrfs->sectorsize-3]>>2,fileno);
             break;
          }
       }
@@ -606,23 +606,23 @@ int mydos_trace_file(int sector,int fileno,int dos1,int *size,int **sectors)
          if ( next )
          {
             *size += 125;
-            if ( s[atrfs.sectorsize-1] != (block & 0x7f) )
+            if ( s[atrfs->sectorsize-1] != (block & 0x7f) )
             {
-               if ( options.debug ) fprintf(stderr,"DEBUG: %s: DOS 1 sector chain error: sector %d sequence number %d but expected %d\n",__FUNCTION__,sector,s[atrfs.sectorsize-1],block);
+               if ( options.debug ) fprintf(stderr,"DEBUG: %s: DOS 1 sector chain error: sector %d sequence number %d but expected %d\n",__FUNCTION__,sector,s[atrfs->sectorsize-1],block);
             }
          }
          else
          {
-            *size += (s[atrfs.sectorsize-1] & 0x7f);
-            if ( !(s[atrfs.sectorsize-1] & 0x80) )
+            *size += (s[atrfs->sectorsize-1] & 0x7f);
+            if ( !(s[atrfs->sectorsize-1] & 0x80) )
             {
-               if ( options.debug ) fprintf(stderr,"DEBUG: %s: DOS 1 file error: Last sector should have high bit set on last byte: $%02x\n",__FUNCTION__,s[atrfs.sectorsize-1]);
+               if ( options.debug ) fprintf(stderr,"DEBUG: %s: DOS 1 file error: Last sector should have high bit set on last byte: $%02x\n",__FUNCTION__,s[atrfs->sectorsize-1]);
             }
          }
       }
       else
       {
-         *size += s[atrfs.sectorsize-1];
+         *size += s[atrfs->sectorsize-1];
       }
       ++block;
       if ( sectors )
@@ -633,7 +633,7 @@ int mydos_trace_file(int sector,int fileno,int dos1,int *size,int **sectors)
       }
       if ( next==0 ) break;
       sector = next;
-      if ( block > atrfs.sectors )
+      if ( block > atrfs->sectors )
       {
          fprintf(stderr,"Corrupted file number %d has a circular list of sectors\n",fileno);
          if ( sectors )
@@ -652,14 +652,14 @@ int mydos_trace_file(int sector,int fileno,int dos1,int *size,int **sectors)
  *
  * Remove the file number from the ends of the sectors (if there)
  */
-int mydos_remove_fileno(struct dos2_dirent *dirent,int fileno)
+int mydos_remove_fileno(struct atrfs *atrfs,struct dos2_dirent *dirent,int fileno)
 {
    int *sectors;
    int r,size;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %8.8s.%3.3s fileno %d sector %d count %d flags %02x\n",__FUNCTION__,dirent->name,dirent->ext,fileno,BYTES2(dirent->start),BYTES2(dirent->sectors),dirent->flags);
    if ( (dirent->flags & FLAGS_NOFILENO) ) return 0; // Already removed
-   r = mydos_trace_file(BYTES2(dirent->start),fileno,0 /* don't care */,&size,&sectors);
+   r = mydos_trace_file(atrfs,BYTES2(dirent->start),fileno,0 /* don't care */,&size,&sectors);
    if ( r )
    {
       if ( options.debug ) fprintf(stderr,"DEBUG: %s %8.8s.%3.3s fileno %d trace error return %d\n",__FUNCTION__,dirent->name,dirent->ext,fileno,r);
@@ -672,7 +672,7 @@ int mydos_remove_fileno(struct dos2_dirent *dirent,int fileno)
    while ( *s )
    {
       char *buf = SECTOR(*s);
-      buf[atrfs.sectorsize-3] &= 0x03; // Mask off the file number
+      buf[atrfs->sectorsize-3] &= 0x03; // Mask off the file number
       ++s;
    }
    free(sectors);
@@ -684,14 +684,14 @@ int mydos_remove_fileno(struct dos2_dirent *dirent,int fileno)
  *
  * Add the file number from the ends of the sectors (if not already there)
  */
-int mydos_add_fileno(struct dos2_dirent *dirent,int fileno)
+int mydos_add_fileno(struct atrfs *atrfs,struct dos2_dirent *dirent,int fileno)
 {
    int *sectors,*s;
    int r,size;
 
    if ( !( dirent->flags & FLAGS_NOFILENO ) ) return 0; // Already there
    if ( dirent->flags & FLAGS_DIR ) return 1; // Directory; can't add fileno
-   r = mydos_trace_file(BYTES2(dirent->start),-1,0 /* don't care */,&size,&sectors);
+   r = mydos_trace_file(atrfs,BYTES2(dirent->start),-1,0 /* don't care */,&size,&sectors);
    if ( r ) return r;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %8.8s.%3.3s fileno %d\n",__FUNCTION__,dirent->name,dirent->ext,fileno);
 
@@ -700,10 +700,10 @@ int mydos_add_fileno(struct dos2_dirent *dirent,int fileno)
    while ( *s )
    {
       char *buf = SECTOR(*s);
-      if ( buf[atrfs.sectorsize-3]>>2 )
+      if ( buf[atrfs->sectorsize-3]>>2 )
       {
          free(sectors);
-         if ( options.debug ) fprintf(stderr,"DEBUG: %s %8.8s.%3.3s can't add fileno due to sector %d\n",__FUNCTION__,dirent->name,dirent->ext,((buf[atrfs.sectorsize-3]>>2)<<8)|buf[atrfs.sectorsize-2]);
+         if ( options.debug ) fprintf(stderr,"DEBUG: %s %8.8s.%3.3s can't add fileno due to sector %d\n",__FUNCTION__,dirent->name,dirent->ext,((buf[atrfs->sectorsize-3]>>2)<<8)|buf[atrfs->sectorsize-2]);
          return 1; // Nope!
       }
       ++s;
@@ -715,8 +715,8 @@ int mydos_add_fileno(struct dos2_dirent *dirent,int fileno)
    while ( *s )
    {
       char *buf = SECTOR(*s);
-      buf[atrfs.sectorsize-3] &= 0x03; // Mask off the file number (should be a no-op)
-      buf[atrfs.sectorsize-3] |= fileno << 2; // Add file number
+      buf[atrfs->sectorsize-3] &= 0x03; // Mask off the file number (should be a no-op)
+      buf[atrfs->sectorsize-3] |= fileno << 2; // Add file number
       ++s;
    }
    free(sectors);
@@ -734,7 +734,7 @@ int mydos_add_fileno(struct dos2_dirent *dirent,int fileno)
  *   1 File not found, but could be created in parent_dir
  *   -x return this error (usually -ENOENT)
  */
-int mydos_path(const char *path,int *sector,int *parent_dir_sector,int *count,int *locked,int *fileno,int *entry,int *isdir,int *isinfo)
+int mydos_path(struct atrfs *atrfs,const char *path,int *sector,int *parent_dir_sector,int *count,int *locked,int *fileno,int *entry,int *isdir,int *isinfo)
 {
    unsigned char name[8+3+1]; // 8+3+NULL
    struct dos2_dirent *dirent;
@@ -822,8 +822,8 @@ int mydos_path(const char *path,int *sector,int *parent_dir_sector,int *count,in
          if ( atrfs_strncmp((char *)dirent[j].name,(char *)name,8+3) != 0 ) continue;
          *entry = i;
          // subdirectories: MyDOS only, but MyDOS could add them on any compatible disk except DOS 2.5
-         //if ( atrfs.fstype == ATR_MYDOS )
-         if ( ! *isinfo && atrfs.fstype != ATR_DOS25 )
+         //if ( atrfs->fstype == ATR_MYDOS )
+         if ( ! *isinfo && atrfs->fstype != ATR_DOS25 )
          {
             if ( dirent[j].flags & FLAGS_DIR )
             {
@@ -832,7 +832,7 @@ int mydos_path(const char *path,int *sector,int *parent_dir_sector,int *count,in
                   *parent_dir_sector = *sector;
                   *sector = BYTES2(dirent[j].start);
                   if ( options.debug ) fprintf(stderr,"DEBUG: %s: recurse in with dir %d path %s\n",__FUNCTION__,*parent_dir_sector,path);
-                  return mydos_path(path,sector,parent_dir_sector,count,locked,fileno,entry,isdir,isinfo);
+                  return mydos_path(atrfs,path,sector,parent_dir_sector,count,locked,fileno,entry,isdir,isinfo);
                }
                *isdir = 1;
                *sector = BYTES2(dirent[j].start);
@@ -874,13 +874,13 @@ int mydos_path(const char *path,int *sector,int *parent_dir_sector,int *count,in
  *
  * Return the bit from the bitmap for the sector (0 if allocated)
  */
-int mydos_bitmap_status(int sector)
+int mydos_bitmap_status(struct atrfs *atrfs,int sector)
 {
    int vtoc=360;
    int bitmap_start=0;
    int bitmap_offset=10;
 
-   switch (atrfs.fstype)
+   switch (atrfs->fstype)
    {
       case ATR_DOS1:
       case ATR_DOS2:
@@ -895,8 +895,8 @@ int mydos_bitmap_status(int sector)
       case ATR_MYDOS:
          if ( sector > 943 )
          {
-            vtoc = 359 - ((sector-944)/8/atrfs.sectorsize);
-            bitmap_start = ((sector-944)/8/atrfs.sectorsize) * 8;
+            vtoc = 359 - ((sector-944)/8/atrfs->sectorsize);
+            bitmap_start = ((sector-944)/8/atrfs->sectorsize) * 8;
             bitmap_offset = 0;
          }
          break;
@@ -916,13 +916,13 @@ int mydos_bitmap_status(int sector)
  * If 'allocate' is non-zero, change from free to used; otherwise reverse
  * Return 0 if changed, 1 if already at target value.
  */
-int mydos_bitmap(int sector,int allocate)
+int mydos_bitmap(struct atrfs *atrfs,int sector,int allocate)
 {
    int vtoc,vtoc2=0;
    int bitmap_start=0,bitmap2_start;
    int bitmap_offset=10;
 
-   switch (atrfs.fstype)
+   switch (atrfs->fstype)
    {
       case ATR_DOS1:
       case ATR_DOS2:
@@ -952,8 +952,8 @@ int mydos_bitmap(int sector,int allocate)
          }
          else
          {
-            vtoc = 359 - ((sector-944)/8/atrfs.sectorsize);
-            bitmap_start = 944 + ((sector-944)/8/atrfs.sectorsize) * 8*atrfs.sectorsize;
+            vtoc = 359 - ((sector-944)/8/atrfs->sectorsize);
+            bitmap_start = 944 + ((sector-944)/8/atrfs->sectorsize) * 8*atrfs->sectorsize;
             bitmap_offset = 0;
          }
          break;
@@ -998,17 +998,17 @@ int mydos_bitmap(int sector,int allocate)
 /*
  * mydos_free_sector()
  */
-int mydos_free_sector(int sector)
+int mydos_free_sector(struct atrfs *atrfs,int sector)
 {
    int r;
-   r = mydos_bitmap(sector,0);
+   r = mydos_bitmap(atrfs,sector,0);
 
    // Only update the free sector count if the bitmap was modified
    int vtoc = 360;
    int offset = 3;
    if ( r == 0 )
    {
-      if ( atrfs.fstype == ATR_DOS25 && sector >= 720 )
+      if ( atrfs->fstype == ATR_DOS25 && sector >= 720 )
       {
          vtoc=1024;
          offset = 122;
@@ -1028,17 +1028,17 @@ int mydos_free_sector(int sector)
 /*
  * mydos_alloc_sector()
  */
-int mydos_alloc_sector(int sector)
+int mydos_alloc_sector(struct atrfs *atrfs,int sector)
 {
    int r;
-   r = mydos_bitmap(sector,1);
+   r = mydos_bitmap(atrfs,sector,1);
 
    // Only update the free sector count if the bitmap was modified
    int vtoc = 360;
    int offset = 3;
    if ( r == 0 )
    {
-      if ( atrfs.fstype == ATR_DOS25 && sector >= 720 )
+      if ( atrfs->fstype == ATR_DOS25 && sector >= 720 )
       {
          vtoc=1024;
          offset = 122;
@@ -1055,12 +1055,12 @@ int mydos_alloc_sector(int sector)
    return r;
 }
 
-int mydos_alloc_any_sector(void)
+int mydos_alloc_any_sector(struct atrfs *atrfs)
 {
    int r;
-   for ( int i=2;i<=atrfs.sectors; ++i )
+   for ( int i=2;i<=atrfs->sectors; ++i )
    {
-      r=mydos_alloc_sector(i);
+      r=mydos_alloc_sector(atrfs,i);
       if ( r==0 ) return i;
    }
    return -1;
@@ -1076,10 +1076,11 @@ int mydos_alloc_any_sector(void)
  *
  * The pointer returned should be 'free()'d after use.
  */
-char *mydos_info(const char *path,struct dos2_dirent *dirent,int parent_dir_sector,int entry,int sector,int *sectors,int filesize)
+char *mydos_info(struct atrfs *atrfs,const char *path,struct dos2_dirent *dirent,int parent_dir_sector,int entry,int sector,int *sectors,int filesize)
 {
    char *buf,*b;
 
+   (void)atrfs;
    buf = malloc(64*1024);
    b = buf;
    *b = 0;
@@ -1157,13 +1158,13 @@ char *mydos_info(const char *path,struct dos2_dirent *dirent,int parent_dir_sect
  *
  * Also use for dos2 and dos25
  */
-int mydos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
+int mydos_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
 {
    (void)offset; // FUSE will always read directories from the start in our use
    int r;
    int sector=0,parent_dir_sector,count,locked,fileno,entry,isdir,isinfo;
 
-   r = mydos_path(path,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
+   r = mydos_path(atrfs,path,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
    if ( r<0 ) return r;
    if ( !isdir ) return -ENOTDIR;
 
@@ -1172,7 +1173,7 @@ int mydos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t off
    char name[8+1+3+1];
    for ( int i=0;i<64;++i )
    {
-      int j=i + ((atrfs.sectorsize == 256 ) ? i/8 * 8 : 0 ); // Use 8 128-byte sectors, even on DD
+      int j=i + ((atrfs->sectorsize == 256 ) ? i/8 * 8 : 0 ); // Use 8 128-byte sectors, even on DD
 
       if ( dirent[j].flags == 0 ) break;
       if ( dirent[j].flags & FLAGS_DELETED ) continue; // Deleted
@@ -1204,7 +1205,7 @@ int mydos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t off
  * mydos_getattr()
  */
 
-int mydos_getattr(const char *path, struct stat *stbuf)
+int mydos_getattr(struct atrfs *atrfs,const char *path, struct stat *stbuf)
 {
    // stbuf initialized from atr image stats
 
@@ -1212,7 +1213,7 @@ int mydos_getattr(const char *path, struct stat *stbuf)
    int sector=0,parent_dir_sector,count,locked,fileno,entry,isdir,isinfo;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
-   r = mydos_path(path,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
+   r = mydos_path(atrfs,path,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s lookup %d\n",__FUNCTION__,path,r);
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
@@ -1229,14 +1230,14 @@ int mydos_getattr(const char *path, struct stat *stbuf)
       stbuf->st_mode = MODE_RO(stbuf->st_mode); // These files are never writable
       stbuf->st_ino = sector + 0x10000;
 
-      int filesize = atrfs.sectorsize*8,*sectors = NULL; // defaults for directories
+      int filesize = atrfs->sectorsize*8,*sectors = NULL; // defaults for directories
       if ( dirent && !(dirent->flags & FLAGS_DIR) )
       {
-         r = mydos_trace_file(sector,fileno,(dirent->flags & FLAGS_DOS2) == 0,&filesize,&sectors);
+         r = mydos_trace_file(atrfs,sector,fileno,(dirent->flags & FLAGS_DOS2) == 0,&filesize,&sectors);
          if ( r<0 ) return r;
       }
 
-      char *info = mydos_info(path,dirent,parent_dir_sector,entry,sector,sectors,filesize);     
+      char *info = mydos_info(atrfs,path,dirent,parent_dir_sector,entry,sector,sectors,filesize);     
       stbuf->st_size = strlen(info);
       free(info);
       if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s info\n",__FUNCTION__,path);
@@ -1245,13 +1246,13 @@ int mydos_getattr(const char *path, struct stat *stbuf)
    if ( isdir )
    {
       ++stbuf->st_nlink;
-      stbuf->st_mode = MODE_DIR(atrfs.atrstat.st_mode & 0777);
-      stbuf->st_size = 8*atrfs.sectorsize;
+      stbuf->st_mode = MODE_DIR(atrfs->atrstat.st_mode & 0777);
+      stbuf->st_size = 8*atrfs->sectorsize;
    }
    else
    {
       int s;
-      r = mydos_trace_file(sector,fileno,(dirent->flags & FLAGS_DOS2) == 0,&s,NULL);
+      r = mydos_trace_file(atrfs,sector,fileno,(dirent->flags & FLAGS_DOS2) == 0,&s,NULL);
       stbuf->st_size = s;
    }
    if ( locked ) stbuf->st_mode = MODE_RO(stbuf->st_mode);
@@ -1262,12 +1263,12 @@ int mydos_getattr(const char *path, struct stat *stbuf)
    return 0;
 }
 
-int mydos_read(const char *path, char *buf, size_t size, off_t offset)
+int mydos_read(struct atrfs *atrfs,const char *path, char *buf, size_t size, off_t offset)
 {
    int r,sector=0,parent_dir_sector,count,locked,fileno,entry,filesize,*sectors;
    int isdir,isinfo;
    unsigned char *s;
-   r = mydos_path(path,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
+   r = mydos_path(atrfs,path,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
    if ( isdir ) return -EISDIR;
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
@@ -1282,11 +1283,11 @@ int mydos_read(const char *path, char *buf, size_t size, off_t offset)
    if ( isinfo && dirent && (dirent->flags & FLAGS_DIR) )
    {
       sectors = NULL;
-      filesize = 8 * atrfs.sectorsize;
+      filesize = 8 * atrfs->sectorsize;
    }
    else if ( !isinfo || dirent )
    {
-      r = mydos_trace_file(sector,fileno,(dirent->flags & FLAGS_DOS2) == 0,&filesize,&sectors);
+      r = mydos_trace_file(atrfs,sector,fileno,(dirent->flags & FLAGS_DOS2) == 0,&filesize,&sectors);
 
       if ( r<0 ) return r;
       int bad=0;
@@ -1300,9 +1301,9 @@ int mydos_read(const char *path, char *buf, size_t size, off_t offset)
       if ( !dirent || dirent->flags & FLAGS_DIR )
       {
          sectors = NULL;
-         filesize = 8 * atrfs.sectorsize;
+         filesize = 8 * atrfs->sectorsize;
       }
-      char *info = mydos_info(path,dirent,parent_dir_sector,entry,sector,sectors,filesize);
+      char *info = mydos_info(atrfs,path,dirent,parent_dir_sector,entry,sector,sectors,filesize);
       char *i = info;
       int bytes = strlen(info);
       if ( offset >= bytes )
@@ -1321,12 +1322,12 @@ int mydos_read(const char *path, char *buf, size_t size, off_t offset)
    for ( int i=0;size && sectors[i]; ++i )
    {
       s=SECTOR(sectors[i]);
-      int bytes_this_sector = s[atrfs.sectorsize-1];
+      int bytes_this_sector = s[atrfs->sectorsize-1];
       // If it's DOS 1, the last byte is the sector sequence of the file starting with zero except for the last sector
       if ( (dirent->flags & FLAGS_DOS2) == 0 )
       {
          if ( sectors[i+1] ) bytes_this_sector = 125;
-         else bytes_this_sector = s[atrfs.sectorsize-1] & 0x7f;
+         else bytes_this_sector = s[atrfs->sectorsize-1] & 0x7f;
       }
       if ( offset >= bytes_this_sector )
       {
@@ -1348,12 +1349,12 @@ int mydos_read(const char *path, char *buf, size_t size, off_t offset)
    return r;
 }
 
-int mydos_write(const char *path, const char *buf, size_t size, off_t offset)
+int mydos_write(struct atrfs *atrfs,const char *path, const char *buf, size_t size, off_t offset)
 {
    int r,sector=0,parent_dir_sector,count,locked,fileno,entry,filesize,*sectors;
    int isdir,isinfo;
    unsigned char *s = NULL;
-   r = mydos_path(path,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
+   r = mydos_path(atrfs,path,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
    if ( isdir ) return -EISDIR;
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
@@ -1363,7 +1364,7 @@ int mydos_write(const char *path, const char *buf, size_t size, off_t offset)
    dirent = SECTOR(parent_dir_sector);
    dirent += DIRENT_ENTRY(entry);
 
-   r = mydos_trace_file(sector,fileno,(dirent->flags & FLAGS_DOS2) == 0,&filesize,&sectors);
+   r = mydos_trace_file(atrfs,sector,fileno,(dirent->flags & FLAGS_DOS2) == 0,&filesize,&sectors);
 
    if ( r<0 ) return r;
    int bad=0;
@@ -1387,7 +1388,7 @@ int mydos_write(const char *path, const char *buf, size_t size, off_t offset)
          case 0xaa:
             dostype = ATR_DOS2;
             // DOS.SYS for 2.0d is the same until byte 1408
-            if ( atrfs.sectorsize == 256 ) dostype = ATR_DOS20D;
+            if ( atrfs->sectorsize == 256 ) dostype = ATR_DOS20D;
             break;
          case 0x64:
             dostype = ATR_DOS25;
@@ -1404,7 +1405,7 @@ int mydos_write(const char *path, const char *buf, size_t size, off_t offset)
          // nothing to do; the code doesn't recognize this DOS.SYS; hope it works!
          if ( options.debug ) fprintf(stderr,"DEBUG: %s Writing unrecognized DOS.SYS file; hope it boots!\n",__FUNCTION__);
       }
-      else if ( dostype == ATR_DOS1 && atrfs.fstype == ATR_DOS1 )
+      else if ( dostype == ATR_DOS1 && atrfs->fstype == ATR_DOS1 )
       {
          if ( options.debug ) fprintf(stderr,"DEBUG: %s Writing DOS 1 DOS.SYS; should boot correctly\n",__FUNCTION__);
       }
@@ -1412,7 +1413,7 @@ int mydos_write(const char *path, const char *buf, size_t size, off_t offset)
       {
          if ( options.debug ) fprintf(stderr,"DEBUG: %s Writing DOS 1 DOS.SYS to non-DOS 1 image; not likely to boot\n",__FUNCTION__);
       }
-      if ( atrfs.fstype == ATR_DOS1 )
+      if ( atrfs->fstype == ATR_DOS1 )
       {
          if ( options.debug ) fprintf(stderr,"DEBUG: %s Writing newer DOS.SYS to DOS 1 image; not likely to boot\n",__FUNCTION__);
       }
@@ -1422,10 +1423,10 @@ int mydos_write(const char *path, const char *buf, size_t size, off_t offset)
          for (int i=1; i<=3; ++i)
          {
             unsigned char *s = SECTOR(i);
-            memcpy(s,bootsectors[atrfs.fstype]+128*(i-1),128);
+            memcpy(s,bootsectors[atrfs->fstype]+128*(i-1),128);
          }
          struct sector1 *sec1 = SECTOR(1);
-         sec1->dos_flag = (atrfs.sectorsize == 128) ? 1 : 2;
+         sec1->dos_flag = (atrfs->sectorsize == 128) ? 1 : 2;
          sec1->dos_sector[0] = sector & 0xff;
          sec1->dos_sector[1] = sector >> 8;
       }
@@ -1438,11 +1439,11 @@ int mydos_write(const char *path, const char *buf, size_t size, off_t offset)
    {
       s=SECTOR(sectors[i]);
       // If it's DOS 1, the last byte is the sector sequence of the file starting with zero except for the last sector
-      int bytes_this_sector = s[atrfs.sectorsize-1];
+      int bytes_this_sector = s[atrfs->sectorsize-1];
       if ( (dirent->flags & FLAGS_DOS2) == 0 )
       {
          if ( sectors[i+1] ) bytes_this_sector = 125;
-         else bytes_this_sector = s[atrfs.sectorsize-1] & 0x7f;
+         else bytes_this_sector = s[atrfs->sectorsize-1] & 0x7f;
       }
       if ( offset >= bytes_this_sector )
       {
@@ -1464,14 +1465,14 @@ int mydos_write(const char *path, const char *buf, size_t size, off_t offset)
    // Handle writing at end of file
    // 'offset' is offset from end of file (from above)
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s Remove file numbers from file for extension\n",__FUNCTION__,path);
-   mydos_remove_fileno(dirent,fileno);
+   mydos_remove_fileno(atrfs,dirent,fileno);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s extend file %lu bytes\n",__FUNCTION__,path,size+offset);
    while ( size+offset )
    {
       // Fill last sector
-      int bytes_this_sector = s[atrfs.sectorsize-1];
+      int bytes_this_sector = s[atrfs->sectorsize-1];
       if ( (dirent->flags & FLAGS_DOS2) == 0 ) bytes_this_sector &= 0x7f; // last sector; strip EOF bit
-      bytes = atrfs.sectorsize-3 - bytes_this_sector;
+      bytes = atrfs->sectorsize-3 - bytes_this_sector;
       if ( (size_t)bytes > size+offset ) bytes = size+offset;
       if ( bytes )
       {
@@ -1481,14 +1482,14 @@ int mydos_write(const char *path, const char *buf, size_t size, off_t offset)
             if ( bytes > offset ) // write 'offset' zeros
             {
                bytes -= offset;
-               s[atrfs.sectorsize-1] += offset;
+               s[atrfs->sectorsize-1] += offset;
                bytes_this_sector += offset;
                offset = 0;
             }
             else // fill remaining bytes in sector with zeros
             {
                offset -= bytes;
-               s[atrfs.sectorsize-1] += bytes;
+               s[atrfs->sectorsize-1] += bytes;
                bytes_this_sector += bytes;
                bytes = 0;
             }
@@ -1497,58 +1498,58 @@ int mydos_write(const char *path, const char *buf, size_t size, off_t offset)
          {
             memcpy(s+bytes_this_sector,buf,bytes);
             buf += bytes;
-            s[atrfs.sectorsize-1] += bytes;
+            s[atrfs->sectorsize-1] += bytes;
             size -= bytes;
             r += bytes;
          }
       }
-      if ( size || ((dirent->flags & FLAGS_DOS2) && s[atrfs.sectorsize-1] == atrfs.sectorsize-3) )
+      if ( size || ((dirent->flags & FLAGS_DOS2) && s[atrfs->sectorsize-1] == atrfs->sectorsize-3) )
       {
          // Allocate a new sector and set it to zero bytes
-         sector = mydos_alloc_any_sector();
+         sector = mydos_alloc_any_sector(atrfs);
          if ( sector < 0 )
          {
-            s[atrfs.sectorsize-2]=0; // next sector should already be zero
-            s[atrfs.sectorsize-3]=0;
+            s[atrfs->sectorsize-2]=0; // next sector should already be zero
+            s[atrfs->sectorsize-3]=0;
             if (dirent->flags & FLAGS_DOS2)
             {
-               --s[atrfs.sectorsize-1]; // Can't leave the last sector full
+               --s[atrfs->sectorsize-1]; // Can't leave the last sector full
                if ( r>0 ) --r; // Undid one last byte
             }
             else
             {
-               s[atrfs.sectorsize-1] |= 0x80; // Flag EOF
+               s[atrfs->sectorsize-1] |= 0x80; // Flag EOF
             }
-            mydos_add_fileno(dirent,entry);
+            mydos_add_fileno(atrfs,dirent,entry);
             if ( r>0 ) return r; // Wrote some
             return -ENOSPC;
          }
          if ( options.debug ) fprintf(stderr,"DEBUG: %s %s add sector to file: %d\n",__FUNCTION__,path,sector);
-         s[atrfs.sectorsize-2]=sector&0xff;
-         s[atrfs.sectorsize-3]=sector>>8;
+         s[atrfs->sectorsize-2]=sector&0xff;
+         s[atrfs->sectorsize-3]=sector>>8;
          int len = BYTES2(dirent->sectors);
          if ( !(dirent->flags & FLAGS_DOS2) )
          {
-            s[atrfs.sectorsize-1]=(BYTES2(dirent->sectors)-1)&0x7f; // DOS 1; byte holds sector sequence number in low 7 bits
+            s[atrfs->sectorsize-1]=(BYTES2(dirent->sectors)-1)&0x7f; // DOS 1; byte holds sector sequence number in low 7 bits
          }
          // Will fix up sector chain later
          s=SECTOR(sector);
-         memset(s,0,atrfs.sectorsize); // No garbage, unlike real DOS
+         memset(s,0,atrfs->sectorsize); // No garbage, unlike real DOS
          ++len;
          dirent->sectors[0]=len&0xff;
          dirent->sectors[1]=len>>8;
          if ( !(dirent->flags & FLAGS_DOS2) )
          {
-            s[atrfs.sectorsize-1]=0x80; // DOS 1: Flag EOF
+            s[atrfs->sectorsize-1]=0x80; // DOS 1: Flag EOF
          }
       }
    }
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s Restore file numbers from file after extension\n",__FUNCTION__,path);
-   mydos_add_fileno(dirent,entry);
+   mydos_add_fileno(atrfs,dirent,entry);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s success: %d\n",__FUNCTION__,path,r);
    return r;
 }
-int mydos_mkdir(const char *path,mode_t mode)
+int mydos_mkdir(struct atrfs *atrfs,const char *path,mode_t mode)
 {
    (void)mode; // Always create read-write, but allow chmod to lock
    // Find a place to create the file:
@@ -1556,7 +1557,7 @@ int mydos_mkdir(const char *path,mode_t mode)
    int sector=0,parent_dir_sector,count,locked,fileno,entry,isdir,isinfo;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s.%d\n",__FUNCTION__,__LINE__);
-   r = mydos_path(path,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
+   r = mydos_path(atrfs,path,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
    if ( r < 0 ) return r;
    if ( r == 0 ) return -EEXIST;
    if ( entry < 0 ) return -ENOSPC; // Directory is full
@@ -1570,22 +1571,22 @@ int mydos_mkdir(const char *path,mode_t mode)
    // Question: Does MyDOS just look for a FF byte, forcing directory alignment?
    // Answer: Tests show no, it doesn't
    int alloc;
-   for ( alloc=1; alloc < atrfs.sectors-7; ++alloc)
+   for ( alloc=1; alloc < atrfs->sectors-7; ++alloc)
    {
       int range=0;
-      if ( mydos_bitmap_status(alloc) != 0 )
+      if ( mydos_bitmap_status(atrfs,alloc) != 0 )
       {
          for ( int i=1;i<8;++i )
          {
-            if ( mydos_bitmap_status(alloc+i) == 0 ) break;
+            if ( mydos_bitmap_status(atrfs,alloc+i) == 0 ) break;
             ++range;
          }
       }
       if ( range == 7 ) break;
    }
-   if ( alloc >= atrfs.sectors-7 ) return -ENOSPC; // No free block to store the directory
+   if ( alloc >= atrfs->sectors-7 ) return -ENOSPC; // No free block to store the directory
 
-   for (int i=0;i<8;++i ) mydos_bitmap(alloc+i,1);
+   for (int i=0;i<8;++i ) mydos_bitmap(atrfs,alloc+i,1);
 
    // Create directory entry:
    dirent->flags = FLAGS_DIR;
@@ -1618,16 +1619,16 @@ int mydos_mkdir(const char *path,mode_t mode)
 
    // Memset the directory to zeros
    void *dirmem = SECTOR(alloc);
-   memset(dirmem,0,atrfs.sectorsize * 8 );
+   memset(dirmem,0,atrfs->sectorsize * 8 );
    return 0;
 }
-int mydos_rmdir(const char *path)
+int mydos_rmdir(struct atrfs *atrfs,const char *path)
 {
    int r;
    int sector=0,parent_dir_sector,count,locked,fileno,entry,isdir,isinfo;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s.%d\n",__FUNCTION__,__LINE__);
-   r = mydos_path(path,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
+   r = mydos_path(atrfs,path,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
    if ( r < 0 ) return r;
    if ( r > 0 ) return -ENOENT;
    if ( !isdir ) return -ENOTDIR;
@@ -1640,7 +1641,7 @@ int mydos_rmdir(const char *path)
    dirent = SECTOR(sector);
    for (int i=0;i<64;++i)
    {
-      int e = i + ((atrfs.sectorsize == 256 ) ? entry/8 * 8 : 0 );
+      int e = i + ((atrfs->sectorsize == 256 ) ? entry/8 * 8 : 0 );
       if ( dirent[e].flags == 0 ) break;
       if ( dirent[e].flags & FLAGS_DELETED ) continue;
       return -ENOTEMPTY;
@@ -1657,7 +1658,7 @@ int mydos_rmdir(const char *path)
    s = sectors;
    while ( *s )
    {
-      r = mydos_free_sector(*s);
+      r = mydos_free_sector(atrfs,*s);
       if ( r )
       {
          fprintf(stderr,"Warning: Freeing free sector %d when deleting %s\n",*s,path);
@@ -1667,13 +1668,13 @@ int mydos_rmdir(const char *path)
    return 0;
 }
 
-int mydos_unlink(const char *path)
+int mydos_unlink(struct atrfs *atrfs,const char *path)
 {
    int r;
    int sector=0,parent_dir_sector,count,locked,fileno,entry,isdir,isinfo;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
-   r = mydos_path(path,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
+   r = mydos_path(atrfs,path,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s path %s %s at sector %d in dir %d\n",__FUNCTION__,path,r?"did not find":"found",sector,parent_dir_sector);
    if ( r < 0 ) return r;
    if ( r > 0 ) return -ENOENT;
@@ -1686,14 +1687,14 @@ int mydos_unlink(const char *path)
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: dir sector %d Dirent %02x %d %d %8.8s%3.3s\n",__FUNCTION__,parent_dir_sector,dirent->flags,BYTES2(dirent->sectors),BYTES2(dirent->start),dirent->name,dirent->ext);
 
    int size,*sectors,*s;
-   r = mydos_trace_file(sector,fileno,(dirent->flags & FLAGS_DOS2) == 0,&size,&sectors);
+   r = mydos_trace_file(atrfs,sector,fileno,(dirent->flags & FLAGS_DOS2) == 0,&size,&sectors);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s.%d r is %d\n",__FUNCTION__,__LINE__,r);
    if ( r < 0 ) return r;
    dirent->flags = FLAGS_DELETED;
    s = sectors;
    while ( *s )
    {
-      r = mydos_free_sector(*s);
+      r = mydos_free_sector(atrfs,*s);
       if ( r )
       {
          fprintf(stderr,"Warning: Freeing free sector %d when deleting %s\n",*s,path);
@@ -1705,7 +1706,7 @@ int mydos_unlink(const char *path)
    return 0;
 }
 
-int mydos_rename(const char *old, const char *new, unsigned int flags)
+int mydos_rename(struct atrfs *atrfs,const char *old, const char *new, unsigned int flags)
 {
    /*
     * flags:
@@ -1725,16 +1726,16 @@ int mydos_rename(const char *old, const char *new, unsigned int flags)
    struct dos2_dirent *dirent1, *dirent2 = NULL;
    
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s %s\n",__FUNCTION__,old,new);
-   r = mydos_path(old,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
+   r = mydos_path(atrfs,old,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
    if ( isinfo ) return -ENOENT;
    if ( isdir ) if ( atrfs_strncmp(old,new,strlen(old)) == 0 ) return -EINVAL; // attempt to make a directory a subdirectory of itself
 
    dirent1 = SECTOR(parent_dir_sector);
-   dirent1 += entry + ((atrfs.sectorsize == 256 ) ? entry/8 * 8 : 0 ); // Point to this directory entry
+   dirent1 += entry + ((atrfs->sectorsize == 256 ) ? entry/8 * 8 : 0 ); // Point to this directory entry
 
-   r = mydos_path(new,&sector2,&parent_dir_sector2,&count,&locked,&fileno2,&entry2,&isdir2,&isinfo);
+   r = mydos_path(atrfs,new,&sector2,&parent_dir_sector2,&count,&locked,&fileno2,&entry2,&isdir2,&isinfo);
    if ( r<0 ) return r;
    if ( isinfo ) return -ENAMETOOLONG;
    if ( r==0 && (flags & RENAME_NOREPLACE) ) return -EEXIST;
@@ -1747,7 +1748,7 @@ int mydos_rename(const char *old, const char *new, unsigned int flags)
    if ( r == 0 )
    {
       dirent2 = SECTOR(parent_dir_sector);
-      dirent2 += entry + ((atrfs.sectorsize == 256 ) ? entry/8 * 8 : 0 ); // Point to this directory entry
+      dirent2 += entry + ((atrfs->sectorsize == 256 ) ? entry/8 * 8 : 0 ); // Point to this directory entry
    }
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s Lookup results: %s %d/%d %s %d/%d\n",__FUNCTION__,old,parent_dir_sector,sector,new,parent_dir_sector2,sector2);
@@ -1760,13 +1761,13 @@ int mydos_rename(const char *old, const char *new, unsigned int flags)
       if ( options.debug ) fprintf(stderr,"DEBUG: %s Exchange %s and %s\n",__FUNCTION__,new,old);
       // Names stay the same, but everything else swaps
       // If they have file numbers, we need to update the sector ends
-      mydos_remove_fileno(dirent1,entry);
-      mydos_remove_fileno(dirent2,entry2);
+      mydos_remove_fileno(atrfs,dirent1,entry);
+      mydos_remove_fileno(atrfs,dirent2,entry2);
       memcpy(copy,dirent1,5);
       memcpy(dirent1,dirent2,5);
       memcpy(dirent2,copy,5);
-      mydos_add_fileno(dirent1,entry);
-      mydos_add_fileno(dirent2,entry2);
+      mydos_add_fileno(atrfs,dirent1,entry);
+      mydos_add_fileno(atrfs,dirent2,entry2);
       return 0;
    }
 
@@ -1777,14 +1778,14 @@ int mydos_rename(const char *old, const char *new, unsigned int flags)
       char copy[5];
 
       if ( options.debug ) fprintf(stderr,"DEBUG: %s replace %s with %s\n",__FUNCTION__,old,new);
-      mydos_remove_fileno(dirent1,entry);
-      mydos_remove_fileno(dirent2,entry2);
+      mydos_remove_fileno(atrfs,dirent1,entry);
+      mydos_remove_fileno(atrfs,dirent2,entry2);
       memcpy(&copy,dirent1,5);
       memcpy(dirent1,dirent2,5);
       memcpy(dirent2,&copy,5);
-      mydos_add_fileno(dirent1,entry);
-      mydos_add_fileno(dirent2,entry2);
-      r = mydos_unlink(old);
+      mydos_add_fileno(atrfs,dirent1,entry);
+      mydos_add_fileno(atrfs,dirent2,entry2);
+      r = mydos_unlink(atrfs,old);
       if ( options.debug ) fprintf(stderr,"DEBUG: %s unlink removed file returned %d\n",__FUNCTION__,r);
       return r;
    }
@@ -1828,7 +1829,7 @@ int mydos_rename(const char *old, const char *new, unsigned int flags)
       const char *n = strrchr(old,'/');
       if ( !n ) return -EIO; // impossible
       ++n; // 'n' is now the name of the source file; what we're trying to put in the new directory.
-      mydos_remove_fileno(dirent1,entry);
+      mydos_remove_fileno(atrfs,dirent1,entry);
 
       // Find available entry in dir2
       struct dos2_dirent *dirent = SECTOR(parent_dir_sector2);
@@ -1844,7 +1845,7 @@ int mydos_rename(const char *old, const char *new, unsigned int flags)
       struct dos2_dirent *old_dirent = SECTOR(parent_dir_sector);
       old_dirent += DIRENT_ENTRY(entry);
       *dirent = *old_dirent;
-      mydos_add_fileno(dirent,i);
+      mydos_add_fileno(atrfs,dirent,i);
 
       // Flag old entry as deleted
       old_dirent->flags = FLAGS_DELETED;
@@ -1854,13 +1855,13 @@ int mydos_rename(const char *old, const char *new, unsigned int flags)
    // Should have covered all cases by this point
    return -EIO;
 }
-int mydos_chmod(const char *path, mode_t mode)
+int mydos_chmod(struct atrfs *atrfs,const char *path, mode_t mode)
 {
    int r;
    int sector=0,parent_dir_sector,count,locked,fileno,entry,isdir,isinfo;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s.%d\n",__FUNCTION__,__LINE__);
-   r = mydos_path(path,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
+   r = mydos_path(atrfs,path,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
    if ( r < 0 ) return r;
    if ( r > 0 ) return -ENOENT;
    if ( isinfo ) return -EACCES;
@@ -1880,7 +1881,7 @@ int mydos_chmod(const char *path, mode_t mode)
    }
    return 0;
 }
-int mydos_create(const char *path, mode_t mode)
+int mydos_create(struct atrfs *atrfs,const char *path, mode_t mode)
 {
    (void)mode; // Always create read-write, but allow chmod to lock it
    // Create a file
@@ -1918,7 +1919,7 @@ int mydos_create(const char *path, mode_t mode)
    int r;
    int sector=0,parent_dir_sector,count,locked,fileno,entry,isdir,isinfo;
 
-   r = mydos_path(path,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
+   r = mydos_path(atrfs,path,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
    if ( r<0 ) return r;
    if ( r==0 ) return -EEXIST;
    if ( entry<0 ) return -ENOSPC; // directory is full
@@ -1929,23 +1930,23 @@ int mydos_create(const char *path, mode_t mode)
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s entry %d in dir at %d\n",__FUNCTION__,path,entry,parent_dir_sector);
    memcpy(dirent->name,name,11);
    STOREBYTES2(dirent->sectors,1);
-   int start = mydos_alloc_any_sector();
+   int start = mydos_alloc_any_sector(atrfs);
    if ( start < 0 ) return -ENOSPC;
    STOREBYTES2(dirent->start,start);
    if ( start < 720 )
    {
       dirent->flags = FLAGS_INUSE|FLAGS_DOS2; // In-use, made by DOS 2
-      if ( atrfs.fstype == ATR_DOS1 ) dirent->flags = FLAGS_INUSE;
+      if ( atrfs->fstype == ATR_DOS1 ) dirent->flags = FLAGS_INUSE;
    }
-   else if ( atrfs.fstype == ATR_DOS25 )
+   else if ( atrfs->fstype == ATR_DOS25 )
       dirent->flags = FLAGS_DOS25_regular; // Uses high sectors
    else
       dirent->flags = FLAGS_MYDOS_REGULAR; // Regular file without file numbers
    char *buf = SECTOR(start);
-   memset(buf,0,atrfs.sectorsize);
-   if ( start < 720 || atrfs.fstype == ATR_DOS25 )
+   memset(buf,0,atrfs->sectorsize);
+   if ( start < 720 || atrfs->fstype == ATR_DOS25 )
    {
-      buf[atrfs.sectorsize-3] = entry << 2;
+      buf[atrfs->sectorsize-3] = entry << 2;
    }
    if ( atrfs_strcmp(path,"/DOS.SYS")==0 )
    {
@@ -1968,9 +1969,9 @@ int mydos_create(const char *path, mode_t mode)
        * sectors to match the DOS type.
        */
       struct sector1 *sec1 = SECTOR(1);
-      if ( atrfs.fstype != ATR_DOS1 )
+      if ( atrfs->fstype != ATR_DOS1 )
       {
-         sec1->dos_flag = (atrfs.sectorsize == 128) ? 1 : 2;
+         sec1->dos_flag = (atrfs->sectorsize == 128) ? 1 : 2;
          sec1->dos_sector[0] = start & 0xff;
          sec1->dos_sector[1] = start >> 8;
       }
@@ -1985,12 +1986,12 @@ int mydos_create(const char *path, mode_t mode)
    return 0;
 }
 
-int mydos_truncate(const char *path, off_t size)
+int mydos_truncate(struct atrfs *atrfs,const char *path, off_t size)
 {
    int r,sector=0,parent_dir_sector,count,locked,fileno,entry,filesize,*sectors;
    int isdir,isinfo;
    unsigned char *s;
-   r = mydos_path(path,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
+   r = mydos_path(atrfs,path,&sector,&parent_dir_sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
    if ( isdir ) return -EISDIR;
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
@@ -1999,7 +2000,7 @@ int mydos_truncate(const char *path, off_t size)
    dirent = SECTOR(parent_dir_sector);
    dirent += DIRENT_ENTRY(entry);
 
-   r = mydos_trace_file(sector,fileno,(dirent->flags & FLAGS_DOS2) == 0,&filesize,&sectors);
+   r = mydos_trace_file(atrfs,sector,fileno,(dirent->flags & FLAGS_DOS2) == 0,&filesize,&sectors);
 
    if ( r<0 ) return r;
    int bad=0;
@@ -2024,7 +2025,7 @@ int mydos_truncate(const char *path, off_t size)
       char *buf = malloc ( size - filesize );
       if ( !buf ) return -ENOMEM;
       memset(buf,0,size-filesize);
-      r = mydos_write(path,buf,size-filesize,filesize);
+      r = mydos_write(atrfs,path,buf,size-filesize,filesize);
       free(buf);
       free(sectors);
       if ( r == size-filesize ) return 0;
@@ -2038,7 +2039,7 @@ int mydos_truncate(const char *path, off_t size)
    {
       if ( shrink )
       {
-         mydos_free_sector(sectors[i]);
+         mydos_free_sector(atrfs,sectors[i]);
          int count = BYTES2(dirent->sectors) - 1;
          dirent->sectors[0] = count & 0xff;
          dirent->sectors[1] = count >> 8;
@@ -2047,29 +2048,29 @@ int mydos_truncate(const char *path, off_t size)
       s=SECTOR(sectors[i]);
 
       // If it's DOS 1, the last byte is the sector sequence of the file starting with zero except for the last sector
-      int bytes_this_sector = s[atrfs.sectorsize-1];
+      int bytes_this_sector = s[atrfs->sectorsize-1];
       if ( (dirent->flags & FLAGS_DOS2) == 0 )
       {
          if ( sectors[i+1] ) bytes_this_sector = 125;
-         else bytes_this_sector = s[atrfs.sectorsize-1] & 0x7f;
+         else bytes_this_sector = s[atrfs->sectorsize-1] & 0x7f;
       }
       if ( size > bytes_this_sector  )
       {
          size -= bytes_this_sector;
          continue;
       }
-      s[atrfs.sectorsize-1] = size;
-      s[atrfs.sectorsize-2] = 0;
+      s[atrfs->sectorsize-1] = size;
+      s[atrfs->sectorsize-2] = 0;
       if ( (dirent->flags & FLAGS_NOFILENO) == 0 )
       {
-         s[atrfs.sectorsize-3] &= ~0x03; // Leave file number
+         s[atrfs->sectorsize-3] &= ~0x03; // Leave file number
       }
       if ( (dirent->flags & FLAGS_DOS2) == 0 )
       {
-         s[atrfs.sectorsize-1] |= 0x80; // Flag EOF
+         s[atrfs->sectorsize-1] |= 0x80; // Flag EOF
       }
       size = 0;
-      if ( s[atrfs.sectorsize-1] < atrfs.sectorsize - 3 )
+      if ( s[atrfs->sectorsize-1] < atrfs->sectorsize - 3 )
       {
          shrink = 1;
       }
@@ -2078,15 +2079,15 @@ int mydos_truncate(const char *path, off_t size)
    return 0;
 }
 
-int mydos_statfs(const char *path, struct statvfs *stfsbuf)
+int mydos_statfs(struct atrfs *atrfs,const char *path, struct statvfs *stfsbuf)
 {
    (void)path; // meaningless
-   stfsbuf->f_bsize = atrfs.sectorsize;
-   stfsbuf->f_frsize = atrfs.sectorsize;
-   stfsbuf->f_blocks = atrfs.sectors;
+   stfsbuf->f_bsize = atrfs->sectorsize;
+   stfsbuf->f_frsize = atrfs->sectorsize;
+   stfsbuf->f_blocks = atrfs->sectors;
    unsigned char *s = SECTOR(360);
    stfsbuf->f_bfree = BYTES2((s+3));
-   if ( atrfs.fstype == ATR_DOS25 )
+   if ( atrfs->fstype == ATR_DOS25 )
    {
       s = SECTOR(1024);
       stfsbuf->f_bfree += BYTES2((s+122));
@@ -2094,7 +2095,7 @@ int mydos_statfs(const char *path, struct statvfs *stfsbuf)
    stfsbuf->f_bavail = stfsbuf->f_bfree;
    stfsbuf->f_files = 0; // Meaningless for MyDOS
    stfsbuf->f_ffree = 0;
-   if ( atrfs.fstype != ATR_MYDOS )
+   if ( atrfs->fstype != ATR_MYDOS )
    {
       stfsbuf->f_files = 64;
       struct dos2_dirent *dirent = SECTOR(361);
@@ -2111,29 +2112,29 @@ int mydos_statfs(const char *path, struct statvfs *stfsbuf)
    return 0;
 }
 
-int mydos_newfs(void)
+int mydos_newfs(struct atrfs *atrfs)
 {
    // Boot sectors: from table
-   for (int i=1; i<=((atrfs.fstype == ATR_DOS1 ) ? 1 : 3); ++i)
+   for (int i=1; i<=((atrfs->fstype == ATR_DOS1 ) ? 1 : 3); ++i)
    {
       unsigned char *s = SECTOR(i);
-      memcpy(s,bootsectors[atrfs.fstype]+128*(i-1),128);
+      memcpy(s,bootsectors[atrfs->fstype]+128*(i-1),128);
    }
 
    // Sector 1
    struct sector1 *sec1 = SECTOR(1);
 #if 0 // Old code to use if we don't have the real boot sectors   
-   sec1->boot_sectors = (atrfs.fstype == ATR_DOS1 ) ? 1 : 3;
+   sec1->boot_sectors = (atrfs->fstype == ATR_DOS1 ) ? 1 : 3;
    sec1->boot_addr[1] = 7; // $700
    sec1->jmp = 0x4C; // JMP instruction
    sec1->max_open_files = 3;
-   sec1->drive_bits = (atrfs.fstype == ATR_DOS1 ) ? 0x0f : (atrfs.fstype == ATR_MYDOS ) ? 0xff : 0x03;
+   sec1->drive_bits = (atrfs->fstype == ATR_DOS1 ) ? 0x0f : (atrfs->fstype == ATR_MYDOS ) ? 0xff : 0x03;
 #endif
 
    // Set VTOC sector count or DOS flag
    struct mydos_vtoc *vtoc = SECTOR(360);
    int first_vtoc = 360;
-   switch (atrfs.fstype)
+   switch (atrfs->fstype)
    {
       case ATR_DOS1:
          vtoc->vtoc_sectors = 1; // Flag DOS 1
@@ -2143,15 +2144,15 @@ int mydos_newfs(void)
          break;
       case ATR_MYDOS: // indicates number of VTOC sectors
          vtoc->vtoc_sectors = 2; // 1 VTOC sector for smaller images
-         if ( atrfs.sectors > 943 )
+         if ( atrfs->sectors > 943 )
          {
             int vtoc_count;
-            int sectors_left = atrfs.sectors - 943;
+            int sectors_left = atrfs->sectors - 943;
             // Always allocated as if double-density
             // SD allocated in pairs after the first
             vtoc_count = 1 + (sectors_left / 8 + 255) / 256;
             vtoc->vtoc_sectors = vtoc_count + 1;
-            if ( atrfs.sectorsize == 128 )
+            if ( atrfs->sectorsize == 128 )
             {
                // number of vtoc sectors is (code * 2)-3 (always odd)
                // VTOC Sectors  Code
@@ -2172,14 +2173,14 @@ int mydos_newfs(void)
    if ( options.debug ) fprintf(stderr,"%s: Free sectors %d--%d\n",__FUNCTION__,sec1->boot_sectors+1,first_vtoc-1);
    for ( int i=sec1->boot_sectors+1; i<first_vtoc; ++i )
    {
-      mydos_free_sector(i);
+      mydos_free_sector(atrfs,i);
       ++f1;
    }
-   for ( int i=369; i<=atrfs.sectors; ++i )
+   for ( int i=369; i<=atrfs->sectors; ++i )
    {
       if ( i == 720 ) continue;
-      if ( i == 1024 && atrfs.fstype == ATR_DOS25 ) break;
-      mydos_free_sector(i);
+      if ( i == 1024 && atrfs->fstype == ATR_DOS25 ) break;
+      mydos_free_sector(atrfs,i);
       ++f2;
    }
    if ( options.debug ) fprintf(stderr,"%s: Free sectors below+above VTOC: %d+%d=%d; recorded %d\n",__FUNCTION__,f1,f2,f1+f2,BYTES2(vtoc->free_sectors));
@@ -2190,14 +2191,14 @@ int mydos_newfs(void)
    return -EIO;
 }
 
-char *mydos_fsinfo(void)
+char *mydos_fsinfo(struct atrfs *atrfs)
 {
    char *buf=malloc(16*1024);
    if ( !buf ) return NULL;
    char *b = buf;
    unsigned char *vtoc = SECTOR(360);
    unsigned char *vtoc2 = SECTOR(1024);
-   switch ( atrfs.fstype )
+   switch ( atrfs->fstype )
    {
       case ATR_DOS1:
       case ATR_DOS2:

@@ -19,7 +19,8 @@
 #define BYTES3(n)	((n)[0]+256*(n)[1]+256*256*(n)[2])
 #define STOREBYTES2(n,v) ((n)[0]=(v)&0xff,(n)[1]=(v)>>8)
 // SECTOR(n): return a pointer to sector 'n' or NULL if out of range
-#define SECTOR(n)       ((void *)(((n)>0 && (n)<=atrfs.sectors)?( ( ((n)<4)&&atrfs.shortsectors ) ? atrfs.mem+((n)-1)*128: atrfs.mem + ((n)-1)*atrfs.sectorsize-atrfs.ssbytes ):NULL))
+#define SECTOR(n)       ((void *)(((n)>0 && (n)<=atrfs->sectors)?( ( ((n)<4)&&atrfs->shortsectors ) ? atrfs->mem+((n)-1)*128: atrfs->mem + ((n)-1)*atrfs->sectorsize-atrfs->ssbytes ):NULL))
+#define MSECTOR(n)       ((void *)(((n)>0 && (n)<=master_atrfs.sectors)?( ( ((n)<4)&&master_atrfs.shortsectors ) ? master_atrfs.mem+((n)-1)*128: master_atrfs.mem + ((n)-1)*master_atrfs.sectorsize-master_atrfs.ssbytes ):NULL))
 // Adjust mode to match needs
 #define MODE_DIR(m)     (((m)&0777) | S_IFDIR | 0111) // Add dir bits to mode
 #define MODE_FILE(m)    (((m) & ~S_IFDIR & ~0111) | S_IFREG) // Regular file, not dir
@@ -117,27 +118,27 @@ struct sector1 {
 struct fs_ops {
    const char *name;
    const char *fstype; // For command-line create image option
-   int (*fs_sanity)(void);
-   int (*fs_getattr)(const char *,struct stat *);
-   int (*fs_readdir)(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
-   int (*fs_read)(const char *,char *,size_t,off_t);
-   int (*fs_write)(const char *,const char *,size_t,off_t);
-   int (*fs_mkdir)(const char *, mode_t);
-   int (*fs_rmdir)(const char *);
-   int (*fs_unlink)(const char *);
-   int (*fs_rename)(const char *, const char *, unsigned int);
-   int (*fs_chmod)(const char *, mode_t);
-   int (*fs_readlink)(const char *, char *,size_t);
-   int (*fs_create )(const char *, mode_t);
-   int (*fs_statfs)(const char *, struct statvfs *);
-   int (*fs_truncate) (const char *, off_t);
+   int (*fs_sanity)(struct atrfs *atrfs);
+   int (*fs_getattr)(struct atrfs *atrfs,const char *,struct stat *);
+   int (*fs_readdir)(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
+   int (*fs_read)(struct atrfs *atrfs,const char *,char *,size_t,off_t);
+   int (*fs_write)(struct atrfs *atrfs,const char *,const char *,size_t,off_t);
+   int (*fs_mkdir)(struct atrfs *atrfs,const char *, mode_t);
+   int (*fs_rmdir)(struct atrfs *atrfs,const char *);
+   int (*fs_unlink)(struct atrfs *atrfs,const char *);
+   int (*fs_rename)(struct atrfs *atrfs,const char *, const char *, unsigned int);
+   int (*fs_chmod)(struct atrfs *atrfs,const char *, mode_t);
+   int (*fs_readlink)(struct atrfs *atrfs,const char *, char *,size_t);
+   int (*fs_create )(struct atrfs *atrfs,const char *, mode_t);
+   int (*fs_statfs)(struct atrfs *atrfs,const char *, struct statvfs *);
+   int (*fs_truncate) (struct atrfs *atrfs,const char *, off_t);
 #if (FUSE_USE_VERSION >= 30)
-   int (*fs_utimens)(const char *, const struct timespec tv[2]);
+   int (*fs_utimens)(struct atrfs *atrfs,const char *, const struct timespec tv[2]);
 #else
-   int (*fs_utime)(const char *, struct utimbuf *utimbuf);
+   int (*fs_utime)(struct atrfs *atrfs,const char *, struct utimbuf *utimbuf);
 #endif
-   int (*fs_newfs)(void); // Used from command-line optoin
-   char *(*fs_fsinfo)(void); // Added text for .fsinfo file
+   int (*fs_newfs)(struct atrfs *atrfs); // Used from command-line optoin
+   char *(*fs_fsinfo)(struct atrfs *atrfs); // Added text for .fsinfo file
 };
 
 /*
@@ -147,7 +148,7 @@ struct fs_ops {
 int atr_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 char *atr_info(const char *path,int filesize);
 // special.c functions
-char *fsinfo_textdata(void);
+char *fsinfo_textdata(struct atrfs *atrfs);
 // common.c functions
 int string_to_sector(const char *path);
 int atrfs_strncmp(const char *s1, const char *s2, size_t n);
@@ -161,7 +162,7 @@ char *strcpy_case(char *dst,const char *src);
  * Global variables
  */
 
-extern struct atrfs atrfs;
+extern struct atrfs master_atrfs;
 extern struct options options;
 extern const struct fs_ops *fs_ops[ATR_MAXFSTYPE];
 extern const struct fs_ops special_ops;

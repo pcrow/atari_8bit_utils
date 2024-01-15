@@ -97,38 +97,38 @@
 // FIXME: Hopefully this can be found in the boot sectors instead
 #define CLUSTER_SIZE                            \
    /* Always 6 for SD/ED */                     \
-   (atrfs.sectorsize==128?6:                    \
+   (atrfs->sectorsize==128?6:                    \
     /* 3 for DD unless it's a big disk */       \
-    (atrfs.sectors <= 720 ? 3 :                 \
+    (atrfs->sectors <= 720 ? 3 :                 \
      /* 6 for DS/DD or other large disks */     \
      6 ))
-#define CLUSTER_BYTES (CLUSTER_SIZE * atrfs.sectorsize)
+#define CLUSTER_BYTES (CLUSTER_SIZE * atrfs->sectorsize)
 #define CLUSTER_TO_SEC(n) (((n)-8)*CLUSTER_SIZE + 1 - ((n)>128?CLUSTER_SIZE:0)) // Starts at 8, not zero, but skip checksum at 0x80
 #define CLUSTER(n) SECTOR(CLUSTER_TO_SEC(n))
 #define VTOC_CLUSTER                                    \
    /* SS/SD: 66 */                                      \
-   (atrfs.sectorsize==128 && atrfs.sectors<=720 ? 66 :  \
+   (atrfs->sectorsize==128 && atrfs->sectors<=720 ? 66 :  \
     /* SS/ED: 92 */                                     \
-    (atrfs.sectorsize==128 ? 92 :                       \
+    (atrfs->sectorsize==128 ? 92 :                       \
      /* SS/DD: 126 */                                   \
-     (atrfs.sectors <= 720 ? 126 :                      \
+     (atrfs->sectors <= 720 ? 126 :                      \
       /* DS/DD: 66 */                                   \
       66 )))
 #define VTOC_SECTOR_COUNT                               \
    /* SS/SD: 1 */                                       \
-   (atrfs.sectorsize==128 && atrfs.sectors<=720 ? 1 :   \
+   (atrfs->sectorsize==128 && atrfs->sectors<=720 ? 1 :   \
     /* SS/ED: 2 */                                      \
-    (atrfs.sectorsize==128 ? 2 :                        \
+    (atrfs->sectorsize==128 ? 2 :                        \
      /* SS/DD: 1 */                                     \
-     (atrfs.sectors <= 720 ? 1 :                        \
+     (atrfs->sectors <= 720 ? 1 :                        \
       /* DS/DD: 1 */                                    \
       1 )))
 #define DIR_START ((struct dos4_dir_entry *)CLUSTER(VTOC_CLUSTER))
 #define VTOC_START SECTOR(CLUSTER_TO_SEC(VTOC_CLUSTER+2)-VTOC_SECTOR_COUNT)
-#define REAL_MAX_CLUSTER (atrfs.sectors/CLUSTER_SIZE+8-1) // Pretend 0x80 is a normal cluster
+#define REAL_MAX_CLUSTER (atrfs->sectors/CLUSTER_SIZE+8-1) // Pretend 0x80 is a normal cluster
 #define MAX_CLUSTER (REAL_MAX_CLUSTER < 0x80 ? REAL_MAX_CLUSTER : REAL_MAX_CLUSTER + 1)
-#define DIR_ENTRIES ((CLUSTER_BYTES*2-VTOC_SECTOR_COUNT*atrfs.sectorsize)/(int)sizeof(struct dos4_dir_entry))
-#define TOTAL_CLUSTERS (REAL_MAX_CLUSTER-7-(atrfs.sectorsize == 256?1:0))
+#define DIR_ENTRIES ((CLUSTER_BYTES*2-VTOC_SECTOR_COUNT*atrfs->sectorsize)/(int)sizeof(struct dos4_dir_entry))
+#define TOTAL_CLUSTERS (REAL_MAX_CLUSTER-7-(atrfs->sectorsize == 256?1:0))
 
 /*
  * File System Structures
@@ -182,19 +182,19 @@ struct dos4_vtoc {
 /*
  * Function prototypes
  */
-int dos4_sanity(void);
-int dos4_getattr(const char *path, struct stat *stbuf);
-int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
-int dos4_read(const char *path, char *buf, size_t size, off_t offset);
-int dos4_write(const char *path, const char *buf, size_t size, off_t offset);
-int dos4_unlink(const char *path);
-int dos4_rename(const char *path1, const char *path2, unsigned int flags);
-int dos4_chmod(const char *path, mode_t mode);
-int dos4_create(const char *path, mode_t mode);
-int dos4_truncate(const char *path, off_t size);
-int dos4_statfs(const char *path, struct statvfs *stfsbuf);
-int dos4_newfs(void);
-char *dos4_fsinfo(void);
+int dos4_sanity(struct atrfs *atrfs);
+int dos4_getattr(struct atrfs *atrfs,const char *path, struct stat *stbuf);
+int dos4_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
+int dos4_read(struct atrfs *atrfs,const char *path, char *buf, size_t size, off_t offset);
+int dos4_write(struct atrfs *atrfs,const char *path, const char *buf, size_t size, off_t offset);
+int dos4_unlink(struct atrfs *atrfs,const char *path);
+int dos4_rename(struct atrfs *atrfs,const char *path1, const char *path2, unsigned int flags);
+int dos4_chmod(struct atrfs *atrfs,const char *path, mode_t mode);
+int dos4_create(struct atrfs *atrfs,const char *path, mode_t mode);
+int dos4_truncate(struct atrfs *atrfs,const char *path, off_t size);
+int dos4_statfs(struct atrfs *atrfs,const char *path, struct statvfs *stfsbuf);
+int dos4_newfs(struct atrfs *atrfs);
+char *dos4_fsinfo(struct atrfs *atrfs);
 
 /*
  * Global variables
@@ -252,11 +252,11 @@ static const unsigned char bootsectors[2][128*2] = {
  *
  * I don't think DOS 4 actually verifies this at any point.
  */
-void dos4_set_vtoc_checksum(void)
+void dos4_set_vtoc_checksum(struct atrfs *atrfs)
 {
    unsigned char *map = VTOC_START;
 
-   if ( atrfs.sectorsize == 128 && VTOC_SECTOR_COUNT == 1 ) return; // No checksum without a byte 128
+   if ( atrfs->sectorsize == 128 && VTOC_SECTOR_COUNT == 1 ) return; // No checksum without a byte 128
 
    int sum = 0;
    for (int i=0;i<128;++i) sum += map[i];
@@ -267,13 +267,13 @@ void dos4_set_vtoc_checksum(void)
 /*
  * dos4_free_cluster()
  */
-int dos4_free_cluster(int cluster)
+int dos4_free_cluster(struct atrfs *atrfs,int cluster)
 {
    struct dos4_vtoc *vtoc = VTOC_START;
    unsigned char *map = VTOC_START;
 
    if ( options.debug>1 ) fprintf(stderr,"DEBUG: %s: Cluster %d (old map value: %d)\n",__FUNCTION__,cluster,map[cluster]);
-   if ( cluster > MAX_CLUSTER || cluster < 8 || ( cluster==8 && atrfs.sectorsize==256 ) ) return -EIO;
+   if ( cluster > MAX_CLUSTER || cluster < 8 || ( cluster==8 && atrfs->sectorsize==256 ) ) return -EIO;
    if ( cluster == VTOC_CLUSTER ) return -EIO;
    if ( cluster == VTOC_CLUSTER+1 ) return -EIO;
 
@@ -282,7 +282,7 @@ int dos4_free_cluster(int cluster)
       map[cluster] = vtoc->first_free;
       vtoc->first_free = cluster;
       ++vtoc->free;
-      dos4_set_vtoc_checksum();
+      dos4_set_vtoc_checksum(atrfs);
       return 0;
    }
 
@@ -296,7 +296,7 @@ int dos4_free_cluster(int cluster)
       map[cluster] = map[c];
       map[c] = cluster;
       ++vtoc->free;
-      dos4_set_vtoc_checksum();
+      dos4_set_vtoc_checksum(atrfs);
       return 0;
    }
    fprintf(stderr,"DEBUG: %s: Bad free cluster chain: attempt to free cluster %d; map[%d]->%d\n",__FUNCTION__,cluster,c,map[c]);
@@ -306,7 +306,7 @@ int dos4_free_cluster(int cluster)
 /*
  * dos4_get_dir_entry()
  */
-int dos4_get_dir_entry(const char *path,struct dos4_dir_entry **dirent_found,int *isinfo)
+int dos4_get_dir_entry(struct atrfs *atrfs,const char *path,struct dos4_dir_entry **dirent_found,int *isinfo)
 {
    struct dos4_dir_entry *junk;
    if ( !dirent_found ) dirent_found = &junk; // Avoid NULL check later
@@ -391,7 +391,7 @@ int dos4_get_dir_entry(const char *path,struct dos4_dir_entry **dirent_found,int
  *
  * This requires tracing the cluster chain
  */
-int dos4_get_file_size(struct dos4_dir_entry *dirent)
+int dos4_get_file_size(struct atrfs *atrfs,struct dos4_dir_entry *dirent)
 {
    unsigned char *vtoc = VTOC_START;
    int clusters = 0;
@@ -400,7 +400,7 @@ int dos4_get_file_size(struct dos4_dir_entry *dirent)
    {
       if ( vtoc[c] < 0x08 )
       {
-         return clusters * CLUSTER_BYTES + atrfs.sectorsize * vtoc[c] + dirent->bytes_in_last_sector+1;
+         return clusters * CLUSTER_BYTES + atrfs->sectorsize * vtoc[c] + dirent->bytes_in_last_sector+1;
       }
       if ( vtoc[c] > MAX_CLUSTER ) break;
       ++clusters;
@@ -420,7 +420,7 @@ int dos4_get_file_size(struct dos4_dir_entry *dirent)
  *
  * The pointer returned should be 'free()'d after use.
  */
-char *dos4_info(const char *path,struct dos4_dir_entry *dirent)
+char *dos4_info(struct atrfs *atrfs,const char *path,struct dos4_dir_entry *dirent)
 {
    char *buf,*b;
    int filesize;
@@ -431,7 +431,7 @@ char *dos4_info(const char *path,struct dos4_dir_entry *dirent)
    }
    else
    {
-      filesize = dos4_get_file_size(dirent);
+      filesize = dos4_get_file_size(atrfs,dirent);
       if ( filesize < 0 ) return NULL;
    }
 
@@ -472,14 +472,14 @@ char *dos4_info(const char *path,struct dos4_dir_entry *dirent)
 }
 
 /*
- * dos4_sanity()
+ * dos4_sanity(atrfs)
  *
  * Return 0 if this is a valid Atari DOS 4 file system
  */
-int dos4_sanity(void)
+int dos4_sanity(struct atrfs *atrfs)
 {
-   if ( atrfs.sectorsize != 128 &&  atrfs.sectorsize != 256 ) return 1; // Must be SD
-   if ( atrfs.sectors < (VTOC_CLUSTER+2)*CLUSTER_SIZE - 1 ) return 1; // Too small
+   if ( atrfs->sectorsize != 128 &&  atrfs->sectorsize != 256 ) return 1; // Must be SD
+   if ( atrfs->sectors < (VTOC_CLUSTER+2)*CLUSTER_SIZE - 1 ) return 1; // Too small
    struct dos4_dir_entry *dirent = DIR_START;
    struct dos4_vtoc *vtoc = VTOC_START;
    unsigned char *map = VTOC_START;
@@ -560,17 +560,17 @@ int dos4_sanity(void)
       default:
          return 1;
    }
-   if ( dirent->bytes_in_last_sector > atrfs.sectorsize ) return 1;
+   if ( dirent->bytes_in_last_sector > atrfs->sectorsize ) return 1;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: First directory entry sane\n",__FUNCTION__);
 
-   atrfs.readonly = 1; // FIXME: No write support yet
+   atrfs->readonly = 1; // FIXME: No write support yet
    return 0;
 }
 
 /*
  * dos4_getattr()
  */
-int dos4_getattr(const char *path, struct stat *stbuf)
+int dos4_getattr(struct atrfs *atrfs,const char *path, struct stat *stbuf)
 {
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
    if ( strcmp(path,"/") == 0 )
@@ -584,7 +584,7 @@ int dos4_getattr(const char *path, struct stat *stbuf)
    if ( atrfs_strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
    {
       int sec = string_to_sector(path);
-      if ( sec >= 0 && sec*CLUSTER_SIZE+1<=atrfs.sectors && sec != 0x80 )
+      if ( sec >= 0 && sec*CLUSTER_SIZE+1<=atrfs->sectors && sec != 0x80 )
       {
          stbuf->st_mode = MODE_RO(stbuf->st_mode);
          stbuf->st_size = CLUSTER_BYTES;
@@ -596,19 +596,19 @@ int dos4_getattr(const char *path, struct stat *stbuf)
    struct dos4_dir_entry *dirent;
    int isinfo;
    int r;
-   r = dos4_get_dir_entry(path,&dirent,&isinfo);
+   r = dos4_get_dir_entry(atrfs,path,&dirent,&isinfo);
    if ( r ) return r;
    stbuf->st_ino = dirent ? CLUSTER_TO_SEC(dirent->start) : 0;
    if ( isinfo ) stbuf->st_ino += 0x10000;
    if ( isinfo )
    {
-      char *info = dos4_info(path,dirent);
+      char *info = dos4_info(atrfs,path,dirent);
       stbuf->st_size = strlen(info);
       free(info);
    }
    else
    {
-      stbuf->st_size = dos4_get_file_size(dirent);
+      stbuf->st_size = dos4_get_file_size(atrfs,dirent);
    }
    return 0;
 }
@@ -616,7 +616,7 @@ int dos4_getattr(const char *path, struct stat *stbuf)
 /*
  * dos4_readdir()
  */
-int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
+int dos4_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
 {
    (void)path; // Always "/"
    (void)offset;
@@ -661,7 +661,7 @@ int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
       if ( !zero ) return -ENOMEM; // Weird
       char name[32];
       int digits = 3;
-      for (int sec=8; sec*CLUSTER_SIZE+1<=atrfs.sectors; ++sec)
+      for (int sec=8; sec*CLUSTER_SIZE+1<=atrfs->sectors; ++sec)
       {
          unsigned char *s = CLUSTER(sec);
          char *note="";
@@ -680,14 +680,14 @@ int dos4_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
 /*
  * dos4_read()
  */
-int dos4_read(const char *path, char *buf, size_t size, off_t offset)
+int dos4_read(struct atrfs *atrfs,const char *path, char *buf, size_t size, off_t offset)
 {
 
    // Magic /.cluster### files
    if ( atrfs_strncmp(path,"/.cluster",sizeof("/.cluster")-1) == 0 )
    {
       int sec = string_to_sector(path);
-      if ( sec < 0 || sec*CLUSTER_SIZE+1>atrfs.sectors || sec==128 ) return -ENOENT;
+      if ( sec < 0 || sec*CLUSTER_SIZE+1>atrfs->sectors || sec==128 ) return -ENOENT;
 
       int bytes = CLUSTER_BYTES;
       if (offset >= bytes ) return -EOF;
@@ -704,13 +704,13 @@ int dos4_read(const char *path, char *buf, size_t size, off_t offset)
    struct dos4_dir_entry *dirent;
    int isinfo;
    int r;
-   r = dos4_get_dir_entry(path,&dirent,&isinfo);
+   r = dos4_get_dir_entry(atrfs,path,&dirent,&isinfo);
    if ( r ) return r;
 
    // Info files
    if ( isinfo )
    {
-      char *info = dos4_info(path,dirent);
+      char *info = dos4_info(atrfs,path,dirent);
       char *i = info;
       int bytes = strlen(info);
       if ( offset >= bytes )
@@ -736,7 +736,7 @@ int dos4_read(const char *path, char *buf, size_t size, off_t offset)
       if ( vtoc[cluster] > MAX_CLUSTER ) return -EIO; // Bad chain
       if ( vtoc[cluster] < 0x08 )
       {
-         bytes = atrfs.sectorsize * vtoc[cluster] + dirent->bytes_in_last_sector + 1;
+         bytes = atrfs->sectorsize * vtoc[cluster] + dirent->bytes_in_last_sector + 1;
       }
       unsigned char *s=CLUSTER(cluster);
       if ( !s ) return -EIO; // Invalid CLUSTER
@@ -771,44 +771,44 @@ int dos4_read(const char *path, char *buf, size_t size, off_t offset)
 }
 
 // Implement these for read-write support
-int dos4_write(const char *path, const char *buf, size_t size, off_t offset);
-int dos4_unlink(const char *path);
-int dos4_rename(const char *path1, const char *path2, unsigned int flags);
-int dos4_chmod(const char *path, mode_t mode);
-int dos4_create(const char *path, mode_t mode);
-int dos4_truncate(const char *path, off_t size);
+int dos4_write(struct atrfs *atrfs,const char *path, const char *buf, size_t size, off_t offset);
+int dos4_unlink(struct atrfs *atrfs,const char *path);
+int dos4_rename(struct atrfs *atrfs,const char *path1, const char *path2, unsigned int flags);
+int dos4_chmod(struct atrfs *atrfs,const char *path, mode_t mode);
+int dos4_create(struct atrfs *atrfs,const char *path, mode_t mode);
+int dos4_truncate(struct atrfs *atrfs,const char *path, off_t size);
 
 /*
  * dos4_newfs()
  */
-int dos4_newfs(void)
+int dos4_newfs(struct atrfs *atrfs)
 {
-   if ( atrfs.sectorsize != 128 && atrfs.sectorsize != 256 )
+   if ( atrfs->sectorsize != 128 && atrfs->sectorsize != 256 )
    {
       fprintf(stderr,"Error: Atari DOS 4 only supports SD or DD sector sizes\n");
       return -EIO;
    }
-   if ( atrfs.sectors > 1482 ) // MAX_CLUSTER <= 0xff in both DS/DD and SS/ED mode with cluster size 6
+   if ( atrfs->sectors > 1482 ) // MAX_CLUSTER <= 0xff in both DS/DD and SS/ED mode with cluster size 6
    {
       fprintf(stderr,"Error: Atari DOS 4 maximum size is 1484 sectors\n");
       return -EIO;
    }
-   if ( CLUSTER_TO_SEC(VTOC_CLUSTER+2) - 1 > atrfs.sectors )
+   if ( CLUSTER_TO_SEC(VTOC_CLUSTER+2) - 1 > atrfs->sectors )
    {
       fprintf(stderr,"Error: Atari DOS 4 needs %d sectors minimum for this density\n",CLUSTER_TO_SEC(VTOC_CLUSTER+2) - 1);
       return -EIO;
    }
 
    // Warn about non-standard images
-   if ( atrfs.sectors != 720 &&
-        !(atrfs.sectors == 1040 && atrfs.sectorsize == 128) &&
-        !(atrfs.sectors == 1440 && atrfs.sectorsize == 256) )
+   if ( atrfs->sectors != 720 &&
+        !(atrfs->sectors == 1040 && atrfs->sectorsize == 128) &&
+        !(atrfs->sectors == 1440 && atrfs->sectorsize == 256) )
    {
-      if ( atrfs.sectors < 720 && atrfs.sectorsize == 128 )
+      if ( atrfs->sectors < 720 && atrfs->sectorsize == 128 )
          fprintf(stderr,"Creating short non-standard DOS 4 image:  Tell DOS 4 that this is SS/SD\n");
-      else if ( atrfs.sectors < 720 && atrfs.sectorsize == 256 )
+      else if ( atrfs->sectors < 720 && atrfs->sectorsize == 256 )
          fprintf(stderr,"Creating short non-standard DOS 4 image:  Tell DOS 4 that this is SS/DD\n");
-      else if ( atrfs.sectorsize == 128 )
+      else if ( atrfs->sectorsize == 128 )
          fprintf(stderr,"Creating non-standard DOS 4 image:  Tell DOS 4 that this is SS/2D (AT1050)\n");
       else
          fprintf(stderr,"Creating non-standard DOS 4 image:  Tell DOS 4 that this is DS/DD\n");
@@ -861,17 +861,17 @@ int dos4_newfs(void)
     */
    struct dos4_vtoc *vtoc = VTOC_START;
    vtoc->format = 'R';
-   if ( atrfs.sectorsize==256 && atrfs.sectors > 720 ) vtoc->format = 'C';
+   if ( atrfs->sectorsize==256 && atrfs->sectors > 720 ) vtoc->format = 'C';
 
    for ( int cluster = 8; cluster <= MAX_CLUSTER; ++cluster)
    {
-      if ( cluster == 8 && atrfs.sectorsize==256 ) continue;
+      if ( cluster == 8 && atrfs->sectorsize==256 ) continue;
       if ( cluster == 0x80 ) continue; // This is skipped
       if ( cluster == VTOC_CLUSTER ) continue;
       if ( cluster == VTOC_CLUSTER+1 ) continue;
       // Uncomment the following for bug compatibility:
-      // if ( cluster == MAX_CLUSTER && atrfs.sectors == 1440 ) continue;
-      dos4_free_cluster(cluster);
+      // if ( cluster == MAX_CLUSTER && atrfs->sectors == 1440 ) continue;
+      dos4_free_cluster(atrfs,cluster);
    }
 
    /*
@@ -884,11 +884,11 @@ int dos4_newfs(void)
     * If writing QDOS.SYS to the image, be aware that there are a number of
     * byte differences between the files depending on the drive settings.
     */
-   if ( atrfs.sectorsize == 256 )
+   if ( atrfs->sectorsize == 256 )
    {
       const unsigned char *b;
       unsigned char *s = SECTOR(1);
-      if ( atrfs.sectors <= 720 ) b=bootsectors[0];
+      if ( atrfs->sectors <= 720 ) b=bootsectors[0];
       else b=bootsectors[1];
       for (int i=0;i<2;++i)
       {
@@ -902,7 +902,7 @@ int dos4_newfs(void)
 /*
  * dos4_statfs()
  */
-int dos4_statfs(const char *path, struct statvfs *stfsbuf)
+int dos4_statfs(struct atrfs *atrfs,const char *path, struct statvfs *stfsbuf)
 {
    (void)path; // meaningless
    stfsbuf->f_bsize = CLUSTER_BYTES;
@@ -929,7 +929,7 @@ int dos4_statfs(const char *path, struct statvfs *stfsbuf)
 /*
  * dos4_fsinfo()
  */
-char *dos4_fsinfo(void)
+char *dos4_fsinfo(struct atrfs *atrfs)
 {
    char *buf=malloc(16*1024);
    if ( !buf ) return NULL;
@@ -937,7 +937,7 @@ char *dos4_fsinfo(void)
    
    struct dos4_vtoc *vtoc = VTOC_START;
    b+=sprintf(b,"Cluster size:        %d bytes, %d sectors\n",CLUSTER_BYTES,CLUSTER_SIZE);
-   b+=sprintf(b,"Total data clusters: %d: %d--%d  sectors: %d--%d\n",TOTAL_CLUSTERS,(atrfs.sectorsize==128)?8:9,MAX_CLUSTER,CLUSTER_TO_SEC((atrfs.sectorsize==128)?8:9),CLUSTER_TO_SEC(MAX_CLUSTER+1)-1);
+   b+=sprintf(b,"Total data clusters: %d: %d--%d  sectors: %d--%d\n",TOTAL_CLUSTERS,(atrfs->sectorsize==128)?8:9,MAX_CLUSTER,CLUSTER_TO_SEC((atrfs->sectorsize==128)?8:9),CLUSTER_TO_SEC(MAX_CLUSTER+1)-1);
    b+=sprintf(b,"Free clusters:       %d\n",vtoc->free);
    b+=sprintf(b,"VTOC/DIR clusters:   %d--%d\n",VTOC_CLUSTER,VTOC_CLUSTER+1);
    b+=sprintf(b,"DIR sectors:         %d--%d\n",CLUSTER_TO_SEC(VTOC_CLUSTER),CLUSTER_TO_SEC(VTOC_CLUSTER+2)-VTOC_SECTOR_COUNT-1);   

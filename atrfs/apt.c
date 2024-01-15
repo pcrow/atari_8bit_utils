@@ -67,8 +67,8 @@
 /*
  * Macros and defines
  */
-#define VALID_SECTOR(_s) ((_s) < atrfs.atrstat.st_size/512 )
-#define SECTORMEM(_s) ((void *)((char *)(atrfs.atrmem)+512*(_s)))
+#define VALID_SECTOR(_s) ((_s) < atrfs->atrstat.st_size/512 )
+#define SECTORMEM(_s) ((void *)((char *)(atrfs->atrmem)+512*(_s)))
 
 /*
  * Data Types
@@ -154,20 +154,20 @@ struct apt_partition {
 /*
  * Function prototypes
  */
-int apt_sanity(void);
-int apt_getattr(const char *path, struct stat *stbuf);
-int apt_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
-int apt_read(const char *path, char *buf, size_t size, off_t offset);
-int apt_write(const char *path, const char *buf, size_t size, off_t offset);
-int apt_unlink(const char *path);
-int apt_rename(const char *path1, const char *path2, unsigned int flags);
-int apt_chmod(const char *path, mode_t mode);
-int apt_readlink(const char *path, char *buf, size_t size);
-int apt_create(const char *path, mode_t mode);
-int apt_truncate(const char *path, off_t size);
-int apt_statfs(const char *path, struct statvfs *stfsbuf);
-int apt_newfs(void);
-char *apt_fsinfo(void);
+int apt_sanity(struct atrfs *atrfs);
+int apt_getattr(struct atrfs *atrfs,const char *path, struct stat *stbuf);
+int apt_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
+int apt_read(struct atrfs *atrfs,const char *path, char *buf, size_t size, off_t offset);
+int apt_write(struct atrfs *atrfs,const char *path, const char *buf, size_t size, off_t offset);
+int apt_unlink(struct atrfs *atrfs,const char *path);
+int apt_rename(struct atrfs *atrfs,const char *path1, const char *path2, unsigned int flags);
+int apt_chmod(struct atrfs *atrfs,const char *path, mode_t mode);
+int apt_readlink(struct atrfs *atrfs,const char *path, char *buf, size_t size);
+int apt_create(struct atrfs *atrfs,const char *path, mode_t mode);
+int apt_truncate(struct atrfs *atrfs,const char *path, off_t size);
+int apt_statfs(struct atrfs *atrfs,const char *path, struct statvfs *stfsbuf);
+int apt_newfs(struct atrfs *atrfs);
+char *apt_fsinfo(struct atrfs *atrfs);
 
 /*
  * Global variables
@@ -207,9 +207,9 @@ struct apt_partition mappings[15];
  * Scan the MBT to find an APT partition and return the offset in bytes from the start.
  * If none is found, return 0.
  */
-off_t find_apt_offset_in_mbr(void)
+off_t find_apt_offset_in_mbr(struct atrfs *atrfs)
 {
-   struct mbr_partition_table *mbr = atrfs.atrmem;
+   struct mbr_partition_table *mbr = atrfs->atrmem;
    if ( mbr->mbr_boot_signature[0] != 0x55 || mbr->mbr_boot_signature[1] != 0xAA ) return 0;
    for (int i=0;i<4;++i)
    {
@@ -225,7 +225,7 @@ off_t find_apt_offset_in_mbr(void)
 /*
  * scan_apt_partitions()
  */
-int scan_apt_partitions(void *mem,int header_offset,int first)
+int scan_apt_partitions(struct atrfs *atrfs,void *mem,int header_offset,int first)
 {
    struct apt_partition_table_header *head = mem;
    head += header_offset; // Not sure why it would ever be non-zero
@@ -284,20 +284,20 @@ int scan_apt_partitions(void *mem,int header_offset,int first)
          this->name = "";
          continue;
       }
-      if ( (this->start+1) * 512 > atrfs.atrstat.st_size )
+      if ( (this->start+1) * 512 > atrfs->atrstat.st_size )
       {
          fprintf(stderr,"ATP partition says it starts at sector %u which is past the end of the file\n",this->start);
          exit (1);
       }
-      if ( (this->start+this->sectors) * 512 > atrfs.atrstat.st_size )
+      if ( (this->start+this->sectors) * 512 > atrfs->atrstat.st_size )
       {
          fprintf(stderr,"ATP partition says it runs through sector %u which is past the end of the file\n",this->start + this->sectors);
-         this->sectors = atrfs.atrstat.st_size/512 - this->start;
+         this->sectors = atrfs->atrstat.st_size/512 - this->start;
          fprintf(stderr,"ATP partition adjusted to %u sectors\n",this->sectors);
       }
       this->bytes_per_sector = 64 << (entry->access_flags & 0x03);
       this->bytes_access = (entry->access_flags >> 2) & 0x03;
-      this->meta = (void *)((char *)(atrfs.atrmem) + le32toh(this->entry->starting_sector) * 512 - 512);
+      this->meta = (void *)((char *)(atrfs->atrmem) + le32toh(this->entry->starting_sector) * 512 - 512);
       this->chunk_size = this->sectors; // Most types have one big chunk
       this->chunks = 1;
       this->size_divisor = 1; // FIXME: Adjust to 2 or 4 if only 1 256-byte or 128-byte sector stored per sector.
@@ -309,9 +309,9 @@ int scan_apt_partitions(void *mem,int header_offset,int first)
       if ( entry->partition_type == 0x03 ) // meta location is different
       {
          int lba = BYTES3(&(entry->partition_type_details[1]));
-         if ( lba && lba < atrfs.atrstat.st_size/512 )
+         if ( lba && lba < atrfs->atrstat.st_size/512 )
          {
-            this->meta = (void *)((char *)(atrfs.atrmem) + lba * 512);
+            this->meta = (void *)((char *)(atrfs->atrmem) + lba * 512);
          }
       }
       if ( this->meta->apt_signature[0] != 'A' ||
@@ -338,7 +338,7 @@ int scan_apt_partitions(void *mem,int header_offset,int first)
    }
    if ( head->next_sector_in_table_chain && VALID_SECTOR( le32toh(head->next_sector_in_table_chain) ) )
    {
-      return scan_apt_partitions((char *)(atrfs.atrmem) + le32toh(head->next_sector_in_table_chain) * 512,head->header_entry_offset,0);
+      return scan_apt_partitions(atrfs,(char *)(atrfs->atrmem) + le32toh(head->next_sector_in_table_chain) * 512,head->header_entry_offset,0);
    }
    return 0;
 }
@@ -374,20 +374,20 @@ int apt_info(void)
  *
  * Return 0 if this is a valid Atari DOS 4 file system
  */
-int apt_sanity(void)
+int apt_sanity(struct atrfs *atrfs)
 {
    struct apt_partition_table_header *apt_table;
 
-   apt_offset = find_apt_offset_in_mbr();
+   apt_offset = find_apt_offset_in_mbr(atrfs);
    if ( options.debug && apt_offset ) printf("APT partition found in MBR at offset %lu\n",apt_offset);
-   apt_table = (void *)&((char *)atrfs.atrmem)[apt_offset];
+   apt_table = (void *)&((char *)atrfs->atrmem)[apt_offset];
    if ( apt_table->signature[0] != 'A' || apt_table->signature[1] != 'P' || apt_table->signature[2] != 'T' ) return 1;
    if ( apt_table->current_table_sector_entries < 1 || apt_table->current_table_sector_entries > 32 ) return 1;
    if ( apt_table->boot_drive > 15 ) return 1;
    if ( apt_table->header_entry_offset > 31 ) return 1;
    if ( apt_table->header_entry_prev_offset ) return 1; // must be zero for first entry
    if ( apt_table->prev_sector_in_table_chain ) return 1; // prev must be zero for the first sector
-   scan_apt_partitions(apt_table,0,1);
+   scan_apt_partitions(atrfs,apt_table,0,1);
    if ( options.debug ) apt_info(); // DEBUG
    return 0;
 }
@@ -395,8 +395,9 @@ int apt_sanity(void)
 /*
  * apt_getattr()
  */
-int apt_getattr(const char *path, struct stat *stbuf)
+int apt_getattr(struct atrfs *atrfs,const char *path, struct stat *stbuf)
 {
+   (void)atrfs;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
    if ( strcmp(path,"/") == 0 )
    {
@@ -462,10 +463,11 @@ int apt_getattr(const char *path, struct stat *stbuf)
 /*
  * apt_readdir()
  */
-int apt_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
+int apt_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
 {
    (void)path; // Always "/"
    (void)offset;
+   (void)atrfs;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
 
@@ -512,8 +514,9 @@ int apt_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offse
 /*
  * apt_read()
  */
-int apt_read(const char *path, char *buf, size_t size, off_t offset)
+int apt_read(struct atrfs *atrfs,const char *path, char *buf, size_t size, off_t offset)
 {
+   (void)atrfs;
    for (int i=0;i<num_partitions;++i)
    {
       int chunk = 0;
@@ -555,8 +558,9 @@ int apt_read(const char *path, char *buf, size_t size, off_t offset)
 /*
  * apt_write()
  */
-int apt_write(const char *path, const char *buf, size_t size, off_t offset)
+int apt_write(struct atrfs *atrfs,const char *path, const char *buf, size_t size, off_t offset)
 {
+   (void)atrfs;
    for (int i=0;i<num_partitions;++i)
    {
       char match[128];
@@ -582,7 +586,7 @@ int apt_write(const char *path, const char *buf, size_t size, off_t offset)
  *
  * Only allow the special case of unlinking a mapping symlink
  */
-int apt_unlink(const char *path);
+int apt_unlink(struct atrfs *atrfs,const char *path);
 
 /*
  * apt_rename()
@@ -592,7 +596,7 @@ int apt_unlink(const char *path);
  *
  * Only works if there is a meta label.
  */
-int apt_rename(const char *path1, const char *path2, unsigned int flags);
+int apt_rename(struct atrfs *atrfs,const char *path1, const char *path2, unsigned int flags);
 
 /*
  * apt_chmod()
@@ -600,8 +604,9 @@ int apt_rename(const char *path1, const char *path2, unsigned int flags);
  * For Atari DOS partitions partition_type_details[0] bit 7 is write-protect.
  * Same for MBR FAT partitions.  (Type 00 and 03 respectively)
  */
-int apt_chmod(const char *path, mode_t mode)
+int apt_chmod(struct atrfs *atrfs,const char *path, mode_t mode)
 {
+   (void)atrfs;
    for (int i=0;i<num_partitions;++i)
    {
       if ( !partitions[i].start ) continue; // It might be a reserved or deleted partition
@@ -625,9 +630,9 @@ int apt_chmod(const char *path, mode_t mode)
 /*
  * I don't expect these to have meaning
  */
-int apt_create(const char *path, mode_t mode);
-int apt_truncate(const char *path, off_t size);
-int apt_newfs(void);
+int apt_create(struct atrfs *atrfs,const char *path, mode_t mode);
+int apt_truncate(struct atrfs *atrfs,const char *path, off_t size);
+int apt_newfs(struct atrfs *atrfs);
 
 /*
  * apt_statfs()
@@ -635,12 +640,12 @@ int apt_newfs(void);
  * This isn't a regular file system, so statfs doesn't make a lot of sense,
  * but things break without it.
  */
-int apt_statfs(const char *path, struct statvfs *stfsbuf)
+int apt_statfs(struct atrfs *atrfs,const char *path, struct statvfs *stfsbuf)
 {
    (void)path; // meaningless
    stfsbuf->f_bsize = 512;
    stfsbuf->f_frsize = 512;
-   stfsbuf->f_blocks = atrfs.atrstat.st_size/512;
+   stfsbuf->f_blocks = atrfs->atrstat.st_size/512;
    stfsbuf->f_bfree = 0; // In theory, we could determine the amount of space free in the file or MBR partition that isn't in any partition
    stfsbuf->f_bavail = stfsbuf->f_bfree;
    stfsbuf->f_files = num_partitions;
@@ -649,8 +654,9 @@ int apt_statfs(const char *path, struct statvfs *stfsbuf)
    return 0; // FIXME
 }
 
-int apt_readlink(const char *path, char *buf, size_t size)
+int apt_readlink(struct atrfs *atrfs,const char *path, char *buf, size_t size)
 {
+   (void)atrfs;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
    for (int i=0;i<15;++i)
    {
@@ -668,8 +674,9 @@ int apt_readlink(const char *path, char *buf, size_t size)
 /*
  * apt_fsinfo()
  */
-char *apt_fsinfo(void)
+char *apt_fsinfo(struct atrfs *atrfs)
 {
+   (void)atrfs;
    char *buf=malloc(16*1024);
    if ( !buf ) return NULL;
    char *b = buf;

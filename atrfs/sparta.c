@@ -49,10 +49,10 @@
 /*
  * Macros and defines
  */
-#define OFFSET_TO_SECTOR(n)         ((n)/atrfs.sectorsize)
-#define OFFSET_TO_SECTOR_OFFSET(n)  ((n)%atrfs.sectorsize)
-#define SIZE_TO_SECTORS(n)          ((int)(((n)+atrfs.sectorsize - 1)/atrfs.sectorsize))
-#define ENTRIES_PER_MAP_SECTOR      (atrfs.sectorsize/2-2)
+#define OFFSET_TO_SECTOR(n)         ((n)/atrfs->sectorsize)
+#define OFFSET_TO_SECTOR_OFFSET(n)  ((n)%atrfs->sectorsize)
+#define SIZE_TO_SECTORS(n)          ((int)(((n)+atrfs->sectorsize - 1)/atrfs->sectorsize))
+#define ENTRIES_PER_MAP_SECTOR      (atrfs->sectorsize/2-2)
 #define SIZE_TO_MAP_SECTORS(n)      ((SIZE_TO_SECTORS(n)+ENTRIES_PER_MAP_SECTOR-1)/ENTRIES_PER_MAP_SECTOR)
 #define BITMAPBYTE(n)   (n/8)
 #define BITMAPMASK(n)   (1<<(7-(n%8)))
@@ -125,27 +125,27 @@ enum sparta_dir_status {
 /*
  * Function prototypes
  */
-int sparta_alloc_any_sector(void);
-int sparta_sanity(void);
-int sparta_getattr(const char *path, struct stat *stbuf);
-int sparta_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
-int sparta_read(const char *path, char *buf, size_t size, off_t offset);
-int sparta_write(const char *path, const char *buf, size_t size, off_t offset);
-int sparta_mkdir(const char *path,mode_t mode);
-int sparta_rmdir(const char *path);
-int sparta_unlink(const char *path);
-int sparta_rename(const char *path1, const char *path2, unsigned int flags);
-int sparta_chmod(const char *path, mode_t mode);
-int sparta_create(const char *path, mode_t mode);
-int sparta_truncate(const char *path, off_t size);
+int sparta_alloc_any_sector(struct atrfs *atrfs);
+int sparta_sanity(struct atrfs *atrfs);
+int sparta_getattr(struct atrfs *atrfs,const char *path, struct stat *stbuf);
+int sparta_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
+int sparta_read(struct atrfs *atrfs,const char *path, char *buf, size_t size, off_t offset);
+int sparta_write(struct atrfs *atrfs,const char *path, const char *buf, size_t size, off_t offset);
+int sparta_mkdir(struct atrfs *atrfs,const char *path,mode_t mode);
+int sparta_rmdir(struct atrfs *atrfs,const char *path);
+int sparta_unlink(struct atrfs *atrfs,const char *path);
+int sparta_rename(struct atrfs *atrfs,const char *path1, const char *path2, unsigned int flags);
+int sparta_chmod(struct atrfs *atrfs,const char *path, mode_t mode);
+int sparta_create(struct atrfs *atrfs,const char *path, mode_t mode);
+int sparta_truncate(struct atrfs *atrfs,const char *path, off_t size);
 #if (FUSE_USE_VERSION >= 30)
-int sparta_utimens(const char *path, const struct timespec tv[2]);
+int sparta_utimens(struct atrfs *atrfs,const char *path, const struct timespec tv[2]);
 #else
-int sparta_utime(const char *path,struct utimbuf *utimbif);
+int sparta_utime(struct atrfs *atrfs,const char *path,struct utimbuf *utimbif);
 #endif
-int sparta_statfs(const char *path, struct statvfs *stfsbuf);
-int sparta_newfs(void);
-char *sparta_fsinfo(void);
+int sparta_statfs(struct atrfs *atrfs,const char *path, struct statvfs *stfsbuf);
+int sparta_newfs(struct atrfs *atrfs);
+char *sparta_fsinfo(struct atrfs *atrfs);
 
 /*
  * Global variables
@@ -254,16 +254,16 @@ static const char bootsectors[1][3*128] =
  *
  * If negative, it's an error.
  */
-int sparta_get_sector(int inode,int sequence,int allocate)
+int sparta_get_sector(struct atrfs *atrfs,int inode,int sequence,int allocate)
 {
    //if ( options.debug ) fprintf(stderr,"DEBUG: %s: inode %d sequence %d alloc %d\n",__FUNCTION__,inode,sequence,allocate);
-   if ( inode >= atrfs.sectors || inode <= 0 ) return -EIO; // Out of range
+   if ( inode >= atrfs->sectors || inode <= 0 ) return -EIO; // Out of range
    unsigned char *s=SECTOR(inode);
 
-   while ( sequence > atrfs.sectorsize/2-2 )
+   while ( sequence > atrfs->sectorsize/2-2 )
    {
       int next = BYTES2(s);
-      if ( next > atrfs.sectors ) return -EIO; // Corrupt chain
+      if ( next > atrfs->sectors ) return -EIO; // Corrupt chain
       if ( next == 0 ) return -EOF; // Past end of file
       unsigned char *n = SECTOR(next);
       if ( BYTES2(n+2) != inode ) // Verify back pointer
@@ -272,18 +272,18 @@ int sparta_get_sector(int inode,int sequence,int allocate)
       }
       inode = next;
       s = n;
-      sequence -= atrfs.sectorsize/2-2;
+      sequence -= atrfs->sectorsize/2-2;
    }
    int r = BYTES2(s+4+sequence*2);
    if ( r==0 && allocate )
    {
       // Allocate a new sector, store it in the map and return it
-      r = sparta_alloc_any_sector();
+      r = sparta_alloc_any_sector(atrfs);
       if ( r<0 ) return r;
       s[4+sequence*2] = r & 0xff;
       s[4+sequence*2+1] = r >> 8;
    }
-   else if ( r < 1 || r > atrfs.sectors )
+   else if ( r < 1 || r > atrfs->sectors )
    {
       if ( options.debug ) fprintf(stderr,"DEBUG: %s: inode sector %d, sequence %d, invalid sector %d\n",__FUNCTION__,inode,sequence,r);
       r = -EIO;
@@ -299,14 +299,14 @@ int sparta_get_sector(int inode,int sequence,int allocate)
  *
  * Returns zero on success, negative errno on error
  */
-int sparta_get_dirent(struct sparta_dir_entry *dirent,int dirinode,int entry)
+int sparta_get_dirent(struct atrfs *atrfs,struct sparta_dir_entry *dirent,int dirinode,int entry)
 {
    int sector;
    int offset = entry * sizeof(*dirent);
    unsigned char *s;
    int bytes;
 
-   sector = sparta_get_sector(dirinode,OFFSET_TO_SECTOR(offset),0);
+   sector = sparta_get_sector(atrfs,dirinode,OFFSET_TO_SECTOR(offset),0);
    if ( sector < 0 )
    {
       if ( options.debug ) fprintf(stderr,"DEBUG: %s: dirinode sector %d, entry %d, offset %d, relative sector %d+1, invalid sector %d\n",__FUNCTION__,dirinode,entry,offset,OFFSET_TO_SECTOR(offset),sector);
@@ -315,16 +315,16 @@ int sparta_get_dirent(struct sparta_dir_entry *dirent,int dirinode,int entry)
    s = SECTOR(sector);
    bytes = sizeof(*dirent);
    int secoff = OFFSET_TO_SECTOR_OFFSET(offset);
-   if ( bytes + secoff > atrfs.sectorsize )
+   if ( bytes + secoff > atrfs->sectorsize )
    {
-      bytes = atrfs.sectorsize - secoff;
+      bytes = atrfs->sectorsize - secoff;
    }
    memcpy(dirent,s+secoff,bytes);
    dirent = (void *)(((char *)dirent) + bytes);
    bytes = sizeof(*dirent) - bytes;
    if ( bytes == 0 ) return 0;
    // Read remainder from next sector
-   sector = sparta_get_sector(dirinode,OFFSET_TO_SECTOR(offset)+1,0);
+   sector = sparta_get_sector(atrfs,dirinode,OFFSET_TO_SECTOR(offset)+1,0);
    if ( sector < 0 )
    {
       if ( options.debug ) fprintf(stderr,"DEBUG: %s: dirinode sector %d, entry %d, offset %d, relative sector %d+1, invalid sector %d\n",__FUNCTION__,dirinode,entry,offset,OFFSET_TO_SECTOR(offset),sector);
@@ -343,14 +343,14 @@ int sparta_get_dirent(struct sparta_dir_entry *dirent,int dirinode,int entry)
  *
  * Returns zero on success, negative errno on error
  */
-int sparta_put_dirent(struct sparta_dir_entry *dirent,int dirinode,int entry)
+int sparta_put_dirent(struct atrfs *atrfs,struct sparta_dir_entry *dirent,int dirinode,int entry)
 {
    int sector;
    int offset = entry * sizeof(*dirent);
    unsigned char *s;
    int bytes;
 
-   sector = sparta_get_sector(dirinode,OFFSET_TO_SECTOR(offset),0);
+   sector = sparta_get_sector(atrfs,dirinode,OFFSET_TO_SECTOR(offset),0);
    if ( sector < 0 )
    {
       if ( options.debug ) fprintf(stderr,"DEBUG: %s: Failed to get sector %d in %d\n",__FUNCTION__,OFFSET_TO_SECTOR(offset),dirinode);
@@ -359,16 +359,16 @@ int sparta_put_dirent(struct sparta_dir_entry *dirent,int dirinode,int entry)
    s = SECTOR(sector);
    bytes = sizeof(*dirent);
    int secoff = OFFSET_TO_SECTOR_OFFSET(offset);
-   if ( bytes + secoff > atrfs.sectorsize )
+   if ( bytes + secoff > atrfs->sectorsize )
    {
-      bytes = atrfs.sectorsize - secoff;
+      bytes = atrfs->sectorsize - secoff;
    }
    memcpy(s+secoff,dirent,bytes);
    dirent = (void *)(((char *)dirent) + bytes);
    bytes = sizeof(*dirent) - bytes;
    if ( bytes == 0 ) return 0;
    // Read remainder from next sector
-   sector = sparta_get_sector(dirinode,OFFSET_TO_SECTOR(offset)+1,0);
+   sector = sparta_get_sector(atrfs,dirinode,OFFSET_TO_SECTOR(offset)+1,0);
    if ( sector < 0 )
    {
       if ( options.debug ) fprintf(stderr,"DEBUG: %s: Failed to get second sector %d in %d\n",__FUNCTION__,OFFSET_TO_SECTOR(offset)+1,dirinode);
@@ -399,34 +399,34 @@ void sparta_dirent_time_set(struct sparta_dir_entry *dir_entry,time_t secs)
 }
 
 /*
- * sparta_sanity()
+ * sparta_sanity(atrfs)
  *
  * Return 0 if this is a valid Sparta file system
  */
-int sparta_sanity(void)
+int sparta_sanity(struct atrfs *atrfs)
 {
-   if ( atrfs.sectors < 6*1024/atrfs.sectorsize ) return 1; // I think 6K is the minimum to have bitmaps, directory, and a one-byte file
+   if ( atrfs->sectors < 6*1024/atrfs->sectorsize ) return 1; // I think 6K is the minimum to have bitmaps, directory, and a one-byte file
    struct sector1_sparta *sec1 = SECTOR(1);
-   if ( !( sec1->boot_sectors == 1 && atrfs.sectorsize == 512 ) &&
+   if ( !( sec1->boot_sectors == 1 && atrfs->sectorsize == 512 ) &&
         ( sec1->boot_sectors != 3 ) )
    {
       return 1; // Must have 3 boot sectors unless 512-byte sectors (then 1)
    }
 
-   if ( BYTES2(sec1->dir) > atrfs.sectors )
+   if ( BYTES2(sec1->dir) > atrfs->sectors )
    {
-      if ( options.debug ) printf("Not SpartaDOS: Main directory sector map > sector count: %d > %d\n",BYTES2(sec1->dir), atrfs.sectors);
+      if ( options.debug ) printf("Not SpartaDOS: Main directory sector map > sector count: %d > %d\n",BYTES2(sec1->dir), atrfs->sectors);
       return 1;
    }
-   if ( BYTES2(sec1->free) >= atrfs.sectors )
+   if ( BYTES2(sec1->free) >= atrfs->sectors )
    {
-      if ( options.debug ) printf("Not SpartaDOS: Free sector count >= sector count %d != %d\n",BYTES2(sec1->free), atrfs.sectors);
+      if ( options.debug ) printf("Not SpartaDOS: Free sector count >= sector count %d != %d\n",BYTES2(sec1->free), atrfs->sectors);
       return 1;
    }
-   if ( BYTES2(sec1->sectors) != atrfs.sectors )
+   if ( BYTES2(sec1->sectors) != atrfs->sectors )
    {
-      if ( options.debug ) printf("Not SpartaDOS: Sparta sector count != image sector count %d != %d\n",BYTES2(sec1->sectors), atrfs.sectors);
-      fprintf(stderr,"SpartaDOS: Sparta sector count != image sector count %d != %d; truncated file -- proceed with caution\n",BYTES2(sec1->sectors), atrfs.sectors);
+      if ( options.debug ) printf("Not SpartaDOS: Sparta sector count != image sector count %d != %d\n",BYTES2(sec1->sectors), atrfs->sectors);
+      fprintf(stderr,"SpartaDOS: Sparta sector count != image sector count %d != %d; truncated file -- proceed with caution\n",BYTES2(sec1->sectors), atrfs->sectors);
       // return 1;
    }
    if ( !sec1->bitmap_sectors )
@@ -434,24 +434,24 @@ int sparta_sanity(void)
       if ( options.debug ) printf("Not SpartaDOS: No bitmap sectors\n");
       return 1;
    }
-   if ( (sec1->bitmap_sectors-1)*8*atrfs.sectorsize >= atrfs.sectors )
+   if ( (sec1->bitmap_sectors-1)*8*atrfs->sectorsize >= atrfs->sectors )
    {
       if ( options.debug ) printf("Not SpartaDOS: Too many bitmap sectors %d\n",sec1->bitmap_sectors);
       return 1;
    }
-   if ( BYTES2(sec1->first_bitmap) >= atrfs.sectors )
+   if ( BYTES2(sec1->first_bitmap) >= atrfs->sectors )
    {
-      if ( options.debug ) printf("Not SpartaDOS: first bitmap >= sector count %d != %d\n",BYTES2(sec1->first_bitmap), atrfs.sectors);
+      if ( options.debug ) printf("Not SpartaDOS: first bitmap >= sector count %d != %d\n",BYTES2(sec1->first_bitmap), atrfs->sectors);
       return 1;
    }
-   if ( BYTES2(sec1->sec_num_allocation) >= atrfs.sectors )
+   if ( BYTES2(sec1->sec_num_allocation) >= atrfs->sectors )
    {
-      if ( options.debug ) printf("Not SpartaDOS: sector number alloc >= sector count %d != %d\n",BYTES2(sec1->sec_num_allocation), atrfs.sectors);
+      if ( options.debug ) printf("Not SpartaDOS: sector number alloc >= sector count %d != %d\n",BYTES2(sec1->sec_num_allocation), atrfs->sectors);
       return 1;
    }
-   if ( BYTES2(sec1->sec_num_dir_alloc) >= atrfs.sectors )
+   if ( BYTES2(sec1->sec_num_dir_alloc) >= atrfs->sectors )
    {
-      if ( options.debug ) printf("Not SpartaDOS: sector number dir alloc >= sector count %d != %d\n",BYTES2(sec1->sec_num_dir_alloc), atrfs.sectors);
+      if ( options.debug ) printf("Not SpartaDOS: sector number dir alloc >= sector count %d != %d\n",BYTES2(sec1->sec_num_dir_alloc), atrfs->sectors);
       return 1;
    }
    return 0;
@@ -467,7 +467,7 @@ int sparta_sanity(void)
  *   1 File not found, but could be created in parent_dir
  *   -x return this error (usually -ENOENT)
  */
-int sparta_path(const char *path,int *inode,int *parent_dir_inode,int *size,int *locked,int *entry,int *isdir,int *isinfo)
+int sparta_path(struct atrfs *atrfs,const char *path,int *inode,int *parent_dir_inode,int *size,int *locked,int *entry,int *isdir,int *isinfo)
 {
    unsigned char name[8+3+1]; // 8+3+NULL
    struct sparta_dir_header dir_header;
@@ -496,7 +496,7 @@ int sparta_path(const char *path,int *inode,int *parent_dir_inode,int *size,int 
       {
          *isdir = 1;
          // Get size from directory header
-         r = sparta_get_dirent((void *)&dir_header,*inode,0);
+         r = sparta_get_dirent(atrfs,(void *)&dir_header,*inode,0);
          if ( r < 0 ) return r;
          *size = BYTES3(dir_header.dir_length_bytes);
          if ( options.debug ) fprintf(stderr,"DEBUG: %s: size from directory header %d\n",__FUNCTION__,*size);
@@ -506,7 +506,7 @@ int sparta_path(const char *path,int *inode,int *parent_dir_inode,int *size,int 
       // If it's just ".info" then it's for the directory
       if ( strcasecmp(path,".info") == 0 )
       {
-         r = sparta_get_dirent((void *)&dir_header,*inode,0);
+         r = sparta_get_dirent(atrfs,(void *)&dir_header,*inode,0);
          if ( r < 0 ) return r;
          *size = BYTES3(dir_header.dir_length_bytes);
          *isinfo = 1;
@@ -558,13 +558,13 @@ int sparta_path(const char *path,int *inode,int *parent_dir_inode,int *size,int 
       if ( options.debug ) fprintf(stderr,"DEBUG: %s: Look for %11.11s in dir at sector %d\n",__FUNCTION__,name,*inode);
       // Scan parent_dir_inode for file name
       int firstfree = -1;
-      r = sparta_get_dirent((void *)&dir_header,*inode,0);
+      r = sparta_get_dirent(atrfs,(void *)&dir_header,*inode,0);
       if ( r < 0 ) return r;
       int dir_size = BYTES3(dir_header.dir_length_bytes);
       for ( i=1;i<(int)(dir_size/sizeof(dir_header));++i )
       {
          struct sparta_dir_entry dir_entry;
-         r = sparta_get_dirent(&dir_entry,*inode,i);
+         r = sparta_get_dirent(atrfs,&dir_entry,*inode,i);
          if ( r < 0 ) return r;
 
          //if ( options.debug ) fprintf(stderr,"DEBUG: %s: entry %d:%d %11.11s flags %02x\n",__FUNCTION__,i,j,dirent[j].file_name,dirent[j].flags);
@@ -581,7 +581,7 @@ int sparta_path(const char *path,int *inode,int *parent_dir_inode,int *size,int 
          if ( atrfs_strncmp((char *)dir_entry.file_name,(char *)name,8+3) != 0 ) continue;
          *entry = i;
          // subdirectories
-         //if ( atrfs.fstype == ATR_SPARTA )
+         //if ( atrfs->fstype == ATR_SPARTA )
          if ( ! *isinfo )
          {
             if ( dir_entry.status & FLAGS_DIR )
@@ -591,7 +591,7 @@ int sparta_path(const char *path,int *inode,int *parent_dir_inode,int *size,int 
                   *parent_dir_inode = *inode;
                   *inode = BYTES2(dir_entry.sector_map);
                   if ( options.debug ) fprintf(stderr,"DEBUG: %s: recurse in with dir %d path %s\n",__FUNCTION__,*parent_dir_inode,path);
-                  return sparta_path(path,inode,parent_dir_inode,size,locked,entry,isdir,isinfo);
+                  return sparta_path(atrfs,path,inode,parent_dir_inode,size,locked,entry,isdir,isinfo);
                }
                // *size = BYTES3(dir_entry.file_size_bytes); // Wrong; use size in directory header
                *isdir = 1;
@@ -632,7 +632,7 @@ int sparta_path(const char *path,int *inode,int *parent_dir_inode,int *size,int 
  * This is easy, as bitmap sectors or contiguous with nothing but
  * bitmaps in them.
  */
-int sparta_bitmap_status(int sector)
+int sparta_bitmap_status(struct atrfs *atrfs,int sector)
 {
    struct sector1_sparta *sec1 = SECTOR(1);
    unsigned char *bitmap = SECTOR(BYTES2(sec1->first_bitmap)); // sanity at mount verified this
@@ -647,7 +647,7 @@ int sparta_bitmap_status(int sector)
  * If 'allocate' is non-zero, change from free to used; otherwise reverse
  * Return 0 if changed, 1 if already at target value.
  */
-int sparta_bitmap(int sector,int allocate)
+int sparta_bitmap(struct atrfs *atrfs,int sector,int allocate)
 {
    struct sector1_sparta *sec1 = SECTOR(1);
    unsigned char *bitmap = SECTOR(BYTES2(sec1->first_bitmap)); // sanity at mount verified this
@@ -668,11 +668,11 @@ int sparta_bitmap(int sector,int allocate)
 /*
  * sparta_free_sector()
  */
-int sparta_free_sector(int sector)
+int sparta_free_sector(struct atrfs *atrfs,int sector)
 {
    int r;
    if ( !sector ) return 0; // Free non-sector; ignore it
-   r = sparta_bitmap(sector,0);
+   r = sparta_bitmap(atrfs,sector,0);
 
    // Only update the free sector count if the bitmap was modified
    if ( r == 0 )
@@ -691,10 +691,10 @@ int sparta_free_sector(int sector)
 /*
  * sparta_alloc_sector()
  */
-int sparta_alloc_sector(int sector)
+int sparta_alloc_sector(struct atrfs *atrfs,int sector)
 {
    int r;
-   r = sparta_bitmap(sector,1);
+   r = sparta_bitmap(atrfs,sector,1);
 
    // Only update the free sector count if the bitmap was modified
    if ( r == 0 )
@@ -715,16 +715,16 @@ int sparta_alloc_sector(int sector)
  *
  * Allocate the first free sector.  This is inefficient, but easy to code.
  */
-int sparta_alloc_any_sector(void)
+int sparta_alloc_any_sector(struct atrfs *atrfs)
 {
    int r;
-   for ( int i=2;i<=atrfs.sectors; ++i )
+   for ( int i=2;i<=atrfs->sectors; ++i )
    {
-      r=sparta_alloc_sector(i);
+      r=sparta_alloc_sector(atrfs,i);
       if ( r==0 )
       {
          char *s = SECTOR(i);
-         memset(s,0,atrfs.sectorsize); // New sectors are zeroed out
+         memset(s,0,atrfs->sectorsize); // New sectors are zeroed out
          return i;
       }
    }
@@ -736,7 +736,7 @@ int sparta_alloc_any_sector(void)
  *
  * Expand the sector map
  */
-int sparta_add_map_sectors(int inode,int add)
+int sparta_add_map_sectors(struct atrfs *atrfs,int inode,int add)
 {
    int r=0;
    unsigned char *s;
@@ -744,7 +744,7 @@ int sparta_add_map_sectors(int inode,int add)
 
    while ( 1 )
    {
-      if ( inode < 1 || inode > atrfs.sectors ) return -EIO; // corrupt file system
+      if ( inode < 1 || inode > atrfs->sectors ) return -EIO; // corrupt file system
       s=SECTOR(inode);
       next=BYTES2(s);
       if ( !next ) break;  // Add from here
@@ -752,12 +752,12 @@ int sparta_add_map_sectors(int inode,int add)
    }
    while ( add )
    {
-      int newsec = sparta_alloc_any_sector();
+      int newsec = sparta_alloc_any_sector(atrfs);
       if ( newsec < 0 ) return newsec;
       s[0] = newsec & 0xff;
       s[1] = newsec >> 8;
       s = SECTOR(newsec);
-      memset(s,0,atrfs.sectorsize);
+      memset(s,0,atrfs->sectorsize);
       s[2] = inode & 0xff;
       s[3] = inode >> 8;
       inode = newsec;
@@ -776,36 +776,36 @@ int sparta_add_map_sectors(int inode,int add)
  *
  * Returns 0 on success, 1 if the sector was already allocated, and -ERROR on error.
  */
-int sparta_alloc_sector_in_map(int inode,int sequence)
+int sparta_alloc_sector_in_map(struct atrfs *atrfs,int inode,int sequence)
 {
    unsigned char *s;
 
    // Move forward in the map to the right sector, allocating as needed
-   while ( sequence >= atrfs.sectorsize/2-2 )
+   while ( sequence >= atrfs->sectorsize/2-2 )
    {
       s = SECTOR(inode);
       int next = BYTES2(s);
       if ( !next )
       {
-         next = sparta_alloc_any_sector();
+         next = sparta_alloc_any_sector(atrfs);
          if ( next < 0 ) return -ENOSPC;
          if ( options.debug ) fprintf(stderr,"DEBUG: %s: %d Adding map sector %d\n",__FUNCTION__,inode,next);
          unsigned char *n;
          n = SECTOR(next);
-         memset(n,0,atrfs.sectorsize);
+         memset(n,0,atrfs->sectorsize);
          n[2] = inode & 0xff;
          n[3] = inode >> 8;
          s[0] = next & 0xff;
          s[1] = next >> 8;
       }
       inode = next;
-      sequence -= atrfs.sectorsize/2-2;
+      sequence -= atrfs->sectorsize/2-2;
    }
 
    s = SECTOR(inode);
    int target = BYTES2(s + 4 + sequence*2);
    if ( target ) return 1; // Already there
-   target = sparta_alloc_any_sector();
+   target = sparta_alloc_any_sector(atrfs);
    if ( target < 0 ) return -ENOSPC;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %d Adding sector %d as sequence %d\n",__FUNCTION__,inode,target,sequence);
    (s + 4 + sequence*2)[0] = target & 0xff;
@@ -821,7 +821,7 @@ int sparta_alloc_sector_in_map(int inode,int sequence)
  *
  * The index of the new entry is returned in 'newentry' if a non-NULL pointer is passed in.
  */
-int sparta_extend_directory(int inode,int *newentry)
+int sparta_extend_directory(struct atrfs *atrfs,int inode,int *newentry)
 {
    struct sparta_dir_header dir_header;
    struct sparta_dir_entry dir_entry;
@@ -832,7 +832,7 @@ int sparta_extend_directory(int inode,int *newentry)
    int junk;
    if ( !newentry ) newentry=&junk; // Avoid pointer check later
 
-   r = sparta_get_dirent((void *)&dir_header,inode,0);
+   r = sparta_get_dirent(atrfs,(void *)&dir_header,inode,0);
    if ( r<0 ) return r;
    size = BYTES3(dir_header.dir_length_bytes);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %d extend from %d bytes to %ld\n",__FUNCTION__,inode,size,size+sizeof(struct sparta_dir_entry));
@@ -855,7 +855,7 @@ int sparta_extend_directory(int inode,int *newentry)
    {
       for ( parent_dir_entry = 1; ; ++parent_dir_entry )
       {
-         r = sparta_get_dirent((void *)&dir_entry,parent_dir_inode,parent_dir_entry);
+         r = sparta_get_dirent(atrfs,(void *)&dir_entry,parent_dir_inode,parent_dir_entry);
          if ( r < 0 ) return r;
          if ( dir_entry.status == 0 ) return -EIO; // Bad directory links
          if ( dir_entry.status & FLAGS_DELETED ) continue;
@@ -869,13 +869,13 @@ int sparta_extend_directory(int inode,int *newentry)
    if ( SIZE_TO_SECTORS(size) != SIZE_TO_SECTORS(size + sizeof(struct sparta_dir_entry)) )
    {
       if ( options.debug ) fprintf(stderr,"DEBUG: %s: %d Adding sector\n",__FUNCTION__,inode);
-      r = sparta_alloc_sector_in_map(inode,OFFSET_TO_SECTOR(size + sizeof(struct sparta_dir_entry)));
+      r = sparta_alloc_sector_in_map(atrfs,inode,OFFSET_TO_SECTOR(size + sizeof(struct sparta_dir_entry)));
    }
 
    // Write zeros to new entry
    struct sparta_dir_entry null_entry;
    memset(&null_entry,0,sizeof(null_entry));
-   r = sparta_put_dirent(&null_entry,inode,size/sizeof(struct sparta_dir_entry));
+   r = sparta_put_dirent(atrfs,&null_entry,inode,size/sizeof(struct sparta_dir_entry));
    if ( r<0 ) return r;
    *newentry = size/sizeof(struct sparta_dir_entry);
 
@@ -886,13 +886,13 @@ int sparta_extend_directory(int inode,int *newentry)
       dir_entry.file_size_bytes[0] = size & 0xff;
       dir_entry.file_size_bytes[1] = (size>>8) & 0xff;
       dir_entry.file_size_bytes[2] = (size>>16) & 0xff;
-      r = sparta_put_dirent(&dir_entry,parent_dir_inode,parent_dir_entry);
+      r = sparta_put_dirent(atrfs,&dir_entry,parent_dir_inode,parent_dir_entry);
       if ( r<0 ) return r;
    }
    dir_header.dir_length_bytes[0] = size & 0xff;
    dir_header.dir_length_bytes[1] = (size>>8) & 0xff;
    dir_header.dir_length_bytes[2] = (size>>16) & 0xff;
-   r = sparta_put_dirent((void *)&dir_header,inode,0);
+   r = sparta_put_dirent(atrfs,(void *)&dir_header,inode,0);
    if ( r<0 ) return r;
    return 0;
 }
@@ -904,7 +904,7 @@ int sparta_extend_directory(int inode,int *newentry)
  *
  * Used by mkdir, rmdir, rename, unlink, etc.
  */
-int sparta_touch_parent_dir(const char *path,int dir_inode)
+int sparta_touch_parent_dir(struct atrfs *atrfs,const char *path,int dir_inode)
 {
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: path %s inode %d\n",__FUNCTION__,path,dir_inode);
    // Remove last component from path
@@ -919,7 +919,7 @@ int sparta_touch_parent_dir(const char *path,int dir_inode)
    // Look up parent directory
    int inode=0,parent_dir_inode,size,locked,entry,isdir,isinfo;
    int r;
-   r = sparta_path(p,&inode,&parent_dir_inode,&size,&locked,&entry,&isdir,&isinfo);
+   r = sparta_path(atrfs,p,&inode,&parent_dir_inode,&size,&locked,&entry,&isdir,&isinfo);
 //   free(p);
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
@@ -932,11 +932,11 @@ int sparta_touch_parent_dir(const char *path,int dir_inode)
    }
 
    struct sparta_dir_entry dir_entry;
-   r = sparta_get_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_get_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r<0 ) return r;
 
    sparta_dirent_time_set(&dir_entry,time(NULL));
-   r = sparta_put_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_put_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r<0 ) return r;
    return 0;
 }
@@ -948,13 +948,13 @@ int sparta_touch_parent_dir(const char *path,int dir_inode)
  *
  * The pointer returned should be 'free()'d after use.
  */
-char *sparta_info(const char *path,int parent_dir_inode,int entry,int inode,int filesize)
+char *sparta_info(struct atrfs *atrfs,const char *path,int parent_dir_inode,int entry,int inode,int filesize)
 {
    char *buf,*b;
    int r;
 
    struct sparta_dir_entry dir_entry;
-   r = sparta_get_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_get_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r < 0 ) return NULL;
 
    buf = malloc(64*1024);
@@ -980,7 +980,7 @@ char *sparta_info(const char *path,int parent_dir_inode,int entry,int inode,int 
       b+=sprintf(b,"\nSector chain:\n");
       int s;
       int prev = -1,pprint = -1;
-      for ( int i=0;(s=sparta_get_sector(inode,i,0))>0;++i )
+      for ( int i=0;(s=sparta_get_sector(atrfs,inode,i,0))>0;++i )
       {
          if ( s == prev+1 )
          {
@@ -1031,19 +1031,19 @@ char *sparta_info(const char *path,int parent_dir_inode,int entry,int inode,int 
 /*
  * sparta_getattr()
  */
-int sparta_getattr(const char *path, struct stat *stbuf)
+int sparta_getattr(struct atrfs *atrfs,const char *path, struct stat *stbuf)
 {
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
    int inode=0,parent_dir_inode,size,locked,entry,isdir,isinfo;
    int r;
-   r = sparta_path(path,&inode,&parent_dir_inode,&size,&locked,&entry,&isdir,&isinfo);
+   r = sparta_path(atrfs,path,&inode,&parent_dir_inode,&size,&locked,&entry,&isdir,&isinfo);
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s parent: %d inode %d size %d entry %d\n",__FUNCTION__,path,parent_dir_inode,inode,size,entry);
 
    // Get time stamp
    struct sparta_dir_entry dir_entry;
-   r = sparta_get_dirent(&dir_entry,parent_dir_inode,entry>0?entry:0); //isdir?0:entry);
+   r = sparta_get_dirent(atrfs,&dir_entry,parent_dir_inode,entry>0?entry:0); //isdir?0:entry);
    if ( r<0 ) return r;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s dir entry read\n",__FUNCTION__,path);
    struct tm tm;
@@ -1075,7 +1075,7 @@ int sparta_getattr(const char *path, struct stat *stbuf)
       stbuf->st_mode = MODE_RO(stbuf->st_mode); // These files are never writable
       stbuf->st_ino = inode + 0x10000;
 
-      char *info = sparta_info(path,parent_dir_inode,entry,inode,size);
+      char *info = sparta_info(atrfs,path,parent_dir_inode,entry,inode,size);
       stbuf->st_size = strlen(info);
       free(info);
       if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s info\n",__FUNCTION__,path);
@@ -1085,26 +1085,26 @@ int sparta_getattr(const char *path, struct stat *stbuf)
    if ( isdir )
    {
       ++stbuf->st_nlink;
-      stbuf->st_mode = MODE_DIR(atrfs.atrstat.st_mode & 0777);
+      stbuf->st_mode = MODE_DIR(atrfs->atrstat.st_mode & 0777);
    }
    if ( locked ) stbuf->st_mode = MODE_RO(stbuf->st_mode);
    stbuf->st_size = size;
    stbuf->st_ino = inode;
-   stbuf->st_blocks = (size + atrfs.sectorsize -1) / atrfs.sectorsize + 1; // Approx; accuracy isn't important
+   stbuf->st_blocks = (size + atrfs->sectorsize -1) / atrfs->sectorsize + 1; // Approx; accuracy isn't important
    return 0;
 }
 
 /*
  * sparta_readdir()
  */
-int sparta_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
+int sparta_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
 {
    (void)offset; // FUSE will always read directories from the start in our use
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
    int sector=0,parent_dir_inode,dir_size,locked,entry,isdir,isinfo;
    int r;
-   r = sparta_path(path,&sector,&parent_dir_inode,&dir_size,&locked,&entry,&isdir,&isinfo);
+   r = sparta_path(atrfs,path,&sector,&parent_dir_inode,&dir_size,&locked,&entry,&isdir,&isinfo);
    if ( r<0 ) return r;
    if ( !isdir ) return -ENOTDIR;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s dir with map at sector %d; %d bytes\n",__FUNCTION__,path,sector,dir_size);
@@ -1113,7 +1113,7 @@ int sparta_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t of
    struct sparta_dir_entry dir_entry;
    for ( int i=1;i<(int)(dir_size/sizeof(dir_entry));++i )
    {
-      r = sparta_get_dirent(&dir_entry,sector,i);
+      r = sparta_get_dirent(atrfs,&dir_entry,sector,i);
       if ( r < 0 ) return r;
       if ( dir_entry.status & FLAGS_DELETED ) continue;
       if ( !(dir_entry.status & FLAGS_IN_USE) ) continue;
@@ -1144,23 +1144,23 @@ int sparta_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t of
 /*
  * sparta_read()
  */
-int sparta_read(const char *path, char *buf, size_t size, off_t offset)
+int sparta_read(struct atrfs *atrfs,const char *path, char *buf, size_t size, off_t offset)
 {
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s size %lu offset %ld\n",__FUNCTION__,path,size,offset);
    int inode=0,parent_dir_inode,filesize,locked,entry,isdir,isinfo;
    int r;
    struct sparta_dir_entry dir_entry;
-   r = sparta_path(path,&inode,&parent_dir_inode,&filesize,&locked,&entry,&isdir,&isinfo);
+   r = sparta_path(atrfs,path,&inode,&parent_dir_inode,&filesize,&locked,&entry,&isdir,&isinfo);
    if ( isdir ) return -EISDIR;
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
 
-   r = sparta_get_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_get_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r < 0 ) return r;
 
    if ( isinfo )
    {
-      char *info = sparta_info(path,parent_dir_inode,entry,inode,filesize);
+      char *info = sparta_info(atrfs,path,parent_dir_inode,entry,inode,filesize);
       char *i = info;
       int bytes = strlen(info);
       if ( offset >= bytes )
@@ -1181,17 +1181,17 @@ int sparta_read(const char *path, char *buf, size_t size, off_t offset)
    r=0;
    while ( size && offset < filesize )
    {
-      int sequence = offset / atrfs.sectorsize;
-      int sector = sparta_get_sector(inode,sequence,0);
+      int sequence = offset / atrfs->sectorsize;
+      int sector = sparta_get_sector(atrfs,inode,sequence,0);
       int bytes;
       if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s inode sector %d, size %ld, offset %ld, relative sector %d\n",__FUNCTION__,path,inode,size,offset,sequence);
       if ( sector < 0 ) return sector;
       char *s = SECTOR(sector);
-      bytes = atrfs.sectorsize;
-      if ( sequence * atrfs.sectorsize + bytes > filesize ) bytes = filesize - sequence * atrfs.sectorsize;
-      bytes -= offset%atrfs.sectorsize;
+      bytes = atrfs->sectorsize;
+      if ( sequence * atrfs->sectorsize + bytes > filesize ) bytes = filesize - sequence * atrfs->sectorsize;
+      bytes -= offset%atrfs->sectorsize;
       if ( (size_t)bytes > size ) bytes = size;
-      memcpy(buf,s+offset%atrfs.sectorsize,bytes);
+      memcpy(buf,s+offset%atrfs->sectorsize,bytes);
       buf+=bytes;
       size-=bytes;
       r+=bytes;
@@ -1201,12 +1201,12 @@ int sparta_read(const char *path, char *buf, size_t size, off_t offset)
    return r;
 }
 
-int sparta_write(const char *path, const char *buf, size_t size, off_t offset)
+int sparta_write(struct atrfs *atrfs,const char *path, const char *buf, size_t size, off_t offset)
 {
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s size %lu offset %ld\n",__FUNCTION__,path,size,offset);
    int inode=0,parent_dir_inode,filesize,locked,entry,isdir,isinfo;
    int r;
-   r = sparta_path(path,&inode,&parent_dir_inode,&filesize,&locked,&entry,&isdir,&isinfo);
+   r = sparta_path(atrfs,path,&inode,&parent_dir_inode,&filesize,&locked,&entry,&isdir,&isinfo);
    if ( isdir ) return -EISDIR;
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
@@ -1215,7 +1215,7 @@ int sparta_write(const char *path, const char *buf, size_t size, off_t offset)
    // Quick lazy hack: Extend file if needed first
    if ( offset + size > (size_t)filesize )
    {
-      r = sparta_truncate(path,offset+size);
+      r = sparta_truncate(atrfs,path,offset+size);
       if ( r<0 ) return r;
    }
 
@@ -1227,10 +1227,10 @@ int sparta_write(const char *path, const char *buf, size_t size, off_t offset)
       int seq = OFFSET_TO_SECTOR(offset);
       int localoffset = OFFSET_TO_SECTOR_OFFSET(offset);
       unsigned char *s;
-      sector = sparta_get_sector(inode,seq,1); // Allocate a new sector if file is sparse
+      sector = sparta_get_sector(atrfs,inode,seq,1); // Allocate a new sector if file is sparse
       if ( sector<0 ) return sector;
       s = SECTOR(sector);
-      bytes = atrfs.sectorsize - localoffset;
+      bytes = atrfs->sectorsize - localoffset;
       if ( (size_t)bytes > size ) bytes = size;
       memcpy(s+localoffset,buf,bytes);
       written += bytes;
@@ -1244,10 +1244,10 @@ int sparta_write(const char *path, const char *buf, size_t size, off_t offset)
    // Update file timestamp
    
    struct sparta_dir_entry dir_entry;
-   r = sparta_get_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_get_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r<0 ) return r;
    sparta_dirent_time_set(&dir_entry,time(NULL));
-   r = sparta_put_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_put_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r<0 ) return r;
    return written;
 }
@@ -1255,7 +1255,7 @@ int sparta_write(const char *path, const char *buf, size_t size, off_t offset)
 /*
  * sparta_mkdir()
  */
-int sparta_mkdir(const char *path,mode_t mode)
+int sparta_mkdir(struct atrfs *atrfs,const char *path,mode_t mode)
 {
    (void)mode; // Always create read-write, but allow chmod to lock
 
@@ -1268,22 +1268,22 @@ int sparta_mkdir(const char *path,mode_t mode)
    struct sparta_dir_entry dir_entry;
    int inode=0,parent_dir_inode,size,locked,entry,isdir,isinfo;
    int r;
-   r = sparta_path(path,&inode,&parent_dir_inode,&size,&locked,&entry,&isdir,&isinfo);
+   r = sparta_path(atrfs,path,&inode,&parent_dir_inode,&size,&locked,&entry,&isdir,&isinfo);
    if ( r<0 ) return r;
    if ( r == 0 ) return -EEXIST;
 
    if ( entry == -1 )
    {
-      r = sparta_extend_directory(parent_dir_inode,&entry);
+      r = sparta_extend_directory(atrfs,parent_dir_inode,&entry);
       if ( r<0 ) return r;
    }
 
-   r = sparta_get_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_get_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r<0 ) return r;
    if ( dir_entry.status == 0 )
    {
       // Add another blank entry at the end
-      r = sparta_extend_directory(parent_dir_inode,NULL);
+      r = sparta_extend_directory(atrfs,parent_dir_inode,NULL);
       if ( r<0 ) return r;
    }
 
@@ -1317,7 +1317,7 @@ int sparta_mkdir(const char *path,mode_t mode)
    }
 
    // Allocate sector map
-   int dirmap = sparta_alloc_any_sector();
+   int dirmap = sparta_alloc_any_sector(atrfs);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s allocated sector map %d\n",__FUNCTION__,path,dirmap);
    if ( dirmap < 0 )
    {
@@ -1327,11 +1327,11 @@ int sparta_mkdir(const char *path,mode_t mode)
    unsigned char *map = SECTOR(dirmap);
 
    // Allocate a sector in the sector map
-   int dirsec = sparta_alloc_any_sector();
+   int dirsec = sparta_alloc_any_sector(atrfs);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s allocated directory sector %d\n",__FUNCTION__,path,dirsec);
    if ( dirsec < 0 )
    {
-      sparta_free_sector(dirmap);
+      sparta_free_sector(atrfs,dirmap);
       return -ENOSPC;
    }
    map[4]=dirsec & 0xff;
@@ -1340,7 +1340,7 @@ int sparta_mkdir(const char *path,mode_t mode)
    // Point the directory entry at the sector map
    dir_entry.sector_map[0] = dirmap & 0xff;
    dir_entry.sector_map[1] = dirmap >> 8;
-   r = sparta_put_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_put_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r<0 ) return r; // Should be impossible
 
    // Create header entry in new directory
@@ -1349,12 +1349,12 @@ int sparta_mkdir(const char *path,mode_t mode)
    head->parent_dir_map[0] = parent_dir_inode & 0xff;
    head->parent_dir_map[1] = parent_dir_inode >> 8;
 
-   r = sparta_put_dirent(&dir_entry,dirmap,0);
+   r = sparta_put_dirent(atrfs,&dir_entry,dirmap,0);
    if ( r<0 ) return r;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s success\n",__FUNCTION__,path);
 
    // Update time stamp on parent directory
-   r = sparta_touch_parent_dir(path,parent_dir_inode);
+   r = sparta_touch_parent_dir(atrfs,path,parent_dir_inode);
    if ( r<0 ) return r;
    return 0;
 }
@@ -1365,18 +1365,18 @@ int sparta_mkdir(const char *path,mode_t mode)
  * Free all sectors in the sector map, and then the map itself.
  * Used in unlink, truncate, and rmdir
  */
-int sparta_freemap(int inode)
+int sparta_freemap(struct atrfs *atrfs,int inode)
 {
    int r;
    while ( inode )
    {
       unsigned char *s = SECTOR(inode);
-      for ( int i=2;i<atrfs.sectorsize/2;++i )
+      for ( int i=2;i<atrfs->sectorsize/2;++i )
       {
          int sector = BYTES2(s+i*2);
          if ( sector )
          {
-            r = sparta_free_sector(sector);
+            r = sparta_free_sector(atrfs,sector);
             if ( r )
             {
                if ( options.debug ) fprintf(stderr,"DEBUG: %s: Freeing data free sector %d\n",__FUNCTION__,sector);
@@ -1384,7 +1384,7 @@ int sparta_freemap(int inode)
          }
       }
 
-      r = sparta_free_sector(inode);
+      r = sparta_free_sector(atrfs,inode);
       if ( r )
       {
          if ( options.debug ) fprintf(stderr,"DEBUG: %s: Freeing free map sector %d\n",__FUNCTION__,inode);
@@ -1398,12 +1398,12 @@ int sparta_freemap(int inode)
 /*
  * sparta_rmdir()
  */
-int sparta_rmdir(const char *path)
+int sparta_rmdir(struct atrfs *atrfs,const char *path)
 {
    struct sparta_dir_entry dir_entry;
    int inode=0,parent_dir_inode,size,locked,entry,isdir,isinfo;
    int r;
-   r = sparta_path(path,&inode,&parent_dir_inode,&size,&locked,&entry,&isdir,&isinfo);
+   r = sparta_path(atrfs,path,&inode,&parent_dir_inode,&size,&locked,&entry,&isdir,&isinfo);
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
    if ( !isdir ) return -ENOTDIR;
@@ -1413,7 +1413,7 @@ int sparta_rmdir(const char *path)
    // Make sure directory is empty
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s inode %d in dir %d\n",__FUNCTION__,path,inode,parent_dir_inode);
 
-   r = sparta_get_dirent(&dir_entry,inode,0);
+   r = sparta_get_dirent(atrfs,&dir_entry,inode,0);
    if ( r<0 )
    {
       if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s get dir header failed\n",__FUNCTION__,path);
@@ -1425,7 +1425,7 @@ int sparta_rmdir(const char *path)
    }
    for ( unsigned int e=1;e < size/sizeof(struct sparta_dir_entry); ++e)
    {
-      r = sparta_get_dirent(&dir_entry,inode,e);
+      r = sparta_get_dirent(atrfs,&dir_entry,inode,e);
       if ( r<0 )
       {
          if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s get entry %d failed: %d\n",__FUNCTION__,path,e,r);
@@ -1437,7 +1437,7 @@ int sparta_rmdir(const char *path)
    }
 
    // Mark the entry in the parent directory as deleted
-   r = sparta_get_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_get_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r<0 )
    {
       if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s get entry %d failed: %d\n",__FUNCTION__,path,entry,r);
@@ -1445,14 +1445,14 @@ int sparta_rmdir(const char *path)
    }
 
    dir_entry.status = FLAGS_DELETED;
-   r = sparta_put_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_put_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r<0 ) return r;
 
    // Free the sectors
-   sparta_freemap(inode);
+   sparta_freemap(atrfs,inode);
 
    // Update time stamp on parent directory
-   r = sparta_touch_parent_dir(path,parent_dir_inode);
+   r = sparta_touch_parent_dir(atrfs,path,parent_dir_inode);
    if ( r<0 ) return r;
    return 0;
 }
@@ -1460,13 +1460,13 @@ int sparta_rmdir(const char *path)
 /*
  * sparta_unlink()
  */
-int sparta_unlink(const char *path)
+int sparta_unlink(struct atrfs *atrfs,const char *path)
 {
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
 
    int inode=0,parent_dir_inode,size,locked,entry,isdir,isinfo;
    int r;
-   r = sparta_path(path,&inode,&parent_dir_inode,&size,&locked,&entry,&isdir,&isinfo);
+   r = sparta_path(atrfs,path,&inode,&parent_dir_inode,&size,&locked,&entry,&isdir,&isinfo);
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
    if ( isdir ) return -EISDIR;
@@ -1475,21 +1475,21 @@ int sparta_unlink(const char *path)
 
    // Flag file as deleted
    struct sparta_dir_entry dir_entry;
-   r = sparta_get_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_get_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r<0 )
    {
       if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s get entry failed: %d\n",__FUNCTION__,path,r);
       return r;
    }
    dir_entry.status = FLAGS_DELETED;
-   r = sparta_put_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_put_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r<0 ) return r;
 
    // Free all data sectors and the map
-   sparta_freemap(BYTES2(dir_entry.sector_map));
+   sparta_freemap(atrfs,BYTES2(dir_entry.sector_map));
 
    // Update time stamp on parent directory
-   r = sparta_touch_parent_dir(path,parent_dir_inode);
+   r = sparta_touch_parent_dir(atrfs,path,parent_dir_inode);
    if ( r<0 ) return r;
    return 0;
 }
@@ -1497,18 +1497,18 @@ int sparta_unlink(const char *path)
 /*
  * sparta_rename()
  */
-int sparta_rename(const char *old, const char *new, unsigned int flags)
+int sparta_rename(struct atrfs *atrfs,const char *old, const char *new, unsigned int flags)
 {
    int inode=0,parent_dir_inode,size,locked,entry,isdir,isinfo;
    int inode2=0,parent_dir_inode2,size2,locked2,entry2,isdir2;
    int r,r2;
    struct sparta_dir_entry dir_entry,dir_entry2;
-   r = sparta_path(old,&inode,&parent_dir_inode,&size,&locked,&entry,&isdir,&isinfo);
+   r = sparta_path(atrfs,old,&inode,&parent_dir_inode,&size,&locked,&entry,&isdir,&isinfo);
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
    if ( isinfo ) return -EACCES;
    if ( isdir ) if ( atrfs_strncmp(old,new,strlen(old)) == 0 ) return -EINVAL; // attempt to make a directory a subdirectory of itself
-   r2 = r = sparta_path(new,&inode2,&parent_dir_inode2,&size2,&locked2,&entry2,&isdir2,&isinfo);
+   r2 = r = sparta_path(atrfs,new,&inode2,&parent_dir_inode2,&size2,&locked2,&entry2,&isdir2,&isinfo);
    if ( r<0 ) return r;
    if ( isinfo ) return -EACCES;
    if ( r==0 && (flags & RENAME_NOREPLACE) ) return -EEXIST;
@@ -1518,12 +1518,12 @@ int sparta_rename(const char *old, const char *new, unsigned int flags)
    if ( r==0 && inode==inode2 ) return -EINVAL; // Rename to self
    if ( (flags & RENAME_EXCHANGE) && isdir2 && atrfs_strncmp(old,new,strlen(new)) == 0 ) return -EINVAL;
 
-   r = sparta_get_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_get_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r<0 ) return r;
 
    if ( r2 == 0 )
    {
-      r = sparta_get_dirent(&dir_entry2,parent_dir_inode2,entry2);
+      r = sparta_get_dirent(atrfs,&dir_entry2,parent_dir_inode2,entry2);
       if ( r<0 ) return r;
    }
 
@@ -1538,39 +1538,39 @@ int sparta_rename(const char *old, const char *new, unsigned int flags)
       memcpy(copy,dir_entry.file_name,8+3);
       memcpy(dir_entry.file_name,dir_entry2.file_name,8+3);
       memcpy(dir_entry2.file_name,copy,8+3);
-      r = sparta_put_dirent(&dir_entry,parent_dir_inode,entry);
+      r = sparta_put_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
       if ( r<0 ) return r;
-      r = sparta_put_dirent(&dir_entry2,parent_dir_inode2,entry2);
+      r = sparta_put_dirent(atrfs,&dir_entry2,parent_dir_inode2,entry2);
       if ( r<0 ) return r;
 
       // Update time stamp on parent directories
-      r = sparta_touch_parent_dir(old,parent_dir_inode);
+      r = sparta_touch_parent_dir(atrfs,old,parent_dir_inode);
       if ( r<0 ) return r;
-      r = sparta_touch_parent_dir(new,parent_dir_inode2);
+      r = sparta_touch_parent_dir(atrfs,new,parent_dir_inode2);
       if ( r<0 ) return r;
       
       // Rename in directory header as well
       if ( isdir )
       {
          struct sparta_dir_header head;
-         r = sparta_get_dirent((void *)&head,inode,0);
+         r = sparta_get_dirent(atrfs,(void *)&head,inode,0);
          if ( r<0 ) return r;
          memcpy(head.dir_name,dir_entry2.file_name,8+3);
-         r = sparta_put_dirent((void *)&head,inode,0);
+         r = sparta_put_dirent(atrfs,(void *)&head,inode,0);
          if ( r<0 ) return r;
       }
       if ( isdir2 )
       {
          struct sparta_dir_header head;
-         r = sparta_get_dirent((void *)&head,inode2,0);
+         r = sparta_get_dirent(atrfs,(void *)&head,inode2,0);
          if ( r<0 ) return r;
          memcpy(head.dir_name,dir_entry.file_name,8+3);
-         r = sparta_put_dirent((void *)&head,inode2,0);
+         r = sparta_put_dirent(atrfs,(void *)&head,inode2,0);
          if ( r<0 ) return r;
       }
 
       if ( flags & RENAME_EXCHANGE ) return 0;
-      r = sparta_unlink(old);
+      r = sparta_unlink(atrfs,old);
       if ( options.debug ) fprintf(stderr,"DEBUG: %s unlink removed file returned %d\n",__FUNCTION__,r);
       return r;
    }
@@ -1601,22 +1601,22 @@ int sparta_rename(const char *old, const char *new, unsigned int flags)
             ++n;
          }
       }
-      r = sparta_put_dirent(&dir_entry,parent_dir_inode,entry);
+      r = sparta_put_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
       if ( r<0 ) return r;
 
       // Rename in directory header as well
       if ( isdir )
       {
          struct sparta_dir_header head;
-         r = sparta_get_dirent((void *)&head,inode,0);
+         r = sparta_get_dirent(atrfs,(void *)&head,inode,0);
          if ( r<0 ) return r;
          memcpy(head.dir_name,dir_entry.file_name,8+3);
-         r = sparta_put_dirent((void *)&head,inode,0);
+         r = sparta_put_dirent(atrfs,(void *)&head,inode,0);
          if ( r<0 ) return r;
       }
 
       // Update time stamp on parent directory
-      r = sparta_touch_parent_dir(old,parent_dir_inode);
+      r = sparta_touch_parent_dir(atrfs,old,parent_dir_inode);
       if ( r<0 ) return r;
 
       return 0;
@@ -1630,17 +1630,17 @@ int sparta_rename(const char *old, const char *new, unsigned int flags)
 
       if ( entry2 == -1 )
       {
-         r = sparta_extend_directory(parent_dir_inode2,&entry2);
+         r = sparta_extend_directory(atrfs,parent_dir_inode2,&entry2);
          if ( r<0 ) return r;
       }
 
       if ( entry2 < 1 ) return -EIO; // Should be impossible.
-      r = sparta_get_dirent(&dir_entry,parent_dir_inode,entry);
+      r = sparta_get_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
       if ( r<0 ) return r;
       if ( dir_entry.status == 0 )
       {
          // Add another blank entry at the end
-         r = sparta_extend_directory(parent_dir_inode,NULL);
+         r = sparta_extend_directory(atrfs,parent_dir_inode,NULL);
          if ( r<0 ) return r;
       }
 
@@ -1669,29 +1669,29 @@ int sparta_rename(const char *old, const char *new, unsigned int flags)
       }
 
       // Save new entry
-      r = sparta_put_dirent(&dir_entry,parent_dir_inode2,entry2);
+      r = sparta_put_dirent(atrfs,&dir_entry,parent_dir_inode2,entry2);
       if ( r<0 ) return r;
 
       // Flag old entry as deleted (will also change name, but who cares?)
       dir_entry.status = FLAGS_DELETED;
-      r = sparta_put_dirent(&dir_entry,parent_dir_inode,entry);
+      r = sparta_put_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
       if ( r<0 ) return r;
 
       // Update name in directory head
       if ( isdir )
       {
          struct sparta_dir_header head;
-         r = sparta_get_dirent((void *)&head,inode,0);
+         r = sparta_get_dirent(atrfs,(void *)&head,inode,0);
          if ( r<0 ) return r;
          memcpy(head.dir_name,dir_entry.file_name,8+3);
-         r = sparta_put_dirent((void *)&head,inode,0);
+         r = sparta_put_dirent(atrfs,(void *)&head,inode,0);
          if ( r<0 ) return r;
       }
 
       // Update time stamp on parent directories
-      r = sparta_touch_parent_dir(old,parent_dir_inode);
+      r = sparta_touch_parent_dir(atrfs,old,parent_dir_inode);
       if ( r<0 ) return r;
-      r = sparta_touch_parent_dir(new,parent_dir_inode2);
+      r = sparta_touch_parent_dir(atrfs,new,parent_dir_inode2);
       if ( r<0 ) return r;
 
       return 0;
@@ -1704,13 +1704,13 @@ int sparta_rename(const char *old, const char *new, unsigned int flags)
 /*
  * sparta_chmod()
  */
-int sparta_chmod(const char *path, mode_t mode)
+int sparta_chmod(struct atrfs *atrfs,const char *path, mode_t mode)
 {
    if ( options.debug ) fprintf(stderr,"DEBUG: %s.%d\n",__FUNCTION__,__LINE__);
 
    int inode=0,parent_dir_inode,size,locked,entry,isdir,isinfo;
    int r;
-   r = sparta_path(path,&inode,&parent_dir_inode,&size,&locked,&entry,&isdir,&isinfo);
+   r = sparta_path(atrfs,path,&inode,&parent_dir_inode,&size,&locked,&entry,&isdir,&isinfo);
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
    if ( isinfo ) return -EACCES;
@@ -1719,7 +1719,7 @@ int sparta_chmod(const char *path, mode_t mode)
    if ( !locked && (mode & 0200) ) return 0; // Already has write permissions
 
    struct sparta_dir_entry dir_entry;
-   r = sparta_get_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_get_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r<0 ) return r;
    if ( mode & 0200 ) // make writable; unlock
    {
@@ -1729,7 +1729,7 @@ int sparta_chmod(const char *path, mode_t mode)
    {
       dir_entry.status |= FLAGS_LOCKED;
    }
-   r = sparta_put_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_put_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r<0 ) return r;
    return 0;
 }
@@ -1737,7 +1737,7 @@ int sparta_chmod(const char *path, mode_t mode)
 /*
  * sparta_create()
  */
-int sparta_create(const char *path, mode_t mode)
+int sparta_create(struct atrfs *atrfs,const char *path, mode_t mode)
 {
    (void)mode; // Always create read-write, but allow chmod to lock it
    // Create a file
@@ -1774,22 +1774,22 @@ int sparta_create(const char *path, mode_t mode)
    int inode=0,parent_dir_inode,filesize,locked,entry,isdir,isinfo;
    int r;
    struct sparta_dir_entry dir_entry;
-   r = sparta_path(path,&inode,&parent_dir_inode,&filesize,&locked,&entry,&isdir,&isinfo);
+   r = sparta_path(atrfs,path,&inode,&parent_dir_inode,&filesize,&locked,&entry,&isdir,&isinfo);
    if ( r<0 ) return r;
    if ( r==0 ) return -EEXIST;
 
    if ( entry == -1 )
    {
-      r = sparta_extend_directory(parent_dir_inode,&entry);
+      r = sparta_extend_directory(atrfs,parent_dir_inode,&entry);
       if ( r<0 ) return r;
    }
 
-   r = sparta_get_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_get_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r<0 ) return r;
    if ( dir_entry.status == 0 )
    {
       // Add another blank entry at the end
-      r = sparta_extend_directory(parent_dir_inode,NULL);
+      r = sparta_extend_directory(atrfs,parent_dir_inode,NULL);
       if ( r<0 ) return r;
    }
 
@@ -1801,7 +1801,7 @@ int sparta_create(const char *path, mode_t mode)
    memcpy(dir_entry.file_name,name,8+3);
 
    // Allocate sector map
-   int dirmap = sparta_alloc_any_sector();
+   int dirmap = sparta_alloc_any_sector(atrfs);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s allocated sector map %d\n",__FUNCTION__,path,dirmap);
    if ( dirmap < 0 )
    {
@@ -1812,11 +1812,11 @@ int sparta_create(const char *path, mode_t mode)
    // Point the directory entry at the sector map
    dir_entry.sector_map[0] = dirmap & 0xff;
    dir_entry.sector_map[1] = dirmap >> 8;
-   r = sparta_put_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_put_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r<0 ) return r; // Should be impossible
 
    // Update time stamp on parent directory
-   r = sparta_touch_parent_dir(path,parent_dir_inode);
+   r = sparta_touch_parent_dir(atrfs,path,parent_dir_inode);
    if ( r<0 ) return r;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s success\n",__FUNCTION__,path);
@@ -1826,11 +1826,11 @@ int sparta_create(const char *path, mode_t mode)
 /*
  * sparta_truncate()
  */
-int sparta_truncate(const char *path, off_t size)
+int sparta_truncate(struct atrfs *atrfs,const char *path, off_t size)
 {
    int inode=0,parent_dir_inode,filesize,locked,entry,isdir,isinfo;
    int r;
-   r = sparta_path(path,&inode,&parent_dir_inode,&filesize,&locked,&entry,&isdir,&isinfo);
+   r = sparta_path(atrfs,path,&inode,&parent_dir_inode,&filesize,&locked,&entry,&isdir,&isinfo);
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
    if ( isinfo ) return -EACCES;
@@ -1838,7 +1838,7 @@ int sparta_truncate(const char *path, off_t size)
    if ( size == filesize ) return 0; // No change; easy!
 
    struct sparta_dir_entry dir_entry;
-   r = sparta_get_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_get_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r<0 ) return r;
 
    if ( size > filesize )
@@ -1851,17 +1851,17 @@ int sparta_truncate(const char *path, off_t size)
        */
       // Zero blank space at the end, if any
       int last;
-      last = sparta_get_sector(inode,OFFSET_TO_SECTOR(filesize),0);
+      last = sparta_get_sector(atrfs,inode,OFFSET_TO_SECTOR(filesize),0);
       if ( last > 0 )
       {
          int offset = OFFSET_TO_SECTOR_OFFSET(filesize);
-         int bytes = atrfs.sectorsize - offset;
+         int bytes = atrfs->sectorsize - offset;
          if ( bytes )
          {
             memset(SECTOR(last)+offset,0,bytes);
          }
       }
-      r = sparta_add_map_sectors(inode,SIZE_TO_MAP_SECTORS(size)-SIZE_TO_MAP_SECTORS(filesize));
+      r = sparta_add_map_sectors(atrfs,inode,SIZE_TO_MAP_SECTORS(size)-SIZE_TO_MAP_SECTORS(filesize));
       if ( r<0 ) return r;
    }
    else
@@ -1869,7 +1869,7 @@ int sparta_truncate(const char *path, off_t size)
       /*
        * Shrink the file
        */
-      int newsectors = (size+atrfs.sectorsize-1)/atrfs.sectorsize; // 0, 1, 2, ...
+      int newsectors = (size+atrfs->sectorsize-1)/atrfs->sectorsize; // 0, 1, 2, ...
       char *s;
       while ( newsectors > ENTRIES_PER_MAP_SECTOR )
       {
@@ -1880,7 +1880,7 @@ int sparta_truncate(const char *path, off_t size)
       for (int seq=newsectors;seq<ENTRIES_PER_MAP_SECTOR;++seq)
       {
          int sec = BYTES2(s+seq*2+2);
-         r = sparta_free_sector(sec);
+         r = sparta_free_sector(atrfs,sec);
          if ( r < 0 ) return r;
          s[seq*2+2] = 0;
          s[seq*2+2+1] = 0;
@@ -1892,7 +1892,7 @@ int sparta_truncate(const char *path, off_t size)
          s[0] = s[1] = 0; // Clear next pointer
          s=SECTOR(next);
          s[2] = s[3] = 0; // Clear previous pointer;
-         r = sparta_freemap(next);
+         r = sparta_freemap(atrfs,next);
          if ( r<0 ) return r;
       }
    }
@@ -1904,23 +1904,23 @@ int sparta_truncate(const char *path, off_t size)
 
    // Update time stamp
    sparta_dirent_time_set(&dir_entry,time(NULL));
-   r = sparta_put_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_put_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r<0 ) return r;
    return 0;
 }
 
 #if (FUSE_USE_VERSION >= 30)
-int sparta_utimens(const char *path, const struct timespec tv[2])
+int sparta_utimens(struct atrfs *atrfs,const char *path, const struct timespec tv[2])
 {
    int inode=0,parent_dir_inode,size,locked,entry,isdir,isinfo;
    int r;
-   r = sparta_path(path,&inode,&parent_dir_inode,&size,&locked,&entry,&isdir,&isinfo);
+   r = sparta_path(atrfs,path,&inode,&parent_dir_inode,&size,&locked,&entry,&isdir,&isinfo);
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
    if ( isinfo ) return -EACCES;
 
    struct sparta_dir_entry dir_entry;
-   r = sparta_get_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_get_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r<0 ) return r;
 
    time_t secs = tv[1].tv_sec;
@@ -1936,16 +1936,16 @@ int sparta_utimens(const char *path, const struct timespec tv[2])
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: "
                                 "  Time: %d:%02d:%02d\n",__FUNCTION__,dir_entry.file_time[0],dir_entry.file_time[1],dir_entry.file_time[2]);
 
-   r = sparta_put_dirent(&dir_entry,parent_dir_inode,entry);
+   r = sparta_put_dirent(atrfs,&dir_entry,parent_dir_inode,entry);
    if ( r<0 ) return r;
    return 0;
 }
 #else
-int sparta_utime(const char *path, struct utimbuf *utimbuf)
+int sparta_utime(struct atrfs *atrfs,const char *path, struct utimbuf *utimbuf)
 {
    int inode=0,parent_dir_inode,size,locked,entry,isdir,isinfo;
    int r;
-   r = sparta_path(path,&inode,&parent_dir_inode,&size,&locked,&entry,&isdir,&isinfo);
+   r = sparta_path(atrfs,path,&inode,&parent_dir_inode,&size,&locked,&entry,&isdir,&isinfo);
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
    if ( isinfo ) return -EACCES;
@@ -1980,12 +1980,12 @@ int sparta_utime(const char *path, struct utimbuf *utimbuf)
 /*
  * sparta_statfs()
  */
-int sparta_statfs(const char *path, struct statvfs *stfsbuf)
+int sparta_statfs(struct atrfs *atrfs,const char *path, struct statvfs *stfsbuf)
 {
    (void)path; // meaningless
-   stfsbuf->f_bsize = atrfs.sectorsize;
-   stfsbuf->f_frsize = atrfs.sectorsize;
-   stfsbuf->f_blocks = atrfs.sectors;
+   stfsbuf->f_bsize = atrfs->sectorsize;
+   stfsbuf->f_frsize = atrfs->sectorsize;
+   stfsbuf->f_blocks = atrfs->sectors;
    struct sector1_sparta *sec1 = SECTOR(1);
    stfsbuf->f_bfree = BYTES2((sec1->free));
    stfsbuf->f_bavail = stfsbuf->f_bfree;
@@ -1999,13 +1999,13 @@ int sparta_statfs(const char *path, struct statvfs *stfsbuf)
 /*
  * sparta_newfs()
  */
-int sparta_newfs(void)
+int sparta_newfs(struct atrfs *atrfs)
 {
    struct sector1_sparta *sec1 = SECTOR(1);
    int next_sector;
 
    // Boot sectors: from table
-   if ( atrfs.sectorsize <= 256 )
+   if ( atrfs->sectorsize <= 256 )
    {
       for (int i=1; i<=3; ++i)
       {
@@ -2024,22 +2024,22 @@ int sparta_newfs(void)
    }
 
    // Sector 1
-   sec1->sectors[0] = atrfs.sectors & 0xff;
-   sec1->sectors[1] = atrfs.sectors >> 8;
-   sec1->bitmap_sectors = ((atrfs.sectors+7)/8 + atrfs.sectorsize-1) / atrfs.sectorsize;
+   sec1->sectors[0] = atrfs->sectors & 0xff;
+   sec1->sectors[1] = atrfs->sectors >> 8;
+   sec1->bitmap_sectors = ((atrfs->sectors+7)/8 + atrfs->sectorsize-1) / atrfs->sectorsize;
    sec1->first_bitmap[0] = next_sector & 0xff;
    sec1->first_bitmap[1] = next_sector >> 8; // Always zero
    next_sector += sec1->bitmap_sectors;
    sec1->dir[0] = next_sector & 0xff;
    sec1->dir[1] = next_sector >> 8; // Always zero
-   switch (atrfs.sectorsize)
+   switch (atrfs->sectorsize)
    {
       case 128: sec1->sector_size = 128; break;
       case 256: sec1->sector_size = 0; break;
       case 512: sec1->sector_size = 1; break;
       default: return -EIO; // Illegal sector size
    }
-   switch (atrfs.sectors)
+   switch (atrfs->sectors)
    {
       case 720: // Single sided, single- or double-density
       case 1040: // 1050 enhanced density
@@ -2097,9 +2097,9 @@ int sparta_newfs(void)
 
    // Free bitmap and free count
    sec1->free[0] = sec1->free[1] = 0; // Add in as we free
-   for ( int i=next_sector; i<=atrfs.sectors; ++i )
+   for ( int i=next_sector; i<=atrfs->sectors; ++i )
    {
-      sparta_free_sector(i);
+      sparta_free_sector(atrfs,i);
    }
    
    // Done
@@ -2109,7 +2109,7 @@ int sparta_newfs(void)
 /*
  * sparta_fsinfo()
  */
-char *sparta_fsinfo(void)
+char *sparta_fsinfo(struct atrfs *atrfs)
 {
    char *buf=malloc(16*1024);
    if ( !buf ) return NULL;
@@ -2158,7 +2158,7 @@ char *sparta_fsinfo(void)
    {
       b+=sprintf(b,"Map to load at boot:  none (0)\n");
    }
-   else if ( BYTES2(sec1->sec_num_file_load_map) <= sec1->boot_sectors || BYTES2(sec1->sec_num_file_load_map) > atrfs.sectors )
+   else if ( BYTES2(sec1->sec_num_file_load_map) <= sec1->boot_sectors || BYTES2(sec1->sec_num_file_load_map) > atrfs->sectors )
    {
       b+=sprintf(b,"Map to load at boot:  invalid (%d)\n",BYTES2(sec1->sec_num_file_load_map));
    }
@@ -2173,9 +2173,9 @@ char *sparta_fsinfo(void)
    b+=sprintf(b,"\nFree Map:\n");
    int prev=2;
    int start= -1;
-   for ( int i=0;i<=atrfs.sectors;++i )
+   for ( int i=0;i<=atrfs->sectors;++i )
    {
-      int r = sparta_bitmap_status(i);
+      int r = sparta_bitmap_status(atrfs,i);
 
       if ( r == prev ) continue;
       // Finish the previous line
@@ -2190,8 +2190,8 @@ char *sparta_fsinfo(void)
       start=i;
       prev=r;
    }
-   if ( start != atrfs.sectors ) 
-      b+=sprintf(b," -- %d",atrfs.sectors);
+   if ( start != atrfs->sectors ) 
+      b+=sprintf(b," -- %d",atrfs->sectors);
    b+=sprintf(b,"\n");
 #endif
    return buf;

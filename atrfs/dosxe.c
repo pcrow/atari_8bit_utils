@@ -71,11 +71,11 @@
 /*
  * Macros and defines
  */
-#define CLUSTER_TO_SEC(n) (atrfs.sectorsize==128?(n)*2:(n))
-#define CLUSTER(n) SECTOR(atrfs.sectorsize==128?(n)*2:(n)) // 256-byte logical sector
+#define CLUSTER_TO_SEC(n) (atrfs->sectorsize==128?(n)*2:(n))
+#define CLUSTER(n) SECTOR(atrfs->sectorsize==128?(n)*2:(n)) // 256-byte logical sector
 // Note: It may format a disk to not use all available clusters at the end
 // It seems to ignore several clusters at the end of AT810 images, so MAX_PHYSCIAL_CLUSTERS > MAX_CLUSTERS
-#define MAX_PHYSICAL_CLUSTER (atrfs.sectorsize==128?(atrfs.sectors-1)/2:atrfs.sectors)
+#define MAX_PHYSICAL_CLUSTER (atrfs->sectorsize==128?(atrfs->sectors-1)/2:atrfs->sectors)
 #define MAX_CLUSTER (BYTES2(((struct dosxe_vtoc_cluster *)CLUSTER(4))->total_clusters)-1)
 #define VTOC_CLUSTER 4
 #define VTOC_CLUSTERS        (((MAX_PHYSICAL_CLUSTER+7) / 8 + 10 + 255)/256)
@@ -204,22 +204,22 @@ enum drivetype {
 /*
  * Function prototypes
  */
-int dosxe_sanity(void);
-int dosxe_getattr(const char *path, struct stat *stbuf);
-int dosxe_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
-int dosxe_read(const char *path, char *buf, size_t size, off_t offset);
-int dosxe_write(const char *path, const char *buf, size_t size, off_t offset);
-int dosxe_mkdir(const char *path,mode_t mode);
-int dosxe_rmdir(const char *path);
-int dosxe_unlink(const char *path);
-int dosxe_rename(const char *path1, const char *path2, unsigned int flags);
-int dosxe_chmod(const char *path, mode_t mode);
-int dosxe_create(const char *path, mode_t mode);
-int dosxe_truncate(const char *path, off_t size);
-int dosxe_utimens(const char *path, const struct timespec tv[2]);
-int dosxe_statfs(const char *path, struct statvfs *stfsbuf);
-int dosxe_newfs(void);
-char *dosxe_fsinfo(void);
+int dosxe_sanity(struct atrfs *atrfs);
+int dosxe_getattr(struct atrfs *atrfs,const char *path, struct stat *stbuf);
+int dosxe_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
+int dosxe_read(struct atrfs *atrfs,const char *path, char *buf, size_t size, off_t offset);
+int dosxe_write(struct atrfs *atrfs,const char *path, const char *buf, size_t size, off_t offset);
+int dosxe_mkdir(struct atrfs *atrfs,const char *path,mode_t mode);
+int dosxe_rmdir(struct atrfs *atrfs,const char *path);
+int dosxe_unlink(struct atrfs *atrfs,const char *path);
+int dosxe_rename(struct atrfs *atrfs,const char *path1, const char *path2, unsigned int flags);
+int dosxe_chmod(struct atrfs *atrfs,const char *path, mode_t mode);
+int dosxe_create(struct atrfs *atrfs,const char *path, mode_t mode);
+int dosxe_truncate(struct atrfs *atrfs,const char *path, off_t size);
+int dosxe_utimens(struct atrfs *atrfs,const char *path, const struct timespec tv[2]);
+int dosxe_statfs(struct atrfs *atrfs,const char *path, struct statvfs *stfsbuf);
+int dosxe_newfs(struct atrfs *atrfs);
+char *dosxe_fsinfo(struct atrfs *atrfs);
 
 /*
  * Global variables
@@ -382,7 +382,7 @@ int dosxe_datecode(time_t secs)
  *
  * Return the bit from the bitmap for the cluster (0 if allocated)
  */
-int dosxe_bitmap_status(int cluster)
+int dosxe_bitmap_status(struct atrfs *atrfs,int cluster)
 {
    // DOS XE doesn't have bits for clusters 0-3
    if ( cluster < 4 ) return 0;
@@ -397,7 +397,7 @@ int dosxe_bitmap_status(int cluster)
 /*
  * dosxe_free_cluster()
  */
-int dosxe_free_cluster(int cluster)
+int dosxe_free_cluster(struct atrfs *atrfs,int cluster)
 {
    if ( cluster < 4 ) return -EIO;
    if ( cluster > MAX_CLUSTER ) return -EIO;
@@ -415,13 +415,13 @@ int dosxe_free_cluster(int cluster)
 }
 
 /*
- * dosxe_sanity()
+ * dosxe_sanity(atrfs)
  *
  * Return 0 if this is a valid DOS XE file system
  */
-int dosxe_sanity(void)
+int dosxe_sanity(struct atrfs *atrfs)
 {
-   if ( atrfs.sectorsize != 128 && atrfs.sectorsize != 256 ) return 1; // Must be SD or DD
+   if ( atrfs->sectorsize != 128 && atrfs->sectorsize != 256 ) return 1; // Must be SD or DD
 
    struct sector1_dosxe *sec1 = SECTOR(1);
    if ( sec1->pad_zero != 'X' ) return 1; // Flag for DOS XE
@@ -438,9 +438,9 @@ int dosxe_sanity(void)
    }
    // if ( (sec1->sio_write_cmd & 0x7f) != 'W' ) return 1; // Could also be 'P'
    if ( (sec1->sio_format_cmd & 0x7f) != '!' ) {;} // FIXME: is it different for 1050 ED?
-   if ( BYTES2R(sec1->sector_size) != atrfs.sectorsize )
+   if ( BYTES2R(sec1->sector_size) != atrfs->sectorsize )
    {
-      if ( options.debug > 1 ) fprintf(stderr,"DEBUG: %s: NOT DOS XE inconsistent sector size: %d != %d\n",__FUNCTION__,BYTES2R(sec1->sector_size), atrfs.sectorsize);
+      if ( options.debug > 1 ) fprintf(stderr,"DEBUG: %s: NOT DOS XE inconsistent sector size: %d != %d\n",__FUNCTION__,BYTES2R(sec1->sector_size), atrfs->sectorsize);
       return 1;
    }
 
@@ -452,17 +452,18 @@ int dosxe_sanity(void)
    }
 
 
-   atrfs.readonly = 1; // FIXME: No write support yet
+   atrfs->readonly = 1; // FIXME: No write support yet
    return 0;
 }
 
 /*
  * dosxe_info()
  */
-char *dosxe_info(const char *path,int isdir,int parent_dir_first_cluster,struct dosxe_dir_entry *entry)
+char *dosxe_info(struct atrfs *atrfs,const char *path,int isdir,int parent_dir_first_cluster,struct dosxe_dir_entry *entry)
 {
    char *buf,*b;
 
+   (void)atrfs;
    buf = malloc(64*1024);
    b = buf;
    *b = 0;
@@ -522,7 +523,7 @@ char *dosxe_info(const char *path,int isdir,int parent_dir_first_cluster,struct 
  * If none, then 'entry' might point to an available entry, or it
  * might be NULL if the directory would have to be expanded to add a file.
  */
-int dosxe_path(const char *path,struct dosxe_dir_entry **entry,struct dosxe_dir_entry **parent_entry,int *parent_dir_first_cluster,int *isdir,int *isinfo)
+int dosxe_path(struct atrfs *atrfs,const char *path,struct dosxe_dir_entry **entry,struct dosxe_dir_entry **parent_entry,int *parent_dir_first_cluster,int *isdir,int *isinfo)
 {
    char name[8+3+1]; // 8+3+NULL
    int junk1=0,junk2,junk3;
@@ -627,7 +628,7 @@ int dosxe_path(const char *path,struct dosxe_dir_entry **entry,struct dosxe_dir_
                *parent_dir_first_cluster = BYTES2(e->file_map_blocks[0]);
                *parent_entry = *entry;
                *entry = e;
-               return dosxe_path(path,entry,parent_entry,parent_dir_first_cluster,isdir,isinfo);
+               return dosxe_path(atrfs,path,entry,parent_entry,parent_dir_first_cluster,isdir,isinfo);
             }
             if ( *path ) return -ENOTDIR; // Should have been a directory
             if ( (e->status & FLAGS_DIR) ) *isdir = 1;
@@ -645,7 +646,7 @@ int dosxe_path(const char *path,struct dosxe_dir_entry **entry,struct dosxe_dir_
 /*
  * dosxe_fsinfo()
  */
-char *dosxe_fsinfo(void)
+char *dosxe_fsinfo(struct atrfs *atrfs)
 {
    char *buf=malloc(16*1024);
    if ( !buf ) return NULL;
@@ -711,7 +712,7 @@ char *dosxe_fsinfo(void)
    int new=0; // Flag to finish last line after loop
    for ( int i=4;i <= MAX_CLUSTER;++i )
    {
-      int r = dosxe_bitmap_status(i);
+      int r = dosxe_bitmap_status(atrfs,i);
       new=0;
 
       if ( r == prev ) continue;
@@ -738,7 +739,7 @@ char *dosxe_fsinfo(void)
 /*
  * dosxe_getattr()
  */
-int dosxe_getattr(const char *path, struct stat *stbuf)
+int dosxe_getattr(struct atrfs *atrfs,const char *path, struct stat *stbuf)
 {
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
    if ( strcmp(path,"/") == 0 )
@@ -759,7 +760,7 @@ int dosxe_getattr(const char *path, struct stat *stbuf)
          stbuf->st_mode = MODE_RO(stbuf->st_mode);
          stbuf->st_size = 256;
          stbuf->st_ino = sec;
-         if ( atrfs.sectorsize == 128 ) stbuf->st_ino = sec*2;
+         if ( atrfs->sectorsize == 128 ) stbuf->st_ino = sec*2;
          return 0; // Good, can read this sector
       }
    }
@@ -768,7 +769,7 @@ int dosxe_getattr(const char *path, struct stat *stbuf)
    int r,isdir,isinfo;
    int parent_dir_first_cluster=0;
    struct dosxe_dir_entry *entry=NULL;
-   r = dosxe_path(path,&entry,NULL,&parent_dir_first_cluster,&isdir,&isinfo);
+   r = dosxe_path(atrfs,path,&entry,NULL,&parent_dir_first_cluster,&isdir,&isinfo);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s path search returned %d\n",__FUNCTION__,path,r);
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
@@ -810,7 +811,7 @@ int dosxe_getattr(const char *path, struct stat *stbuf)
       if ( isdir && !isinfo )
       {
          ++stbuf->st_nlink;
-         stbuf->st_mode = MODE_DIR(atrfs.atrstat.st_mode & 0777);
+         stbuf->st_mode = MODE_DIR(atrfs->atrstat.st_mode & 0777);
       }
       if ( (entry->status & FLAGS_LOCKED) ) stbuf->st_mode = MODE_RO(stbuf->st_mode);
       stbuf->st_size = BYTES2(entry->file_clusters) * 250 + entry->bytes_in_last_cluster;
@@ -827,7 +828,7 @@ int dosxe_getattr(const char *path, struct stat *stbuf)
       stbuf->st_mode = MODE_RO(stbuf->st_mode); // These files are never writable
       stbuf->st_ino += 0x10000;
 
-      char *info = dosxe_info(path,isdir,parent_dir_first_cluster,entry);
+      char *info = dosxe_info(atrfs,path,isdir,parent_dir_first_cluster,entry);
       stbuf->st_size = strlen(info);
       free(info);
       if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s info\n",__FUNCTION__,path);
@@ -840,7 +841,7 @@ int dosxe_getattr(const char *path, struct stat *stbuf)
 /*
  * dosxe_readdir()
  */
-int dosxe_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
+int dosxe_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
 {
    (void)offset;
 
@@ -848,7 +849,7 @@ int dosxe_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t off
 
    int r,isdir,isinfo;
    struct dosxe_dir_entry *entry=NULL;
-   r = dosxe_path(path,&entry,NULL,NULL,&isdir,&isinfo);
+   r = dosxe_path(atrfs,path,&entry,NULL,NULL,&isdir,&isinfo);
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
    if ( !isdir ) return -ENOTDIR;
@@ -912,7 +913,7 @@ int dosxe_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t off
 /*
  * dosxe_read()
  */
-int dosxe_read(const char *path, char *buf, size_t size, off_t offset)
+int dosxe_read(struct atrfs *atrfs,const char *path, char *buf, size_t size, off_t offset)
 {
 
    // Magic /.cluster### files
@@ -935,7 +936,7 @@ int dosxe_read(const char *path, char *buf, size_t size, off_t offset)
    int r,isdir,isinfo;
    struct dosxe_dir_entry *entry=NULL;
    int parent_dir_first_cluster=0;
-   r = dosxe_path(path,&entry,NULL,&parent_dir_first_cluster,&isdir,&isinfo);
+   r = dosxe_path(atrfs,path,&entry,NULL,&parent_dir_first_cluster,&isdir,&isinfo);
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
    if ( isdir && !isinfo ) return -EISDIR;
@@ -943,7 +944,7 @@ int dosxe_read(const char *path, char *buf, size_t size, off_t offset)
    // Info files
    if ( isinfo )
    {
-      char *info = dosxe_info(path,isdir,parent_dir_first_cluster,entry);
+      char *info = dosxe_info(atrfs,path,isdir,parent_dir_first_cluster,entry);
       char *i = info;
       int bytes = strlen(info);
       if ( offset >= bytes )
@@ -1004,20 +1005,20 @@ int dosxe_read(const char *path, char *buf, size_t size, off_t offset)
    return -EOF;
 }
 // Implement these
-int dosxe_write(const char *path, const char *buf, size_t size, off_t offset);
-int dosxe_mkdir(const char *path,mode_t mode);
-int dosxe_rmdir(const char *path);
-int dosxe_unlink(const char *path);
-int dosxe_rename(const char *path1, const char *path2, unsigned int flags);
-int dosxe_chmod(const char *path, mode_t mode);
-int dosxe_create(const char *path, mode_t mode);
-int dosxe_truncate(const char *path, off_t size);
-int dosxe_utimens(const char *path, const struct timespec tv[2]);
+int dosxe_write(struct atrfs *atrfs,const char *path, const char *buf, size_t size, off_t offset);
+int dosxe_mkdir(struct atrfs *atrfs,const char *path,mode_t mode);
+int dosxe_rmdir(struct atrfs *atrfs,const char *path);
+int dosxe_unlink(struct atrfs *atrfs,const char *path);
+int dosxe_rename(struct atrfs *atrfs,const char *path1, const char *path2, unsigned int flags);
+int dosxe_chmod(struct atrfs *atrfs,const char *path, mode_t mode);
+int dosxe_create(struct atrfs *atrfs,const char *path, mode_t mode);
+int dosxe_truncate(struct atrfs *atrfs,const char *path, off_t size);
+int dosxe_utimens(struct atrfs *atrfs,const char *path, const struct timespec tv[2]);
 
 /*
  * dosxe_statfs()
  */
-int dosxe_statfs(const char *path, struct statvfs *stfsbuf)
+int dosxe_statfs(struct atrfs *atrfs,const char *path, struct statvfs *stfsbuf)
 {
    struct dosxe_vtoc_cluster *vtoc = CLUSTER(VTOC_CLUSTER);
 
@@ -1036,7 +1037,7 @@ int dosxe_statfs(const char *path, struct statvfs *stfsbuf)
 /*
  * dosxe_newfs()
  */
-int dosxe_newfs(void)
+int dosxe_newfs(struct atrfs *atrfs)
 {
    // Simple sanity: Must have VTOC, DIR, and one data cluster to be of any use
    if ( MAX_PHYSICAL_CLUSTER < 6 )
@@ -1046,9 +1047,9 @@ int dosxe_newfs(void)
    }
 
    // Non-standard image size warning
-   if ( !( atrfs.sectors == 720 ||
-           (atrfs.sectors == 1040 && atrfs.sectorsize == 128) ||
-           (atrfs.sectors == 1440 && atrfs.sectorsize == 256) ) )
+   if ( !( atrfs->sectors == 720 ||
+           (atrfs->sectors == 1040 && atrfs->sectorsize == 128) ||
+           (atrfs->sectors == 1440 && atrfs->sectorsize == 256) ) )
    {
       fprintf(stderr,
               "WARNING: DOS XE does not always work with non-standard image sizes\n"
@@ -1075,14 +1076,14 @@ int dosxe_newfs(void)
    {
       int imagetype;
       unsigned char *s = SECTOR(i+1);
-      if ( atrfs.sectorsize == 128 )
+      if ( atrfs->sectorsize == 128 )
       {
-         if ( atrfs.sectors > 720 ) imagetype = DRIVE_AT1050;
+         if ( atrfs->sectors > 720 ) imagetype = DRIVE_AT1050;
          else imagetype = DRIVE_AT810;
       }
-      if ( atrfs.sectorsize == 256 )
+      if ( atrfs->sectorsize == 256 )
       {
-         if ( atrfs.sectors <= 720 ) imagetype = DRIVE_SSDD;
+         if ( atrfs->sectors <= 720 ) imagetype = DRIVE_SSDD;
          else imagetype = DRIVE_XF551;
       }
       // FIXME: Does it need hacking for non-standard images ?
@@ -1115,7 +1116,7 @@ int dosxe_newfs(void)
    for ( int cluster = VTOC_CLUSTER + VTOC_CLUSTERS + 1; cluster <= MAX_PHYSICAL_CLUSTER; ++cluster )
    {
       int r;
-      r = dosxe_free_cluster(cluster);
+      r = dosxe_free_cluster(atrfs,cluster);
       if ( r )
       {
          fprintf(stderr,"Error: Inital set of free clusters says %d is already free\n",cluster);

@@ -44,11 +44,11 @@ struct disk_checksums {
 /*
  * Function prototypes
  */
-int unknown_sanity(void);
-int unknown_getattr(const char *path, struct stat *stbuf);
-int unknown_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
-int unknown_statfs(const char *path, struct statvfs *stfsbuf);
-int unknown_newfs(void);
+int unknown_sanity(struct atrfs *atrfs);
+int unknown_getattr(struct atrfs *atrfs,const char *path, struct stat *stbuf);
+int unknown_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
+int unknown_statfs(struct atrfs *atrfs,const char *path, struct statvfs *stfsbuf);
+int unknown_newfs(struct atrfs *atrfs);
 
 /*
  * Global variables
@@ -103,7 +103,7 @@ const char *match_disk_name;
  * Check to see if the disk image matches any of the known checksums
  * Note: This may not work correctly on images that are not single density
  */
-void find_checksum_match(void)
+void find_checksum_match(struct atrfs *atrfs)
 {
    match_found = 0;
    unsigned char digest[16];
@@ -145,15 +145,16 @@ void find_checksum_match(void)
 /*
  * Functions
  */
-int unknown_sanity(void)
+int unknown_sanity(struct atrfs *atrfs)
 {
-   find_checksum_match();
+   find_checksum_match(atrfs);
    if ( match_found ) return 0;
    return 1;
 }
 
-int unknown_getattr(const char *path, struct stat *stbuf)
+int unknown_getattr(struct atrfs *atrfs,const char *path, struct stat *stbuf)
 {
+   (void)atrfs;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
    if ( strcmp(path,"/") == 0 )
    {
@@ -173,7 +174,7 @@ int unknown_getattr(const char *path, struct stat *stbuf)
    return 1;
 }
 
-int unknown_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
+int unknown_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
 {
    (void)path; // Always "/"
    (void)offset;
@@ -185,14 +186,14 @@ int unknown_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t o
 #if 1 // This will work even if we skip the entries
    // Create .sector4 ... .sector720 as appropriate
    struct sector1 *s1 = SECTOR(1);
-   unsigned char *zero = calloc(1,atrfs.sectorsize);
+   unsigned char *zero = calloc(1,atrfs->sectorsize);
    if ( !zero ) return -ENOMEM; // Weird
    char name[32];
-   int digits = sprintf(name,"%d",atrfs.sectors);
-   for (int sec=s1->boot_sectors + 1; sec<=atrfs.sectors; ++sec)
+   int digits = sprintf(name,"%d",atrfs->sectors);
+   for (int sec=s1->boot_sectors + 1; sec<=atrfs->sectors; ++sec)
    {
       unsigned char *s = SECTOR(sec);
-      if ( memcmp(s,zero,atrfs.sectorsize) == 0 ) continue; // Skip empty sectors
+      if ( memcmp(s,zero,atrfs->sectorsize) == 0 ) continue; // Skip empty sectors
       sprintf(name,".sector%0*d",digits,sec);
       filler(buf,name,FILLER_NULL);
    }
@@ -206,26 +207,26 @@ int unknown_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t o
  *
  * Report empty sectors as free.
  */
-int unknown_statfs(const char *path, struct statvfs *stfsbuf)
+int unknown_statfs(struct atrfs *atrfs,const char *path, struct statvfs *stfsbuf)
 {
    (void)path; // meaningless
 
    // Find count of empty sectors
    int free_sectors=0;
    struct sector1 *s1 = SECTOR(1);
-   unsigned char *zero = calloc(1,atrfs.sectorsize);
+   unsigned char *zero = calloc(1,atrfs->sectorsize);
    if ( !zero ) return -ENOMEM; // Weird
-   for (int sec=s1->boot_sectors + 1; sec<=atrfs.sectors; ++sec)
+   for (int sec=s1->boot_sectors + 1; sec<=atrfs->sectors; ++sec)
    {
       unsigned char *s = SECTOR(sec);
-      if ( memcmp(s,zero,atrfs.sectorsize) == 0 ) continue;
+      if ( memcmp(s,zero,atrfs->sectorsize) == 0 ) continue;
       ++free_sectors;
    }
    free(zero);
 
-   stfsbuf->f_bsize = atrfs.sectorsize;
-   stfsbuf->f_frsize = atrfs.sectorsize;
-   stfsbuf->f_blocks = atrfs.sectors;
+   stfsbuf->f_bsize = atrfs->sectorsize;
+   stfsbuf->f_frsize = atrfs->sectorsize;
+   stfsbuf->f_blocks = atrfs->sectors;
    stfsbuf->f_bfree = free_sectors;
    stfsbuf->f_bavail = stfsbuf->f_bfree;
    stfsbuf->f_files = 0; // no file system, no files
@@ -239,7 +240,8 @@ int unknown_statfs(const char *path, struct statvfs *stfsbuf)
  *
  * Seems like a good place for creating blank images
  */
-int unknown_newfs(void)
+int unknown_newfs(struct atrfs *atrfs)
 {
+   (void)atrfs;
    return 0;
 }

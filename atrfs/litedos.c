@@ -42,7 +42,7 @@
 #define BITMAPBYTE(n)   (n/8)
 #define BITMAPMASK(n)   (1<<(7-(n%8)))
 #define CLUSTER_SIZE    ((((unsigned char *)SECTOR(360))[0]&0x3f)+1)
-#define CLUSTER_BYTES   (CLUSTER_SIZE * atrfs.sectorsize)
+#define CLUSTER_BYTES   (CLUSTER_SIZE * atrfs->sectorsize)
 #define VTOC_FIRST_SECTOR (CLUSTER_SIZE <= 4 ? 360 : CLUSTER_SIZE <= 16 ? 352 : CLUSTER_SIZE <= 32 ? 320 : 256) // Is there a formula?
 #define SECTOR_TO_CLUSTER_NUM(n)  ((n)/CLUSTER_SIZE)
 #define VTOC_LAST_SECTOR (VTOC_FIRST_SECTOR - 1 + 2 * CLUSTER_SIZE)
@@ -51,7 +51,7 @@
 #define DIRENT_ENTRY(n)  (((struct litedos_dirent *)SECTOR(DIRENT_SECTOR(n)))+(n)%8)
 #define LITEDOS_VTOC  ((struct litedos_vtoc *)SECTOR(360))
 #define MAP_VALUE(n)  (LITEDOS_VTOC->bitmap[BITMAPBYTE(n)] & BITMAPMASK(n))
-#define MAX_CLUSTER   (atrfs.sectors / CLUSTER_SIZE)
+#define MAX_CLUSTER   (atrfs->sectors / CLUSTER_SIZE)
 #define CLUSTER(n)    (SECTOR((n)/CLUSTER_SIZE))
 
 /*
@@ -87,19 +87,19 @@ enum dirent_flags {
 /*
  * Function prototypes
  */
-int litedos_sanity(void);
-int litedos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
-int litedos_getattr(const char *path, struct stat *stbuf);
-int litedos_read(const char *path, char *buf, size_t size, off_t offset);
-int litedos_write(const char *path, const char *buf, size_t size, off_t offset);
-int litedos_unlink(const char *path);
-int litedos_rename(const char *path1, const char *path2, unsigned int flags);
-int litedos_chmod(const char *path, mode_t mode);
-int litedos_create(const char *path, mode_t mode);
-int litedos_truncate(const char *path, off_t size);
-int litedos_statfs(const char *path, struct statvfs *stfsbuf);
-int litedos_newfs(void);
-char *litedos_fsinfo(void);
+int litedos_sanity(struct atrfs *atrfs);
+int litedos_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t filler, off_t offset);
+int litedos_getattr(struct atrfs *atrfs,const char *path, struct stat *stbuf);
+int litedos_read(struct atrfs *atrfs,const char *path, char *buf, size_t size, off_t offset);
+int litedos_write(struct atrfs *atrfs,const char *path, const char *buf, size_t size, off_t offset);
+int litedos_unlink(struct atrfs *atrfs,const char *path);
+int litedos_rename(struct atrfs *atrfs,const char *path1, const char *path2, unsigned int flags);
+int litedos_chmod(struct atrfs *atrfs,const char *path, mode_t mode);
+int litedos_create(struct atrfs *atrfs,const char *path, mode_t mode);
+int litedos_truncate(struct atrfs *atrfs,const char *path, off_t size);
+int litedos_statfs(struct atrfs *atrfs,const char *path, struct statvfs *stfsbuf);
+int litedos_newfs(struct atrfs *atrfs);
+char *litedos_fsinfo(struct atrfs *atrfs);
 
 /*
  * Global variables
@@ -145,14 +145,14 @@ static const char bootsector[128] =
  */
 
 /*
- * litedos_sanity()
+ * litedos_sanity(atrfs)
  *
  * Return 0 if this is a valid Litedos file system
  */
-int litedos_sanity(void)
+int litedos_sanity(struct atrfs *atrfs)
 {
-   if ( atrfs.sectors < 361 ) return 1; // Must have the root directory
-   if ( atrfs.sectorsize > 256 ) return 1; // No support for 512-byte sectors
+   if ( atrfs->sectors < 361 ) return 1; // Must have the root directory
+   if ( atrfs->sectorsize > 256 ) return 1; // No support for 512-byte sectors
    struct sector1 *sec1 = SECTOR(1);
    if ( sec1->boot_sectors != 1 ) return 1; // Must have 1 boot sector
    if ( sec1->pad_zero == 'X' || sec1->pad_zero == 'S' ) return 1; // Flagged as DOS XE or SpartaDOS
@@ -170,7 +170,7 @@ int litedos_sanity(void)
       default: return 1; // Invalid cluster size
    }
    if ( (((unsigned char *)SECTOR(360))[0]>>6) != 1 ) return 1; // LiteDOS always sets 01 as the top two bits there.
-   if ( BYTES2(LITEDOS_VTOC->total_sectors) != atrfs.sectors ) return 1;
+   if ( BYTES2(LITEDOS_VTOC->total_sectors) != atrfs->sectors ) return 1;
    if ( BYTES2(LITEDOS_VTOC->total_sectors) < BYTES2(LITEDOS_VTOC->free_sectors) ) return 1;
 
    // Cluster 0 is always used, as is SECTOR_TO_CLUSTER_NUM(VTOC_FIRST_SECTOR) and that +1
@@ -184,7 +184,7 @@ int litedos_sanity(void)
       // Validate DIRENT_ENTRY(i) is valid
       struct litedos_dirent *dirent = DIRENT_ENTRY(i);
       if ( (dirent->flags & 0x80) && (dirent->flags & 0x7f) ) return 1; // If deleted, not anything else
-      if ( BYTES2(dirent->start) > atrfs.sectors ) return 1;
+      if ( BYTES2(dirent->start) > atrfs->sectors ) return 1;
    }
    return 0;
 }
@@ -197,7 +197,7 @@ int litedos_sanity(void)
  * If fileno is 0-63, expect the fileno to be at the end of the sectors (DOS 2 mode).
  * Return 0 on success, non-zero if chain fails, but array is still valid as far as the file is readable.
  */
-int litedos_trace_file(int sector,int fileno,int *size,int **sectors)
+int litedos_trace_file(struct atrfs *atrfs,int sector,int fileno,int *size,int **sectors)
 {
    unsigned char *s;
    int r=0;
@@ -208,25 +208,25 @@ int litedos_trace_file(int sector,int fileno,int *size,int **sectors)
 
    while (1)
    {
-      if ( sector > atrfs.sectors )
+      if ( sector > atrfs->sectors )
       {
          if ( options.debug ) fprintf(stderr,"DEBUG: %s: block %d sector %d max %d (fileno %d)\n",__FUNCTION__,block,sector,MAX_CLUSTER,fileno);
          r = 1;
          break;
       }
       s=SECTOR(sector);
-      int next = s[atrfs.sectorsize-3] * 256 + s[atrfs.sectorsize-2]; // Reverse order from normal
+      int next = s[atrfs->sectorsize-3] * 256 + s[atrfs->sectorsize-2]; // Reverse order from normal
       if ( fileno >=0 && fileno < 64 )
       {
          next &= 0x3ff; // Mask off file number
-         if ( fileno != s[atrfs.sectorsize-3]>>2 ) // File number mismatch; don't use the block
+         if ( fileno != s[atrfs->sectorsize-3]>>2 ) // File number mismatch; don't use the block
          {
             r=164;
-            if ( options.debug ) fprintf(stderr,"DEBUG: %s: block %d sector %d fileno mismatch %d should be %d\n",__FUNCTION__,block,sector,s[atrfs.sectorsize-3]>>2,fileno);
+            if ( options.debug ) fprintf(stderr,"DEBUG: %s: block %d sector %d fileno mismatch %d should be %d\n",__FUNCTION__,block,sector,s[atrfs->sectorsize-3]>>2,fileno);
             break;
          }
       }
-      *size += s[atrfs.sectorsize-1];
+      *size += s[atrfs->sectorsize-1];
       ++block;
       if ( sectors )
       {
@@ -236,7 +236,7 @@ int litedos_trace_file(int sector,int fileno,int *size,int **sectors)
       }
       if ( next==0 ) break;
       sector = next;
-      if ( block > atrfs.sectors )
+      if ( block > atrfs->sectors )
       {
          fprintf(stderr,"Corrupted file number %d has a circular list of sectors\n",fileno);
          if ( sectors )
@@ -255,14 +255,14 @@ int litedos_trace_file(int sector,int fileno,int *size,int **sectors)
  *
  * Remove the file number from the ends of the sectors (if there)
  */
-int litedos_remove_fileno(struct litedos_dirent *dirent,int fileno)
+int litedos_remove_fileno(struct atrfs *atrfs,struct litedos_dirent *dirent,int fileno)
 {
    int *sectors;
    int r,size;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %8.8s.%3.3s fileno %d sector %d count %d flags %02x\n",__FUNCTION__,dirent->name,dirent->ext,fileno,BYTES2(dirent->start),BYTES2(dirent->sectors),dirent->flags);
    if ( (dirent->flags & FLAGS_NOFILENO) ) return 0; // Already removed
-   r = litedos_trace_file(BYTES2(dirent->start),fileno,&size,&sectors);
+   r = litedos_trace_file(atrfs,BYTES2(dirent->start),fileno,&size,&sectors);
    if ( r )
    {
       if ( options.debug ) fprintf(stderr,"DEBUG: %s %8.8s.%3.3s fileno %d trace error return %d\n",__FUNCTION__,dirent->name,dirent->ext,fileno,r);
@@ -275,7 +275,7 @@ int litedos_remove_fileno(struct litedos_dirent *dirent,int fileno)
    while ( *s )
    {
       char *buf = SECTOR(*s);
-      buf[atrfs.sectorsize-3] &= 0x03; // Mask off the file number
+      buf[atrfs->sectorsize-3] &= 0x03; // Mask off the file number
       ++s;
    }
    free(sectors);
@@ -287,13 +287,13 @@ int litedos_remove_fileno(struct litedos_dirent *dirent,int fileno)
  *
  * Add the file number from the ends of the sectors (if not already there)
  */
-int litedos_add_fileno(struct litedos_dirent *dirent,int fileno)
+int litedos_add_fileno(struct atrfs *atrfs,struct litedos_dirent *dirent,int fileno)
 {
    int *sectors,*s;
    int r,size;
 
    if ( !( dirent->flags & FLAGS_NOFILENO ) ) return 0; // Already there
-   r = litedos_trace_file(BYTES2(dirent->start),-1,&size,&sectors);
+   r = litedos_trace_file(atrfs,BYTES2(dirent->start),-1,&size,&sectors);
    if ( r ) return r;
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %8.8s.%3.3s fileno %d\n",__FUNCTION__,dirent->name,dirent->ext,fileno);
 
@@ -302,10 +302,10 @@ int litedos_add_fileno(struct litedos_dirent *dirent,int fileno)
    while ( *s )
    {
       char *buf = SECTOR(*s);
-      if ( buf[atrfs.sectorsize-3]>>2 )
+      if ( buf[atrfs->sectorsize-3]>>2 )
       {
          free(sectors);
-         if ( options.debug ) fprintf(stderr,"DEBUG: %s %8.8s.%3.3s can't add fileno due to sector %d\n",__FUNCTION__,dirent->name,dirent->ext,((buf[atrfs.sectorsize-3]>>2)<<8)|buf[atrfs.sectorsize-2]);
+         if ( options.debug ) fprintf(stderr,"DEBUG: %s %8.8s.%3.3s can't add fileno due to sector %d\n",__FUNCTION__,dirent->name,dirent->ext,((buf[atrfs->sectorsize-3]>>2)<<8)|buf[atrfs->sectorsize-2]);
          return 1; // Nope!
       }
       ++s;
@@ -317,8 +317,8 @@ int litedos_add_fileno(struct litedos_dirent *dirent,int fileno)
    while ( *s )
    {
       char *buf = SECTOR(*s);
-      buf[atrfs.sectorsize-3] &= 0x03; // Mask off the file number (should be a no-op)
-      buf[atrfs.sectorsize-3] |= fileno << 2; // Add file number
+      buf[atrfs->sectorsize-3] &= 0x03; // Mask off the file number (should be a no-op)
+      buf[atrfs->sectorsize-3] |= fileno << 2; // Add file number
       ++s;
    }
    free(sectors);
@@ -335,7 +335,7 @@ int litedos_add_fileno(struct litedos_dirent *dirent,int fileno)
  *   1 File not found, but could be created
  *   -x return this error (usually -ENOENT)
  */
-int litedos_path(const char *path,int *sector,int *count,int *locked,int *fileno,int *entry,int *isdir,int *isinfo)
+int litedos_path(struct atrfs *atrfs,const char *path,int *sector,int *count,int *locked,int *fileno,int *entry,int *isdir,int *isinfo)
 {
    unsigned char name[8+3+1]; // 8+3+NULL
 
@@ -435,7 +435,7 @@ int litedos_path(const char *path,int *sector,int *count,int *locked,int *fileno
  *
  * Return the bit from the bitmap for the sector (0 if allocated)
  */
-int litedos_bitmap_status(int sector)
+int litedos_bitmap_status(struct atrfs *atrfs,int sector)
 {
    return MAP_VALUE(sector);
 }
@@ -447,7 +447,7 @@ int litedos_bitmap_status(int sector)
  * If 'allocate' is non-zero, change from free to used; otherwise reverse
  * Return 0 if changed, 1 if already at target value.
  */
-int litedos_bitmap(int sector,int allocate)
+int litedos_bitmap(struct atrfs *atrfs,int sector,int allocate)
 {
    int value = MAP_VALUE(sector);
    if ( value && !allocate ) return 1;
@@ -464,10 +464,10 @@ int litedos_bitmap(int sector,int allocate)
 /*
  * litedos_free_cluster()
  */
-int litedos_free_cluster(int sector)
+int litedos_free_cluster(struct atrfs *atrfs,int sector)
 {
    int r;
-   r = litedos_bitmap(sector,0);
+   r = litedos_bitmap(atrfs,sector,0);
 
    // Only update the free sector count if the bitmap was modified
    if ( r == 0 )
@@ -483,19 +483,19 @@ int litedos_free_cluster(int sector)
 /*
  * litedos_free_sector()
  */
-int litedos_free_sector(int sector)
+int litedos_free_sector(struct atrfs *atrfs,int sector)
 {
    if ( sector % CLUSTER_SIZE ) return 0; // Success
-   return litedos_free_cluster(sector/CLUSTER_SIZE);
+   return litedos_free_cluster(atrfs,sector/CLUSTER_SIZE);
 }
 
 /*
  * litedos_alloc_cluster()
  */
-int litedos_alloc_cluster(int sector)
+int litedos_alloc_cluster(struct atrfs *atrfs,int sector)
 {
    int r;
-   r = litedos_bitmap(sector,1);
+   r = litedos_bitmap(atrfs,sector,1);
 
    // Only update the free sector count if the bitmap was modified
    if ( r == 0 )
@@ -508,12 +508,12 @@ int litedos_alloc_cluster(int sector)
    return r;
 }
 
-int litedos_alloc_any_cluster(void)
+int litedos_alloc_any_cluster(struct atrfs *atrfs)
 {
    int r;
    for ( int i=2;i<=MAX_CLUSTER; ++i )
    {
-      r=litedos_alloc_cluster(i);
+      r=litedos_alloc_cluster(atrfs,i);
       if ( r==0 ) return i;
    }
    return -1;
@@ -522,10 +522,10 @@ int litedos_alloc_any_cluster(void)
 /*
  * litedos_alloc_sector()
  */
-int litedos_alloc_sector(int prev_sector)
+int litedos_alloc_sector(struct atrfs *atrfs,int prev_sector)
 {
    if ( prev_sector > 0 &&  prev_sector/CLUSTER_SIZE == (prev_sector+1)/CLUSTER_SIZE ) return prev_sector+1;
-   int cluster = litedos_alloc_any_cluster();
+   int cluster = litedos_alloc_any_cluster(atrfs);
    if ( cluster < 0 ) return cluster;
    return cluster * CLUSTER_SIZE;
 }
@@ -540,10 +540,11 @@ int litedos_alloc_sector(int prev_sector)
  *
  * The pointer returned should be 'free()'d after use.
  */
-char *litedos_info(const char *path,struct litedos_dirent *dirent,int entry,int sector,int *sectors,int filesize)
+char *litedos_info(struct atrfs *atrfs,const char *path,struct litedos_dirent *dirent,int entry,int sector,int *sectors,int filesize)
 {
    char *buf,*b;
 
+   (void)atrfs;
    (void)sector; // FIXME: Use or remove parameter
    buf = malloc(64*1024);
    b = buf;
@@ -621,7 +622,7 @@ char *litedos_info(const char *path,struct litedos_dirent *dirent,int entry,int 
  *
  * Also use for dos2 and dos25
  */
-int litedos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
+int litedos_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
 {
    if ( strcmp(path,"/") != 0 )
    {
@@ -630,7 +631,7 @@ int litedos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t o
       int r;
       int sector=0,count,locked,fileno,entry,isdir,isinfo;
 
-      r = litedos_path(path,&sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
+      r = litedos_path(atrfs,path,&sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
       if ( r<0 ) return r;
       return -ENOTDIR;
    }
@@ -671,7 +672,7 @@ int litedos_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t o
  * litedos_getattr()
  */
 
-int litedos_getattr(const char *path, struct stat *stbuf)
+int litedos_getattr(struct atrfs *atrfs,const char *path, struct stat *stbuf)
 {
    // stbuf initialized from atr image stats
 
@@ -679,7 +680,7 @@ int litedos_getattr(const char *path, struct stat *stbuf)
    int sector=0,count,locked,fileno,entry,isdir,isinfo;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
-   r = litedos_path(path,&sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
+   r = litedos_path(atrfs,path,&sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s lookup %d\n",__FUNCTION__,path,r);
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
@@ -692,14 +693,14 @@ int litedos_getattr(const char *path, struct stat *stbuf)
       stbuf->st_mode = MODE_RO(stbuf->st_mode); // These files are never writable
       stbuf->st_ino = sector + 0x10000;
 
-      int filesize = atrfs.sectorsize*8,*sectors = NULL; // defaults for directories
+      int filesize = atrfs->sectorsize*8,*sectors = NULL; // defaults for directories
       if ( entry )
       {
-         r = litedos_trace_file(sector,fileno,&filesize,&sectors);
+         r = litedos_trace_file(atrfs,sector,fileno,&filesize,&sectors);
          if ( r<0 ) return r;
       }
 
-      char *info = litedos_info(path,dirent,entry,sector,sectors,filesize);     
+      char *info = litedos_info(atrfs,path,dirent,entry,sector,sectors,filesize);     
       stbuf->st_size = info?strlen(info):0;
       free(info);
       free(sectors);
@@ -709,13 +710,13 @@ int litedos_getattr(const char *path, struct stat *stbuf)
    if ( isdir )
    {
       ++stbuf->st_nlink;
-      stbuf->st_mode = MODE_DIR(atrfs.atrstat.st_mode & 0777);
-      stbuf->st_size = (CLUSTER_SIZE-1)*atrfs.sectorsize;
+      stbuf->st_mode = MODE_DIR(atrfs->atrstat.st_mode & 0777);
+      stbuf->st_size = (CLUSTER_SIZE-1)*atrfs->sectorsize;
    }
    else
    {
       int s;
-      r = litedos_trace_file(sector,fileno,&s,NULL);
+      r = litedos_trace_file(atrfs,sector,fileno,&s,NULL);
       stbuf->st_size = s;
    }
    if ( locked ) stbuf->st_mode = MODE_RO(stbuf->st_mode);
@@ -726,12 +727,12 @@ int litedos_getattr(const char *path, struct stat *stbuf)
    return 0;
 }
 
-int litedos_read(const char *path, char *buf, size_t size, off_t offset)
+int litedos_read(struct atrfs *atrfs,const char *path, char *buf, size_t size, off_t offset)
 {
    int r,sector=0,count,locked,fileno,entry,filesize,*sectors;
    int isdir,isinfo;
    unsigned char *s;
-   r = litedos_path(path,&sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
+   r = litedos_path(atrfs,path,&sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
    if ( isdir ) return -EISDIR;
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
@@ -740,7 +741,7 @@ int litedos_read(const char *path, char *buf, size_t size, off_t offset)
    if ( sector )
    {
       dirent = DIRENT_ENTRY(entry);
-      r = litedos_trace_file(sector,fileno,&filesize,&sectors);
+      r = litedos_trace_file(atrfs,sector,fileno,&filesize,&sectors);
 
       if ( r<0 ) return r;
       int bad=0;
@@ -751,7 +752,7 @@ int litedos_read(const char *path, char *buf, size_t size, off_t offset)
 
    if ( isinfo )
    {
-      char *info = litedos_info(path,dirent,entry,sector,sectors,filesize);
+      char *info = litedos_info(atrfs,path,dirent,entry,sector,sectors,filesize);
       char *i = info;
       int bytes = info?strlen(info):0;
       free(sectors);
@@ -771,7 +772,7 @@ int litedos_read(const char *path, char *buf, size_t size, off_t offset)
    for ( int i=0;size && sectors[i]; ++i )
    {
       s=SECTOR(sectors[i]);
-      int bytes_this_sector = s[atrfs.sectorsize-1];
+      int bytes_this_sector = s[atrfs->sectorsize-1];
       if ( offset >= bytes_this_sector )
       {
          offset -= bytes_this_sector;
@@ -792,12 +793,12 @@ int litedos_read(const char *path, char *buf, size_t size, off_t offset)
    return r;
 }
 
-int litedos_write(const char *path, const char *buf, size_t size, off_t offset)
+int litedos_write(struct atrfs *atrfs,const char *path, const char *buf, size_t size, off_t offset)
 {
    int r,sector=0,count,locked,fileno,entry,filesize,*sectors;
    int isdir,isinfo;
    unsigned char *s = NULL;
-   r = litedos_path(path,&sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
+   r = litedos_path(atrfs,path,&sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
    if ( isdir ) return -EISDIR;
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
@@ -806,7 +807,7 @@ int litedos_write(const char *path, const char *buf, size_t size, off_t offset)
    struct litedos_dirent *dirent;
    dirent = DIRENT_ENTRY(entry);
 
-   r = litedos_trace_file(sector,fileno,&filesize,&sectors);
+   r = litedos_trace_file(atrfs,sector,fileno,&filesize,&sectors);
 
    if ( r<0 ) return r;
    int bad=0;
@@ -829,7 +830,7 @@ int litedos_write(const char *path, const char *buf, size_t size, off_t offset)
 
          struct sector1 *sec1 = SECTOR(1);
          // FIXME: This is wrong:
-         sec1->dos_flag = (atrfs.sectorsize == 128) ? 1 : 2;
+         sec1->dos_flag = (atrfs->sectorsize == 128) ? 1 : 2;
          sec1->dos_sector[0] = sector & 0xff;
          sec1->dos_sector[1] = sector >> 8;
       }
@@ -843,7 +844,7 @@ int litedos_write(const char *path, const char *buf, size_t size, off_t offset)
       sector = sectors[i];
       s=SECTOR(sectors[i]);
 
-      int bytes_this_sector = s[atrfs.sectorsize-1];
+      int bytes_this_sector = s[atrfs->sectorsize-1];
       if ( offset >= bytes_this_sector )
       {
          offset -= bytes_this_sector;
@@ -864,12 +865,12 @@ int litedos_write(const char *path, const char *buf, size_t size, off_t offset)
    // Handle writing at end of file
    // 'offset' is offset from end of file (from above)
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s Remove file numbers from file for extension\n",__FUNCTION__,path);
-   litedos_remove_fileno(dirent,fileno);
+   litedos_remove_fileno(atrfs,dirent,fileno);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s extend file %lu bytes\n",__FUNCTION__,path,size+offset);
    while ( size+offset )
    {
       // Fill last sector
-      int bytes_this_sector = s[atrfs.sectorsize-1];
+      int bytes_this_sector = s[atrfs->sectorsize-1];
       bytes = CLUSTER_BYTES-3 - bytes_this_sector;
       if ( (size_t)bytes > size+offset ) bytes = size+offset;
       if ( bytes )
@@ -880,14 +881,14 @@ int litedos_write(const char *path, const char *buf, size_t size, off_t offset)
             if ( bytes > offset ) // write 'offset' zeros
             {
                bytes -= offset;
-               s[atrfs.sectorsize-1] += offset;
+               s[atrfs->sectorsize-1] += offset;
                bytes_this_sector += offset;
                offset = 0;
             }
             else // fill remaining bytes in sector with zeros
             {
                offset -= bytes;
-               s[atrfs.sectorsize-1] += bytes;
+               s[atrfs->sectorsize-1] += bytes;
                bytes_this_sector += bytes;
                bytes = 0;
             }
@@ -896,39 +897,39 @@ int litedos_write(const char *path, const char *buf, size_t size, off_t offset)
          {
             memcpy(s+bytes_this_sector,buf,bytes);
             buf += bytes;
-            s[atrfs.sectorsize-1] += bytes;
+            s[atrfs->sectorsize-1] += bytes;
             size -= bytes;
             r += bytes;
          }
       }
-      if ( s[atrfs.sectorsize-1] == CLUSTER_BYTES-3 )
+      if ( s[atrfs->sectorsize-1] == CLUSTER_BYTES-3 )
       {
          // Allocate a new sector and set it to zero bytes
-         sector = litedos_alloc_sector(sector);
+         sector = litedos_alloc_sector(atrfs,sector);
          if ( sector < 0 )
          {
-            s[atrfs.sectorsize-2]=0; // next sector should already be zero
-            s[atrfs.sectorsize-3]=0;
+            s[atrfs->sectorsize-2]=0; // next sector should already be zero
+            s[atrfs->sectorsize-3]=0;
             if (dirent->flags & FLAGS_DOS2)
             {
-               --s[atrfs.sectorsize-1]; // Can't leave the last sector full
+               --s[atrfs->sectorsize-1]; // Can't leave the last sector full
                if ( r>0 ) --r; // Undid one last byte
             }
             else
             {
-               s[atrfs.sectorsize-1] |= 0x80; // Flag EOF
+               s[atrfs->sectorsize-1] |= 0x80; // Flag EOF
             }
-            litedos_add_fileno(dirent,entry);
+            litedos_add_fileno(atrfs,dirent,entry);
             if ( r>0 ) return r; // Wrote some
             return -ENOSPC;
          }
          if ( options.debug ) fprintf(stderr,"DEBUG: %s %s add sector to file: %d\n",__FUNCTION__,path,sector);
-         s[atrfs.sectorsize-2]=sector&0xff;
-         s[atrfs.sectorsize-3]=sector>>8;
+         s[atrfs->sectorsize-2]=sector&0xff;
+         s[atrfs->sectorsize-3]=sector>>8;
          int len = BYTES2(dirent->sectors);
          if ( !(dirent->flags & FLAGS_DOS2) )
          {
-            s[atrfs.sectorsize-1]=(BYTES2(dirent->sectors)-1)&0x7f; // DOS 1; byte holds sector sequence number in low 7 bits
+            s[atrfs->sectorsize-1]=(BYTES2(dirent->sectors)-1)&0x7f; // DOS 1; byte holds sector sequence number in low 7 bits
          }
          // Will fix up sector chain later
          s=SECTOR(sector);
@@ -938,23 +939,23 @@ int litedos_write(const char *path, const char *buf, size_t size, off_t offset)
          dirent->sectors[1]=len>>8;
          if ( !(dirent->flags & FLAGS_DOS2) )
          {
-            s[atrfs.sectorsize-1]=0x80; // DOS 1: Flag EOF
+            s[atrfs->sectorsize-1]=0x80; // DOS 1: Flag EOF
          }
       }
    }
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s Restore file numbers from file after extension\n",__FUNCTION__,path);
-   litedos_add_fileno(dirent,entry);
+   litedos_add_fileno(atrfs,dirent,entry);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s success: %d\n",__FUNCTION__,path,r);
    return r;
 }
 
-int litedos_unlink(const char *path)
+int litedos_unlink(struct atrfs *atrfs,const char *path)
 {
    int r;
    int sector=0,count,locked,fileno,entry,isdir,isinfo;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
-   r = litedos_path(path,&sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
+   r = litedos_path(atrfs,path,&sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s path %s %s at sector %d\n",__FUNCTION__,path,r?"did not find":"found",sector);
    if ( r < 0 ) return r;
    if ( r > 0 ) return -ENOENT;
@@ -966,14 +967,14 @@ int litedos_unlink(const char *path)
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: Dirent %02x %d %d %8.8s%3.3s\n",__FUNCTION__,dirent->flags,BYTES2(dirent->sectors),BYTES2(dirent->start),dirent->name,dirent->ext);
 
    int size,*sectors,*s;
-   r = litedos_trace_file(sector,fileno,&size,&sectors);
+   r = litedos_trace_file(atrfs,sector,fileno,&size,&sectors);
    if ( options.debug ) fprintf(stderr,"DEBUG: %s.%d r is %d\n",__FUNCTION__,__LINE__,r);
    if ( r < 0 ) return r;
    dirent->flags = FLAGS_DELETED;
    s = sectors;
    while ( *s )
    {
-      r = litedos_free_sector(*s);
+      r = litedos_free_sector(atrfs,*s);
       if ( r && (*s%CLUSTER_SIZE)==0 )
       {
          fprintf(stderr,"Warning: Freeing free sector %d when deleting %s\n",*s,path);
@@ -985,7 +986,7 @@ int litedos_unlink(const char *path)
    return 0;
 }
 
-int litedos_rename(const char *old, const char *new, unsigned int flags)
+int litedos_rename(struct atrfs *atrfs,const char *old, const char *new, unsigned int flags)
 {
    /*
     * flags:
@@ -1005,7 +1006,7 @@ int litedos_rename(const char *old, const char *new, unsigned int flags)
    struct litedos_dirent *dirent1, *dirent2 = NULL;
    
    if ( options.debug ) fprintf(stderr,"DEBUG: %s %s %s\n",__FUNCTION__,old,new);
-   r = litedos_path(old,&sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
+   r = litedos_path(atrfs,old,&sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
    if ( isinfo ) return -ENOENT;
@@ -1013,7 +1014,7 @@ int litedos_rename(const char *old, const char *new, unsigned int flags)
 
    dirent1 = DIRENT_ENTRY(entry);
 
-   r = litedos_path(new,&sector2,&count,&locked,&fileno2,&entry2,&isdir2,&isinfo);
+   r = litedos_path(atrfs,new,&sector2,&count,&locked,&fileno2,&entry2,&isdir2,&isinfo);
    if ( r<0 ) return r;
    if ( isinfo ) return -ENAMETOOLONG;
    if ( r==0 && (flags & RENAME_NOREPLACE) ) return -EEXIST;
@@ -1037,13 +1038,13 @@ int litedos_rename(const char *old, const char *new, unsigned int flags)
       if ( options.debug ) fprintf(stderr,"DEBUG: %s Exchange %s and %s\n",__FUNCTION__,new,old);
       // Names stay the same, but everything else swaps
       // If they have file numbers, we need to update the sector ends
-      litedos_remove_fileno(dirent1,entry);
-      litedos_remove_fileno(dirent2,entry2);
+      litedos_remove_fileno(atrfs,dirent1,entry);
+      litedos_remove_fileno(atrfs,dirent2,entry2);
       memcpy(copy,dirent1,5);
       memcpy(dirent1,dirent2,5);
       memcpy(dirent2,copy,5);
-      litedos_add_fileno(dirent1,entry);
-      litedos_add_fileno(dirent2,entry2);
+      litedos_add_fileno(atrfs,dirent1,entry);
+      litedos_add_fileno(atrfs,dirent2,entry2);
       return 0;
    }
 
@@ -1054,14 +1055,14 @@ int litedos_rename(const char *old, const char *new, unsigned int flags)
       char copy[5];
 
       if ( options.debug ) fprintf(stderr,"DEBUG: %s replace %s with %s\n",__FUNCTION__,old,new);
-      litedos_remove_fileno(dirent1,entry);
-      litedos_remove_fileno(dirent2,entry2);
+      litedos_remove_fileno(atrfs,dirent1,entry);
+      litedos_remove_fileno(atrfs,dirent2,entry2);
       memcpy(&copy,dirent1,5);
       memcpy(dirent1,dirent2,5);
       memcpy(dirent2,&copy,5);
-      litedos_add_fileno(dirent1,entry);
-      litedos_add_fileno(dirent2,entry2);
-      r = litedos_unlink(old);
+      litedos_add_fileno(atrfs,dirent1,entry);
+      litedos_add_fileno(atrfs,dirent2,entry2);
+      r = litedos_unlink(atrfs,old);
       if ( options.debug ) fprintf(stderr,"DEBUG: %s unlink removed file returned %d\n",__FUNCTION__,r);
       return r;
    }
@@ -1096,13 +1097,13 @@ int litedos_rename(const char *old, const char *new, unsigned int flags)
    }
 }
 
-int litedos_chmod(const char *path, mode_t mode)
+int litedos_chmod(struct atrfs *atrfs,const char *path, mode_t mode)
 {
    int r;
    int sector=0,count,locked,fileno,entry,isdir,isinfo;
 
    if ( options.debug ) fprintf(stderr,"DEBUG: %s.%d\n",__FUNCTION__,__LINE__);
-   r = litedos_path(path,&sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
+   r = litedos_path(atrfs,path,&sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
    if ( r < 0 ) return r;
    if ( r > 0 ) return -ENOENT;
    if ( isinfo ) return -EACCES;
@@ -1122,7 +1123,7 @@ int litedos_chmod(const char *path, mode_t mode)
    return 0;
 }
 
-int litedos_create(const char *path, mode_t mode)
+int litedos_create(struct atrfs *atrfs,const char *path, mode_t mode)
 {
    (void)mode; // Always create read-write, but allow chmod to lock it
    // Create a file
@@ -1160,7 +1161,7 @@ int litedos_create(const char *path, mode_t mode)
    int r;
    int sector=0,count,locked,fileno,entry,isdir,isinfo;
 
-   r = litedos_path(path,&sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
+   r = litedos_path(atrfs,path,&sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
    if ( r<0 ) return r;
    if ( r==0 ) return -EEXIST;
    if ( entry<0 ) return -ENOSPC; // directory is full
@@ -1170,7 +1171,7 @@ int litedos_create(const char *path, mode_t mode)
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s entry %d\n",__FUNCTION__,path,entry);
    memcpy(dirent->name,name,11);
    STOREBYTES2(dirent->sectors,1);
-   int start = litedos_alloc_sector(0);
+   int start = litedos_alloc_sector(atrfs,0);
    if ( start < 0 ) return -ENOSPC;
    STOREBYTES2(dirent->start,start);
    dirent->flags = FLAGS_INUSE|FLAGS_DOS2; // In-use, made by DOS 2
@@ -1182,7 +1183,7 @@ int litedos_create(const char *path, mode_t mode)
    memset(buf,0,CLUSTER_BYTES);
    if ( !(dirent->flags & FLAGS_NOFILENO) )
    {
-      buf[atrfs.sectorsize-2] = entry << 2;
+      buf[atrfs->sectorsize-2] = entry << 2;
    }
 #if 0 // FIXME: Make this work; but I think it's covered in write()
    if ( atrfs_strcmp(path,"/DOS.SYS")==0 )
@@ -1192,7 +1193,7 @@ int litedos_create(const char *path, mode_t mode)
        * sectors to match the DOS type.
        */
       struct sector1 *sec1 = SECTOR(1);
-      sec1->dos_flag = (atrfs.sectorsize == 128) ? 1 : 2;
+      sec1->dos_flag = (atrfs->sectorsize == 128) ? 1 : 2;
       sec1->dos_sector[0] = start & 0xff;
       sec1->dos_sector[1] = start >> 8;
    }
@@ -1200,12 +1201,12 @@ int litedos_create(const char *path, mode_t mode)
    return 0;
 }
 
-int litedos_truncate(const char *path, off_t size)
+int litedos_truncate(struct atrfs *atrfs,const char *path, off_t size)
 {
    int r,sector=0,count,locked,fileno,entry,filesize,*sectors;
    int isdir,isinfo;
    unsigned char *s;
-   r = litedos_path(path,&sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
+   r = litedos_path(atrfs,path,&sector,&count,&locked,&fileno,&entry,&isdir,&isinfo);
    if ( isdir ) return -EISDIR;
    if ( r<0 ) return r;
    if ( r>0 ) return -ENOENT;
@@ -1213,7 +1214,7 @@ int litedos_truncate(const char *path, off_t size)
    struct litedos_dirent *dirent;
    dirent = DIRENT_ENTRY(entry);
 
-   r = litedos_trace_file(sector,fileno,&filesize,&sectors);
+   r = litedos_trace_file(atrfs,sector,fileno,&filesize,&sectors);
 
    if ( r<0 ) return r;
    int bad=0;
@@ -1238,7 +1239,7 @@ int litedos_truncate(const char *path, off_t size)
       char *buf = malloc ( size - filesize );
       if ( !buf ) return -ENOMEM;
       memset(buf,0,size-filesize);
-      r = litedos_write(path,buf,size-filesize,filesize);
+      r = litedos_write(atrfs,path,buf,size-filesize,filesize);
       free(buf);
       free(sectors);
       if ( r == size-filesize ) return 0;
@@ -1252,7 +1253,7 @@ int litedos_truncate(const char *path, off_t size)
    {
       if ( shrink )
       {
-         litedos_free_sector(sectors[i]);
+         litedos_free_sector(atrfs,sectors[i]);
          int count = BYTES2(dirent->sectors) - 1;
          dirent->sectors[0] = count & 0xff;
          dirent->sectors[1] = count >> 8;
@@ -1260,20 +1261,20 @@ int litedos_truncate(const char *path, off_t size)
       }
       s=SECTOR(sectors[i]);
 
-      int bytes_this_sector = s[atrfs.sectorsize-1];
+      int bytes_this_sector = s[atrfs->sectorsize-1];
       if ( size > bytes_this_sector  )
       {
          size -= bytes_this_sector;
          continue;
       }
-      s[atrfs.sectorsize-1] = size;
-      s[atrfs.sectorsize-2] = 0;
+      s[atrfs->sectorsize-1] = size;
+      s[atrfs->sectorsize-2] = 0;
       if ( (dirent->flags & FLAGS_NOFILENO) == 0 )
       {
-         s[atrfs.sectorsize-3] &= ~0x03; // Leave file number
+         s[atrfs->sectorsize-3] &= ~0x03; // Leave file number
       }
       size = 0;
-      if ( s[atrfs.sectorsize-1] < CLUSTER_BYTES - 3 )
+      if ( s[atrfs->sectorsize-1] < CLUSTER_BYTES - 3 )
       {
          shrink = 1;
       }
@@ -1282,12 +1283,12 @@ int litedos_truncate(const char *path, off_t size)
    return 0;
 }
 
-int litedos_statfs(const char *path, struct statvfs *stfsbuf)
+int litedos_statfs(struct atrfs *atrfs,const char *path, struct statvfs *stfsbuf)
 {
    (void)path; // meaningless
-   stfsbuf->f_bsize = atrfs.sectorsize;
-   stfsbuf->f_frsize = atrfs.sectorsize;
-   stfsbuf->f_blocks = MAX_CLUSTER * CLUSTER_SIZE; // May be less than atrfs.sectors
+   stfsbuf->f_bsize = atrfs->sectorsize;
+   stfsbuf->f_frsize = atrfs->sectorsize;
+   stfsbuf->f_blocks = MAX_CLUSTER * CLUSTER_SIZE; // May be less than atrfs->sectors
    stfsbuf->f_bfree = BYTES2(LITEDOS_VTOC->free_sectors);
    stfsbuf->f_bavail = stfsbuf->f_bfree;
    stfsbuf->f_files = DIRENT_COUNT;
@@ -1305,7 +1306,7 @@ int litedos_statfs(const char *path, struct statvfs *stfsbuf)
    return 0;
 }
 
-int litedos_newfs(void)
+int litedos_newfs(struct atrfs *atrfs)
 {
    // Boot sector
    unsigned char *s = SECTOR(1);
@@ -1314,11 +1315,11 @@ int litedos_newfs(void)
    // Sector 1
 #if 0 // Old code to use if we don't have the real boot sectors   
    struct sector1 *sec1 = SECTOR(1);
-   sec1->boot_sectors = (atrfs.fstype == ATR_DOS1 ) ? 1 : 3;
+   sec1->boot_sectors = (atrfs->fstype == ATR_DOS1 ) ? 1 : 3;
    sec1->boot_addr[1] = 7; // $700
    sec1->jmp = 0x4C; // JMP instruction
    sec1->max_open_files = 3;
-   sec1->drive_bits = (atrfs.fstype == ATR_DOS1 ) ? 0x0f : (atrfs.fstype == ATR_LITEDOS ) ? 0xff : 0x03;
+   sec1->drive_bits = (atrfs->fstype == ATR_DOS1 ) ? 0x0f : (atrfs->fstype == ATR_LITEDOS ) ? 0xff : 0x03;
 #endif
 
    // Set VTOC sector count or DOS flag
@@ -1327,7 +1328,7 @@ int litedos_newfs(void)
    // Compute minimum cluster size as default
    int cluster_size = 1;
    int max_sectors = 1024;
-   while ( atrfs.sectors >= max_sectors )
+   while ( atrfs->sectors >= max_sectors )
    {
       cluster_size *= 2;
       max_sectors *= 2;
@@ -1342,13 +1343,13 @@ int litedos_newfs(void)
    {
       if ( i==SECTOR_TO_CLUSTER_NUM(VTOC_FIRST_SECTOR) ) continue;
       if ( i==SECTOR_TO_CLUSTER_NUM(VTOC_FIRST_SECTOR)+1 ) continue;
-      litedos_free_cluster(i);
+      litedos_free_cluster(atrfs,i);
    }
 
    return 0;
 }
 
-char *litedos_fsinfo(void)
+char *litedos_fsinfo(struct atrfs *atrfs)
 {
    char *buf=malloc(16*1024);
    if ( !buf ) return NULL;
