@@ -44,6 +44,7 @@ int generic_rmdir(struct atrfs *atrfs,const char *path);
 int generic_unlink(struct atrfs *atrfs,const char *path);
 int generic_rename(struct atrfs *atrfs,const char *path1, const char *path2, unsigned int flags);
 int generic_chmod(struct atrfs *atrfs,const char *path, mode_t mode);
+int generic_readlink(struct atrfs *atrfs,const char *path, char *buf, size_t size );
 int generic_create(struct atrfs *atrfs,const char *path, mode_t mode);
 int generic_truncate(struct atrfs *atrfs,const char *path, off_t size);
 #if (FUSE_USE_VERSION >= 30)
@@ -69,6 +70,7 @@ const struct fs_ops generic_ops = {
    .fs_unlink = generic_unlink,
    .fs_rename = generic_rename,
    .fs_chmod = generic_chmod,
+   .fs_readlink = generic_readlink,
    .fs_create = generic_create,
    .fs_truncate = generic_truncate,
 #if (FUSE_USE_VERSION >= 30)

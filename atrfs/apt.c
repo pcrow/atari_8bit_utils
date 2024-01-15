@@ -149,6 +149,8 @@ struct apt_partition {
    struct partition_table_entry *entry;
    struct metadata_leader *meta;
    char *name;
+   int submount; // non-zero if mounting a file system
+   struct atrfs atrfs; // If mounting a file system (e.g., SpartaDOS)
 };
 
 /*
@@ -165,6 +167,11 @@ int apt_chmod(struct atrfs *atrfs,const char *path, mode_t mode);
 int apt_readlink(struct atrfs *atrfs,const char *path, char *buf, size_t size);
 int apt_create(struct atrfs *atrfs,const char *path, mode_t mode);
 int apt_truncate(struct atrfs *atrfs,const char *path, off_t size);
+#if (FUSE_USE_VERSION >= 30)
+int apt_utimens(struct atrfs *atrfs,const char *path, const struct timespec tv[2]);
+#else
+int apt_utime(struct atrfs *atrfs,const char *path, struct utimbuf *utimbuf);
+#endif
 int apt_statfs(struct atrfs *atrfs,const char *path, struct statvfs *stfsbuf);
 int apt_newfs(struct atrfs *atrfs);
 char *apt_fsinfo(struct atrfs *atrfs);
@@ -180,14 +187,19 @@ const struct fs_ops apt_ops = {
    .fs_readdir = apt_readdir,
    .fs_read = apt_read,
    .fs_write = apt_write,
-   // .fs_unlink = apt_unlink,
-   // .fs_rename = apt_rename,
+   .fs_unlink = apt_unlink,
+   .fs_rename = apt_rename,
    .fs_chmod = apt_chmod,
    .fs_readlink = apt_readlink,
-   // .fs_create = apt_create,
-   // .fs_truncate = apt_truncate,
+   .fs_create = apt_create,
+   .fs_truncate = apt_truncate,
+#if (FUSE_USE_VERSION >= 30)
+   .fs_utimens = apt_utimens,
+#else
+   .fs_utime = apt_utime,
+#endif
    .fs_statfs = apt_statfs,
-   // .fs_newfs = apt_newfs,
+   // .fs_newfs = apt_newfs, // Not applicable
    .fs_fsinfo = apt_fsinfo,
 };
 
@@ -344,6 +356,78 @@ int scan_apt_partitions(struct atrfs *atrfs,void *mem,int header_offset,int firs
 }
 
 /*
+ * apt_prepare_submounts()
+ *
+ * For each partition, if an Atari file system is detected, create the atrfs struct for it
+ *
+ * Note: This only works if the sectors are sequential in memory.
+ */
+void apt_prepare_submounts(struct atrfs *atrfs)
+{
+   for (int i=0;i<num_partitions;++i)
+   {
+      partitions[i].atrfs.fd = -1;
+      partitions[i].atrfs.readonly = atrfs->readonly;
+      partitions[i].atrfs.atrstat = atrfs->atrstat;
+      partitions[i].atrfs.atrmem = partitions[i].mem;
+      partitions[i].atrfs.mem = partitions[i].mem;
+      partitions[i].atrfs.shortsectors = 0; // Not supported
+      partitions[i].atrfs.sectorsize = partitions[i].bytes_per_sector;
+      partitions[i].atrfs.sectors = partitions[i].sectors;
+      partitions[i].atrfs.fstype = ATR_UNKNOWN; // Scan and check
+
+      for (int j=ATR_SPECIAL;j<ATR_APT;++j)
+      {
+         if ( fs_ops[j] && fs_ops[j]->fs_sanity )
+         {
+            if ( (fs_ops[j]->fs_sanity)(&partitions[i].atrfs) == 0 )
+            {
+               partitions[i].atrfs.fstype = j;
+               if ( options.debug ) fprintf(stderr,"DEBUG: %s detected %s image\n",__FUNCTION__,fs_ops[j]->name);
+               partitions[i].submount = 1;
+               return;
+            }
+         }
+      }
+   }
+}
+
+/*
+ * apt_path_to_partition()
+ *
+ * Return the index to the partition indicated by the path.
+ * Return is negative if no partition is indicated.
+ */
+int apt_path_to_partition(const char *path)
+{
+   for (int i=0;i<num_partitions;++i)
+   {
+      if ( !partitions[i].start ) continue;
+      int n = strlen(partitions[i].name);
+      if ( strncasecmp(path+1,partitions[i].name,n) == 0 &&
+           ( path[1+n] == 0 || path[1+n] == '/' ) )
+         return i;
+   }
+   return -1;
+}
+
+/*
+ * apt_subpath()
+ *
+ * Given a partition, return the partition-relative path.
+ * i.e., move past /partition_name
+ * If the path is too short, return NULL.
+ * it's just "/partition" then return "/" instead of "".
+ */
+const char *apt_subpath(const char *path,int p)
+{
+   int n = strlen(partitions[p].name);
+   if ( strlen(path) < (size_t)(n+1) ) return NULL; // Impossible if 'p' is from apt_path_to_partition
+   if ( !(path[n+1]) ) return "/";
+   return path+n+1;
+}
+
+/*
  * apt_info()
  *
  * Debugging for now, eventually it will be the .fsinfo output
@@ -388,6 +472,7 @@ int apt_sanity(struct atrfs *atrfs)
    if ( apt_table->header_entry_prev_offset ) return 1; // must be zero for first entry
    if ( apt_table->prev_sector_in_table_chain ) return 1; // prev must be zero for the first sector
    scan_apt_partitions(atrfs,apt_table,0,1);
+   apt_prepare_submounts(atrfs);
    if ( options.debug ) apt_info(); // DEBUG
    return 0;
 }
@@ -457,6 +542,12 @@ int apt_getattr(struct atrfs *atrfs,const char *path, struct stat *stbuf)
          return 0;
       }
    }
+
+   int p = apt_path_to_partition(path);
+   if ( p >= 0 )
+   {
+      return (generic_ops.fs_getattr)(&partitions[p].atrfs,apt_subpath(path,p),stbuf);
+   }
    return -ENOENT;
 }
 
@@ -465,10 +556,7 @@ int apt_getattr(struct atrfs *atrfs,const char *path, struct stat *stbuf)
  */
 int apt_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t filler, off_t offset)
 {
-   (void)path; // Always "/"
-   (void)offset;
-   (void)atrfs;
-
+   (void)atrfs; // Not needed
    if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
 
    if ( strcmp(path,"/") == 0 )
@@ -488,24 +576,30 @@ int apt_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t
       return 0;
    }
 
-   for (int i=0;i<num_partitions;++i)
+   int p = apt_path_to_partition(path);
+   if ( p >= 0 )
    {
-      if ( strcasecmp(path+1,partitions[i].name) != 0 ) continue;
-      if ( partitions[i].chunks > 1 )
+      path = apt_subpath(path,p);
+      // Special files in the root directory
+      if ( strcmp(path,"/") == 0 )
       {
-         for (int j=0;j<partitions[i].chunks;++j)
+         if ( partitions[p].chunks > 1 )
          {
-            char name[16];
-            sprintf(name,".raw%d",j);
-            filler(buf,name,FILLER_NULL);
+            for (int j=0;j<partitions[p].chunks;++j)
+            {
+               char name[16];
+               sprintf(name,".raw%d",j);
+               filler(buf,name,FILLER_NULL);
+            }
+         }
+         else
+         {
+            filler(buf,".raw",FILLER_NULL);
          }
       }
-      else
-      {
-         filler(buf,".raw",FILLER_NULL);
-      }
-      // FIXME: Create a subdirectory for the contents
-      return 0;
+      // Files specific to the file system
+      if ( !partitions[p].submount ) return 0;
+      return (generic_ops.fs_readdir)(&partitions[p].atrfs,path,buf,filler,offset);
    }
 
    return -ENOENT;
@@ -517,42 +611,49 @@ int apt_readdir(struct atrfs *atrfs,const char *path, void *buf, fuse_fill_dir_t
 int apt_read(struct atrfs *atrfs,const char *path, char *buf, size_t size, off_t offset)
 {
    (void)atrfs;
-   for (int i=0;i<num_partitions;++i)
+   int p = apt_path_to_partition(path);
+   if ( p < 0 ) return -ENOENT;
+   path = apt_subpath(path,p);
+
+   // Handle raw files
    {
       int chunk = 0;
       char match[128];
-      if ( partitions[i].entry->partition_type == 0x02 ) // floppy drawer; use chunks
+      int match_found = 0;
+      if ( partitions[p].entry->partition_type == 0x02 ) // floppy drawer; use chunks
       {
-         for ( chunk=0;chunk < partitions[i].chunks;++chunk )
+         for ( chunk=0;chunk < partitions[p].chunks;++chunk )
          {
-            sprintf(match,"/%s/.raw%d",partitions[i].name,chunk);
+            sprintf(match,"/.raw%d",chunk);
             if ( strcasecmp(path,match) != 0 ) continue;
-            goto found;
+            match_found = 1;
+            break;
          }
       }
       else
       {
-         sprintf(match,"/%s/.raw",partitions[i].name);
-         if ( strcasecmp(path,match) != 0 ) continue;
+         if ( strcasecmp(path,"/.raw") == 0 ) match_found = 1;
       }
       // Read from this partition
-   found:
-      if ( offset >= partitions[i].chunk_size*512/partitions[i].size_divisor )
+      if ( match_found )
       {
-         return 0;
+         if ( offset >= partitions[p].chunk_size*512/partitions[p].size_divisor )
+         {
+            return 0;
+         }
+         if ( offset + size > (size_t)partitions[p].chunk_size * 512 / partitions[p].size_divisor )
+         {
+            size = partitions[p].chunk_size*512 / partitions[p].size_divisor - offset;
+         }
+         // FIXME:
+         //   There are partition types that pack smaller sectors in non-linear ways.
+         //   This includes some that interleave bytes and some that have unused bytes.
+         //   The code here needs to be updated to skip the unused bytes.
+         memcpy(buf,partitions[p].mem+offset+chunk*partitions[p].chunk_size,size);
+         return size;
       }
-      if ( offset + size > (size_t)partitions[i].chunk_size * 512 / partitions[i].size_divisor )
-      {
-         size = partitions[i].chunk_size*512 / partitions[i].size_divisor - offset;
-      }
-      // FIXME:
-      //   There are partition types that pack smaller sectors in non-linear ways.
-      //   This includes some that interleave bytes and some that have unused bytes.
-      //   The code here needs to be updated to skip the unused bytes.
-      memcpy(buf,partitions[i].mem+offset+chunk*partitions[i].chunk_size,size);
-      return size;
    }
-   return -ENOENT; // Should not be reached
+   return (generic_ops.fs_read)(&partitions[p].atrfs,path,buf,size,offset);
 }
 
 /*
@@ -561,42 +662,107 @@ int apt_read(struct atrfs *atrfs,const char *path, char *buf, size_t size, off_t
 int apt_write(struct atrfs *atrfs,const char *path, const char *buf, size_t size, off_t offset)
 {
    (void)atrfs;
-   for (int i=0;i<num_partitions;++i)
-   {
-      char match[128];
-      sprintf(match,"/%s/.raw",partitions[i].name);
-      if ( strcasecmp(path,match) != 0 ) continue;
+   int p = apt_path_to_partition(path);
+   if ( p < 0 ) return -ENOENT;
+   path = apt_subpath(path,p);
 
-      if ( offset >= partitions[i].sectors*512 )
+   // Handle raw files
+   {
+      int chunk = 0;
+      char match[128];
+      int match_found = 0;
+      if ( partitions[p].entry->partition_type == 0x02 ) // floppy drawer; use chunks
       {
-         return 0;
+         for ( chunk=0;chunk < partitions[p].chunks;++chunk )
+         {
+            sprintf(match,"/.raw%d",chunk);
+            if ( strcasecmp(path,match) != 0 ) continue;
+            match_found = 1;
+            break;
+         }
       }
-      if ( offset + size > (size_t)partitions[i].sectors * 512 )
+      else
       {
-         size = partitions[i].sectors*512 - offset;
+         if ( strcasecmp(path,"/.raw") == 0 ) match_found = 1;
       }
-      memcpy(partitions[i].mem+offset,buf,size);
-      return size;
+
+      // Write to this partition
+      if ( match_found )
+      {
+         if ( offset >= partitions[p].chunk_size*512/partitions[p].size_divisor )
+         {
+            return 0;
+         }
+         if ( offset + size > (size_t)partitions[p].chunk_size * 512 / partitions[p].size_divisor )
+         {
+            size = partitions[p].chunk_size*512 / partitions[p].size_divisor - offset;
+         }
+         // FIXME:
+         //   There are partition types that pack smaller sectors in non-linear ways.
+         //   This includes some that interleave bytes and some that have unused bytes.
+         //   The code here needs to be updated to skip the unused bytes.
+         memcpy(partitions[p].mem+offset+chunk*partitions[p].chunk_size,buf,size);
+         return size;
+      }
    }
-   return -ENOENT; // Should not be reached
+   return (generic_ops.fs_write)(&partitions[p].atrfs,path,buf,size,offset);
+}
+
+/*
+ * apt_mkdir()
+ */
+int apt_mkdir(struct atrfs *atrfs,const char *path,mode_t mode)
+{
+   (void)atrfs;
+   int p = apt_path_to_partition(path);
+   if ( p < 0 ) return -EPERM;
+   path = apt_subpath(path,p);
+   return (generic_ops.fs_mkdir)(&partitions[p].atrfs,path,mode);
+}
+
+/*
+ * apt_rmdir()
+ */
+int apt_rmdir(struct atrfs *atrfs,const char *path)
+{
+   (void)atrfs;
+   int p = apt_path_to_partition(path);
+   if ( p < 0 ) return -EIO;
+   path = apt_subpath(path,p);
+   return (generic_ops.fs_rmdir)(&partitions[p].atrfs,path);
 }
 
 /*
  * apt_unlink()
- *
- * Only allow the special case of unlinking a mapping symlink
  */
-int apt_unlink(struct atrfs *atrfs,const char *path);
+int apt_unlink(struct atrfs *atrfs,const char *path)
+{
+   (void)atrfs;
+   int p = apt_path_to_partition(path);
+   if ( p < 0 ) return -EIO;
+   // FIXME: Should we allow removing a mapping symlink?
+   path = apt_subpath(path,p);
+   return (generic_ops.fs_unlink)(&partitions[p].atrfs,path);
+}
 
 /*
  * apt_rename()
- *
- * Only allow renaming a partition where the source and dest are the same
- * directory, so the meta label is changed.
- *
- * Only works if there is a meta label.
  */
-int apt_rename(struct atrfs *atrfs,const char *path1, const char *path2, unsigned int flags);
+int apt_rename(struct atrfs *atrfs,const char *path1, const char *path2, unsigned int flags)
+{
+   (void)atrfs;
+   int p = apt_path_to_partition(path1);
+   int p2 = apt_path_to_partition(path2);
+   if ( p < 0 && p2 < 0 )
+   {
+      // FIXME: Allow renaming of a partition if there is a META label
+      return -EIO;
+   }
+   if ( p < 0 || p != p2 ) return -EIO; // Can't move between file systems; copy and unlink instead
+   path1 = apt_subpath(path1,p);
+   path2 = apt_subpath(path2,p);
+   return (generic_ops.fs_rename)(&partitions[p].atrfs,path1,path2,flags);
+}
 
 /*
  * apt_chmod()
@@ -607,32 +773,82 @@ int apt_rename(struct atrfs *atrfs,const char *path1, const char *path2, unsigne
 int apt_chmod(struct atrfs *atrfs,const char *path, mode_t mode)
 {
    (void)atrfs;
-   for (int i=0;i<num_partitions;++i)
+   int p = apt_path_to_partition(path);
+   if ( p < 0 ) return 0;
+   path = apt_subpath(path,p);
+   // Change permissions on a partition
+   if ( strcmp(path,"/") == 0 )
    {
-      if ( !partitions[i].start ) continue; // It might be a reserved or deleted partition
-      if ( partitions[i].entry->partition_type != 0x00 && partitions[i].entry->partition_type != 0x03 ) continue;
-      if ( strcasecmp(path+1,partitions[i].name) == 0 )
+      if ( partitions[p].entry->partition_type != 0x00 && partitions[p].entry->partition_type != 0x03 ) return 0; // not supported
+
+      // Use mode & 0200 to clear or set the write protect
+      if ( mode & 0200 )
       {
-         // Use mode & 0200 to clear or set the write protect
-         if ( mode & 0200 )
-         {
-            partitions[i].entry->partition_type_details[0] &= ~0x80; // Not write protected
-         }
-         else
-         {
-            partitions[i].entry->partition_type_details[0] |= 0x80;
-         }
+         partitions[p].entry->partition_type_details[0] &= ~0x80; // Not write protected
+      }
+      else
+      {
+         partitions[p].entry->partition_type_details[0] |= 0x80;
       }
    }
-   return 0; // Fake success for anything else
+   return (generic_ops.fs_chmod)(&partitions[p].atrfs,path,mode);
 }
 
-/*
- * I don't expect these to have meaning
- */
-int apt_create(struct atrfs *atrfs,const char *path, mode_t mode);
-int apt_truncate(struct atrfs *atrfs,const char *path, off_t size);
-int apt_newfs(struct atrfs *atrfs);
+int apt_readlink(struct atrfs *atrfs,const char *path, char *buf, size_t size)
+{
+   (void)atrfs;
+   if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
+   for (int i=0;i<15;++i)
+   {
+      if ( !mappings[i].start ) continue;
+      if ( strcasecmp(path+1,mappings[i].name) == 0 )
+      {
+         (void)size; // assume it's enough for our symlink, which could be 56 characters if I'm counting right
+         strcpy_case(buf,partitions[le16toh(mappings[i].entry->partition_id)-1].name);
+         return 0;
+      }
+   }
+   // No other file systems have symbolic links, so nothing more needed
+   return -ENOENT; // should not be reached
+}
+
+int apt_create(struct atrfs *atrfs,const char *path, mode_t mode)
+{
+   (void)atrfs;
+   int p = apt_path_to_partition(path);
+   if ( p < 0 ) return -EIO;
+   path = apt_subpath(path,p);
+   return (generic_ops.fs_create)(&partitions[p].atrfs,path,mode);
+}
+
+int apt_truncate(struct atrfs *atrfs,const char *path, off_t size)
+{
+   (void)atrfs;
+   int p = apt_path_to_partition(path);
+   if ( p < 0 ) return -EIO;
+   path = apt_subpath(path,p);
+   return (generic_ops.fs_truncate)(&partitions[p].atrfs,path,size);
+}
+
+#if (FUSE_USE_VERSION >= 30)
+int apt_utimens(struct atrfs *atrfs,const char *path, const struct timespec tv[2])
+{
+   (void)atrfs;
+   int p = apt_path_to_partition(path);
+   if ( p < 0 ) return 0;
+   path = apt_subpath(path,p);
+   return (generic_ops.fs_utimens)(&partitions[p].atrfs,path,tv);
+}
+#else
+int apt_utime(struct atrfs *atrfs,const char *path, struct utimbuf *utimbuf)
+{
+   (void)atrfs;
+   int p = apt_path_to_partition(path);
+   if ( p < 0 ) return 0;
+   path = apt_subpath(path,p);
+   return (generic_ops.fs_utime)(&partitions[p].atrfs,path,utimbuf);
+}
+#endif
 
 /*
  * apt_statfs()
@@ -651,24 +867,13 @@ int apt_statfs(struct atrfs *atrfs,const char *path, struct statvfs *stfsbuf)
    stfsbuf->f_files = num_partitions;
    stfsbuf->f_ffree = 0;
    stfsbuf->f_namemax = 40;
-   return 0; // FIXME
-}
-
-int apt_readlink(struct atrfs *atrfs,const char *path, char *buf, size_t size)
-{
-   (void)atrfs;
-   if ( options.debug ) fprintf(stderr,"DEBUG: %s: %s\n",__FUNCTION__,path);
-   for (int i=0;i<15;++i)
-   {
-      if ( !mappings[i].start ) continue;
-      if ( strcasecmp(path+1,mappings[i].name) == 0 )
-      {
-         (void)size; // assume it's enough for our symlink, which could be 56 characters if I'm counting right
-         strcpy_case(buf,partitions[le16toh(mappings[i].entry->partition_id)-1].name);
-         return 0;
-      }
-   }
-   return -ENOENT; // should not be reached
+   // This is going to be weird having different values for different paths in the same file system.
+   // Fuse does pass in the full path, so it works.
+   // Code to try to be useful if possible.
+   int p = apt_path_to_partition(path);
+   if ( p < 0 ) return 0; // Use above
+   path = apt_subpath(path,p);
+   return (generic_ops.fs_statfs)(&partitions[p].atrfs,path,stfsbuf);
 }
 
 /*
