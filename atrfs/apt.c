@@ -340,7 +340,7 @@ int scan_apt_partitions(struct atrfs *atrfs,void *mem,int header_offset,int firs
 
       if ( map )
       {
-         sprintf(name,"D%d%s%.40s",map,this->meta?" ":"",this->meta?this->meta->partition_name:"");
+         sprintf(name,"D%c%s%.40s",map<10?'0'+map:'J'-10+map,this->meta?" ":"",this->meta?this->meta->partition_name:"");
       }
       else
       {
