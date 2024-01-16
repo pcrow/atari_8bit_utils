@@ -143,8 +143,10 @@ struct apt_partition {
    unsigned int sectors;
    int bytes_per_sector;
    int bytes_access;
+   int byte_interleave;
+   int sectors_per_sector;
    int chunks;
-   int chunk_size;
+   size_t chunk_size;
    int size_divisor;
    struct partition_table_entry *entry;
    struct metadata_leader *meta;
@@ -309,6 +311,11 @@ int scan_apt_partitions(struct atrfs *atrfs,void *mem,int header_offset,int firs
       }
       this->bytes_per_sector = 64 << (entry->access_flags & 0x03);
       this->bytes_access = (entry->access_flags >> 2) & 0x03;
+      this->sectors_per_sector = 1;
+      if ( this->bytes_per_sector < 512 && ( this->bytes_access & 1 ) ) this->sectors_per_sector = 2;
+      this->byte_interleave = 0; // Default to sector interleave
+      if ( this->bytes_per_sector < 512 && ( this->bytes_access & 2 ) == 0 ) this->byte_interleave = 1;
+
       this->meta = (void *)((char *)(atrfs->atrmem) + le32toh(this->entry->starting_sector) * 512 - 512);
       this->chunk_size = this->sectors; // Most types have one big chunk
       this->chunks = 1;
@@ -637,18 +644,68 @@ int apt_read(struct atrfs *atrfs,const char *path, char *buf, size_t size, off_t
       // Read from this partition
       if ( match_found )
       {
-         if ( offset >= partitions[p].chunk_size*512/partitions[p].size_divisor )
+         // Adjust size/offset to be legal for the partition size
+         if ( (size_t)offset >= partitions[p].chunk_size*512/partitions[p].size_divisor )
          {
             return 0;
          }
-         if ( offset + size > (size_t)partitions[p].chunk_size * 512 / partitions[p].size_divisor )
+         if ( offset + size > partitions[p].chunk_size * 512 / partitions[p].size_divisor )
          {
             size = partitions[p].chunk_size*512 / partitions[p].size_divisor - offset;
          }
+
+         // Do 512-byte logical sectors (easy case)
+         if ( partitions[p].bytes_per_sector == 512 )
+         {
+            memcpy(buf,partitions[p].mem+offset+chunk*partitions[p].chunk_size,size);
+            return size;
+         }
+         // Do sector-interleaved copy for 256-byte sectors, two sectors per sector
+         // Note: I don't have an example of this to verify it, but it looks trivial
+         if ( partitions[p].bytes_per_sector == 256 && !partitions[p].byte_interleave )
+         {
+            memcpy(buf,partitions[p].mem+offset+chunk*partitions[p].chunk_size,size);
+            return size;
+         }
+         // Do byte-interleaved copy for 256-byte sectors, one sector per sector
+         // Note: Spec says use low-order byte of each word; example has bytes doubled instead of zero-padding
+         if ( partitions[p].bytes_per_sector == 256 && partitions[p].byte_interleave && partitions[p].sectors_per_sector == 1 )
+         {
+            char *src = partitions[p].mem+offset*2+chunk*partitions[p].chunk_size;
+            for ( size_t i=0;i<size;++i)
+            {
+               *buf++=*src;
+               src+=2; // Skip the second byte
+            }
+            return size;
+         }
+
+         // Do byte-interleaved copy for 128-byte sectors, one sector per sector
+         // Note: Spec says use low-order byte of each quadword; example has bytes duplicated instead of zero-padding
+         if ( partitions[p].bytes_per_sector == 128 && partitions[p].byte_interleave && partitions[p].sectors_per_sector == 1 )
+         {
+            char *src = partitions[p].mem+offset*2+chunk*partitions[p].chunk_size;
+            for ( size_t i=0;i<size;++i)
+            {
+               *buf++=*src;
+               src+=4; // Skip the extra bytes
+            }
+            return size;
+         }
+
+         // Note: I don't have examples of any of the following:
+         // FIXME: Do byte-interleaved copy for 128-byte sectors, two sectors per sector
+         // FIXME: Do sector-interleaved copy for 128-byte sectors, two sectors per sector
+         // FIXME: Do sector-interleaved copy for 128-byte sectors, one sector per sector
+         // FIXME: Do sector-interleaved copy for 128-byte sectors, one sector per sector
+         // FIXME: Do sector-interleaved copy for 256-byte sectors, one sector per sector
+         // FIXME: Verify that 128-byte sectors pack in two per sector, not four; the spec is unclear
+
+         // Fallback: read the raw data for debugging
          // FIXME:
          //   There are partition types that pack smaller sectors in non-linear ways.
          //   This includes some that interleave bytes and some that have unused bytes.
-         //   The code here needs to be updated to skip the unused bytes.
+         //   The code here needs to be updated.
          memcpy(buf,partitions[p].mem+offset+chunk*partitions[p].chunk_size,size);
          return size;
       }
@@ -689,7 +746,7 @@ int apt_write(struct atrfs *atrfs,const char *path, const char *buf, size_t size
       // Write to this partition
       if ( match_found )
       {
-         if ( offset >= partitions[p].chunk_size*512/partitions[p].size_divisor )
+         if ( (size_t)offset >= partitions[p].chunk_size*512/partitions[p].size_divisor )
          {
             return 0;
          }
@@ -697,12 +754,49 @@ int apt_write(struct atrfs *atrfs,const char *path, const char *buf, size_t size
          {
             size = partitions[p].chunk_size*512 / partitions[p].size_divisor - offset;
          }
-         // FIXME:
-         //   There are partition types that pack smaller sectors in non-linear ways.
-         //   This includes some that interleave bytes and some that have unused bytes.
-         //   The code here needs to be updated to skip the unused bytes.
-         memcpy(partitions[p].mem+offset+chunk*partitions[p].chunk_size,buf,size);
-         return size;
+         // Do 512-byte logical sectors (easy case)
+         if ( partitions[p].bytes_per_sector == 512 )
+         {
+            memcpy(partitions[p].mem+offset+chunk*partitions[p].chunk_size,buf,size);
+            return size;
+         }
+         // Do sector-interleaved copy for 256-byte sectors, two sectors per sector
+         // Note: I don't have an example of this to verify it, but it looks trivial
+         if ( partitions[p].bytes_per_sector == 256 && !partitions[p].byte_interleave )
+         {
+            memcpy(partitions[p].mem+offset+chunk*partitions[p].chunk_size,buf,size);
+            return size;
+         }
+         // Do byte-interleaved copy for 256-byte sectors, one sector per sector
+         // Note: Spec says use low-order byte of each word; example has bytes doubled instead of zero-padding
+         if ( partitions[p].bytes_per_sector == 256 && partitions[p].byte_interleave && partitions[p].sectors_per_sector == 1 )
+         {
+            char *dst = partitions[p].mem+offset*2+chunk*partitions[p].chunk_size;
+            for ( size_t i=0;i<size;++i)
+            {
+               *dst++ = *buf;
+               *dst++ = *buf++; // write twice instead of skipping as per example
+            }
+            return size;
+         }
+         // Do byte-interleaved copy for 128-byte sectors, one sector per sector
+         // Note: Spec says use low-order byte of each quadword; example has bytes duplicated instead of zero-padding
+         if ( partitions[p].bytes_per_sector == 128 && partitions[p].byte_interleave && partitions[p].sectors_per_sector == 1 )
+         {
+            char *dst = partitions[p].mem+offset*2+chunk*partitions[p].chunk_size;
+            for ( size_t i=0;i<size;++i)
+            {
+               *dst++ = *buf;
+               *dst++ = *buf;
+               *dst++ = *buf;
+               *dst++ = *buf++; // write all four bytes instead of skipping as per example
+            }
+            return size;
+         }
+
+         // FIXME: Add support for the other sector packing methods
+         // Code should be nearly identical to the read case
+         return -EIO; // Not supported, so don't try it
       }
    }
    return (generic_ops.fs_write)(&partitions[p].atrfs,path,buf,size,offset);
@@ -914,12 +1008,12 @@ char *apt_fsinfo(struct atrfs *atrfs)
       b+=sprintf(b,"  bytes per sector: %d\n",partitions[i].bytes_per_sector);
       if ( partitions[i].bytes_per_sector < 512 )
       {
-         b+=sprintf(b,"  %s per 512-byte sector\n",(partitions[i].bytes_access & 0x01)?"two sectors":"one sector");
-         b+=sprintf(b,"  sector interleave: %s\n",(partitions[i].bytes_access & 0x01)?"sector":"byte");
+         b+=sprintf(b,"  %s per 512-byte sector\n",(partitions[i].sectors_per_sector > 1)?"two sectors":"one sector");
+         b+=sprintf(b,"  sector interleave: %s\n",(partitions[i].byte_interleave)?"byte":"sector");
       }
       if ( partitions[i].entry->partition_type == 0x02 )
       {
-         b+=sprintf(b,"  chunk size (per floppy): %d sectors\n",partitions[i].chunk_size);
+         b+=sprintf(b,"  chunk size (per floppy): %lu sectors\n",partitions[i].chunk_size);
       }
    }
 

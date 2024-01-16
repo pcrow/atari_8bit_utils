@@ -434,7 +434,7 @@ int sparta_sanity(struct atrfs *atrfs)
       if ( options.debug ) printf("Not SpartaDOS: No bitmap sectors\n");
       return 1;
    }
-   if ( (sec1->bitmap_sectors-1)*8*atrfs->sectorsize >= atrfs->sectors )
+   if ( (sec1->bitmap_sectors-1)*atrfs->sectorsize*8 >= atrfs->sectors )
    {
       if ( options.debug ) printf("Not SpartaDOS: Too many bitmap sectors %d\n",sec1->bitmap_sectors);
       return 1;
