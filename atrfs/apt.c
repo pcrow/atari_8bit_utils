@@ -41,6 +41,30 @@
  * The mapping entries are implemented as symlinks to the partition entries.
  *
  *
+ * Implementation strategy:
+ *
+ * For 512-byte sectors, it's still just blocks of the memory-mapped file
+ * that get passed down to local file systems.  But for smaller sectors,
+ * they may not be mapped in a linear fashion.  Sectors may be interleaved
+ * on a byte basis, and it may just use one physical sector for each
+ * logical sector.  The spec is confusing, so the implementation may only
+ * cover what I have samples of.
+ *
+ * For smaller sectors, just dynamically allocate memory for two copies of
+ * the partition, up to 65535 sectors (as no Atari file system can use
+ * more).  Keep one copy as a reference copy, and pass the other in as the
+ * active file system memory for file system operations.  Then after every
+ * write operation, call a copy-back routine that will do a memcmp between
+ * the working and reference copies and copy back anything that has
+ * changed.
+ *
+ * Performance will be horrible, but it's probably acceptable for this use
+ * case.  Performance would be better by simply calling atrfs again to map
+ * the .raw partition file.
+ *
+ *
+ * Thoughts:
+ *
  * My overall impression of the APT spec is that it is overly complicated with
  * a bunch of features that aren't needed.  I'm guessing behind each one there's
  * some history to explain it.  Too many "normally zero" fields.
@@ -139,6 +163,8 @@ struct __attribute__((__packed__)) metadata_leader {
  */
 struct apt_partition {
    void *mem;
+   void *working; // working copy to pass in to file system layer
+   void *reference; // reference copy for detecting writes
    unsigned int start;
    unsigned int sectors;
    int bytes_per_sector;
@@ -298,6 +324,7 @@ int scan_apt_partitions(struct atrfs *atrfs,void *mem,int header_offset,int firs
          this->name = "";
          continue;
       }
+      this->working = this->mem;
       if ( (this->start+1) * 512 > atrfs->atrstat.st_size )
       {
          fprintf(stderr,"ATP partition says it starts at sector %u which is past the end of the file\n",this->start);
@@ -351,7 +378,10 @@ int scan_apt_partitions(struct atrfs *atrfs,void *mem,int header_offset,int firs
       }
       else
       {
-         sprintf(name,"partition %d%s%.40s",num_partitions,this->meta?" ":"",this->meta?this->meta->partition_name:"");
+         if ( this->meta && this->meta->partition_name[0] )
+            sprintf(name,"partition %d %.40s",num_partitions,this->meta->partition_name);
+         else
+            sprintf(name,"partition %d",num_partitions);
       }
       this->name=strdup(name);
    }
@@ -376,8 +406,8 @@ void apt_prepare_submounts(struct atrfs *atrfs)
       partitions[i].atrfs.fd = -1;
       partitions[i].atrfs.readonly = atrfs->readonly;
       partitions[i].atrfs.atrstat = atrfs->atrstat;
-      partitions[i].atrfs.atrmem = partitions[i].mem;
-      partitions[i].atrfs.mem = partitions[i].mem;
+      partitions[i].atrfs.atrmem = partitions[i].working;
+      partitions[i].atrfs.mem = partitions[i].working;
       partitions[i].atrfs.shortsectors = 0; // Not supported
       partitions[i].atrfs.sectorsize = partitions[i].bytes_per_sector;
       partitions[i].atrfs.sectors = partitions[i].sectors;
@@ -435,6 +465,74 @@ const char *apt_subpath(const char *path,int p)
 }
 
 /*
+ * apt_copypartitions()
+ *
+ * Create a working and reference copy of each partition if it's not a straight linear mapping.
+ */
+void apt_copypartitions(void)
+{
+   for (int p=0;p<num_partitions;++p)
+   {
+      if ( partitions[p].bytes_per_sector == 512 ) continue;
+      if ( partitions[p].bytes_per_sector == 256 && !partitions[p].byte_interleave && partitions[p].sectors_per_sector == 2 ) continue; // FIXME: Find an example and verify
+      int sectors = partitions[p].sectors;
+      if ( sectors > 65535 ) sectors = 65535; // No file system uses more
+      partitions[p].working = malloc(partitions[p].bytes_per_sector * sectors);
+      partitions[p].reference = malloc(partitions[p].bytes_per_sector * sectors);
+      if ( !partitions[p].working || !partitions[p].reference )
+      {
+         fprintf(stderr,"Unable to allocate memory for partition reference copies\n");
+         exit(1);
+      }
+      char path[128];
+      sprintf(path,"/%s/.raw",partitions[p].name);
+      int r = apt_read(NULL,path,partitions[p].working,partitions[p].bytes_per_sector * sectors,0);
+      if ( r != partitions[p].bytes_per_sector * sectors )
+      {
+         free(partitions[p].working);
+         free(partitions[p].reference);
+         partitions[p].working = partitions[p].mem;
+         partitions[p].reference = NULL;
+         fprintf(stderr,"Unable to make partition reference copy; file system access not supported on partition %d\n",p+1);
+         continue;
+      }
+      memcpy(partitions[p].reference,partitions[p].working,partitions[p].bytes_per_sector * sectors);
+   }
+}
+
+/*
+ * apt_copyback()
+ *
+ * After a write operation on a partition file system, copy back to the real base file.
+ */
+void apt_copyback(int p)
+{
+   if ( !partitions[p].reference ) return; // Not using this feature
+
+   int sectors = partitions[p].sectors;
+   if ( sectors > 65535 ) sectors = 65535; // No file system uses more
+   char path[128];
+   sprintf(path,"/%s/.raw",partitions[p].name);
+   for (int s=0;s<sectors;++s)
+   {
+      if ( memcmp(&((char *)partitions[p].reference)[s*partitions[p].bytes_per_sector],
+                  &((char *)partitions[p].working)[s*partitions[p].bytes_per_sector],
+                  partitions[p].bytes_per_sector) != 0 )
+      {
+         // write back sector 's'
+         apt_write(NULL,path,
+                   &((char *)partitions[p].working)[s*partitions[p].bytes_per_sector],
+                   partitions[p].bytes_per_sector,
+                   s*partitions[p].bytes_per_sector);
+         // save changes in reference copy
+         memcpy(&((char *)partitions[p].reference)[s*partitions[p].bytes_per_sector],
+                &((char *)partitions[p].working)[s*partitions[p].bytes_per_sector],
+                partitions[p].bytes_per_sector);
+      }
+   }
+}
+
+/*
  * apt_info()
  *
  * Debugging for now, eventually it will be the .fsinfo output
@@ -479,6 +577,7 @@ int apt_sanity(struct atrfs *atrfs)
    if ( apt_table->header_entry_prev_offset ) return 1; // must be zero for first entry
    if ( apt_table->prev_sector_in_table_chain ) return 1; // prev must be zero for the first sector
    scan_apt_partitions(atrfs,apt_table,0,1);
+   apt_copypartitions();
    apt_prepare_submounts(atrfs);
    if ( options.debug ) apt_info(); // DEBUG
    return 0;
@@ -662,7 +761,7 @@ int apt_read(struct atrfs *atrfs,const char *path, char *buf, size_t size, off_t
          }
          // Do sector-interleaved copy for 256-byte sectors, two sectors per sector
          // Note: I don't have an example of this to verify it, but it looks trivial
-         if ( partitions[p].bytes_per_sector == 256 && !partitions[p].byte_interleave )
+         if ( partitions[p].bytes_per_sector == 256 && !partitions[p].byte_interleave && partitions[p].sectors_per_sector == 2 )
          {
             memcpy(buf,partitions[p].mem+offset+chunk*partitions[p].chunk_size,size);
             return size;
@@ -799,7 +898,9 @@ int apt_write(struct atrfs *atrfs,const char *path, const char *buf, size_t size
          return -EIO; // Not supported, so don't try it
       }
    }
-   return (generic_ops.fs_write)(&partitions[p].atrfs,path,buf,size,offset);
+   int r = (generic_ops.fs_write)(&partitions[p].atrfs,path,buf,size,offset);
+   apt_copyback(p);
+   return r;
 }
 
 /*
@@ -811,7 +912,9 @@ int apt_mkdir(struct atrfs *atrfs,const char *path,mode_t mode)
    int p = apt_path_to_partition(path);
    if ( p < 0 ) return -EPERM;
    path = apt_subpath(path,p);
-   return (generic_ops.fs_mkdir)(&partitions[p].atrfs,path,mode);
+   int r = (generic_ops.fs_mkdir)(&partitions[p].atrfs,path,mode);
+   apt_copyback(p);
+   return r;
 }
 
 /*
@@ -823,7 +926,9 @@ int apt_rmdir(struct atrfs *atrfs,const char *path)
    int p = apt_path_to_partition(path);
    if ( p < 0 ) return -EIO;
    path = apt_subpath(path,p);
-   return (generic_ops.fs_rmdir)(&partitions[p].atrfs,path);
+   int r = (generic_ops.fs_rmdir)(&partitions[p].atrfs,path);
+   apt_copyback(p);
+   return r;
 }
 
 /*
@@ -836,7 +941,9 @@ int apt_unlink(struct atrfs *atrfs,const char *path)
    if ( p < 0 ) return -EIO;
    // FIXME: Should we allow removing a mapping symlink?
    path = apt_subpath(path,p);
-   return (generic_ops.fs_unlink)(&partitions[p].atrfs,path);
+   int r = (generic_ops.fs_unlink)(&partitions[p].atrfs,path);
+   apt_copyback(p);
+   return r;
 }
 
 /*
@@ -847,15 +954,28 @@ int apt_rename(struct atrfs *atrfs,const char *path1, const char *path2, unsigne
    (void)atrfs;
    int p = apt_path_to_partition(path1);
    int p2 = apt_path_to_partition(path2);
+   // Trying to rename a partition or mapping
    if ( p < 0 && p2 < 0 )
    {
       // FIXME: Allow renaming of a partition if there is a META label
       return -EIO;
    }
-   if ( p < 0 || p != p2 ) return -EIO; // Can't move between file systems; copy and unlink instead
+   // Trying to move a file from a partition to the main directory: Nope
+   if ( p < 0 || p2 < 0 )
+   {
+      return -EIO;
+   }
+   // Moving a file between file systems
+   if ( p != p2 )
+   {
+      // FIXME: It would be possible to do a create call on the target, copy it over, and then do an unlink
+      return -EIO; // Can't move between file systems; copy and unlink instead
+   }
    path1 = apt_subpath(path1,p);
    path2 = apt_subpath(path2,p);
-   return (generic_ops.fs_rename)(&partitions[p].atrfs,path1,path2,flags);
+   int r = (generic_ops.fs_rename)(&partitions[p].atrfs,path1,path2,flags);
+   apt_copyback(p);
+   return r;
 }
 
 /*
@@ -885,7 +1005,9 @@ int apt_chmod(struct atrfs *atrfs,const char *path, mode_t mode)
          partitions[p].entry->partition_type_details[0] |= 0x80;
       }
    }
-   return (generic_ops.fs_chmod)(&partitions[p].atrfs,path,mode);
+   int r = (generic_ops.fs_chmod)(&partitions[p].atrfs,path,mode);
+   apt_copyback(p);
+   return r;
 }
 
 int apt_readlink(struct atrfs *atrfs,const char *path, char *buf, size_t size)
@@ -912,7 +1034,9 @@ int apt_create(struct atrfs *atrfs,const char *path, mode_t mode)
    int p = apt_path_to_partition(path);
    if ( p < 0 ) return -EIO;
    path = apt_subpath(path,p);
-   return (generic_ops.fs_create)(&partitions[p].atrfs,path,mode);
+   int r = (generic_ops.fs_create)(&partitions[p].atrfs,path,mode);
+   apt_copyback(p);
+   return r;
 }
 
 int apt_truncate(struct atrfs *atrfs,const char *path, off_t size)
@@ -921,7 +1045,9 @@ int apt_truncate(struct atrfs *atrfs,const char *path, off_t size)
    int p = apt_path_to_partition(path);
    if ( p < 0 ) return -EIO;
    path = apt_subpath(path,p);
-   return (generic_ops.fs_truncate)(&partitions[p].atrfs,path,size);
+   int r = (generic_ops.fs_truncate)(&partitions[p].atrfs,path,size);
+   apt_copyback(p);
+   return r;
 }
 
 #if (FUSE_USE_VERSION >= 30)
@@ -931,7 +1057,9 @@ int apt_utimens(struct atrfs *atrfs,const char *path, const struct timespec tv[2
    int p = apt_path_to_partition(path);
    if ( p < 0 ) return 0;
    path = apt_subpath(path,p);
-   return (generic_ops.fs_utimens)(&partitions[p].atrfs,path,tv);
+   int r = (generic_ops.fs_utimens)(&partitions[p].atrfs,path,tv);
+   apt_copyback(p);
+   return r;
 }
 #else
 int apt_utime(struct atrfs *atrfs,const char *path, struct utimbuf *utimbuf)
@@ -940,7 +1068,9 @@ int apt_utime(struct atrfs *atrfs,const char *path, struct utimbuf *utimbuf)
    int p = apt_path_to_partition(path);
    if ( p < 0 ) return 0;
    path = apt_subpath(path,p);
-   return (generic_ops.fs_utime)(&partitions[p].atrfs,path,utimbuf);
+   int r = (generic_ops.fs_utime)(&partitions[p].atrfs,path,utimbuf);
+   apt_copyback(p);
+   return r;
 }
 #endif
 
