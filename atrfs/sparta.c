@@ -423,9 +423,9 @@ int sparta_sanity(struct atrfs *atrfs)
       if ( options.debug ) printf("Not SpartaDOS: Free sector count >= sector count %d != %d\n",BYTES2(sec1->free), atrfs->sectors);
       return 1;
    }
-   if ( BYTES2(sec1->sectors) != atrfs->sectors )
+   if ( BYTES2(sec1->sectors) != atrfs->sectors && BYTES2(sec1->sectors) < 65535 )
    {
-      if ( options.debug ) printf("Not SpartaDOS: Sparta sector count != image sector count %d != %d\n",BYTES2(sec1->sectors), atrfs->sectors);
+      //if ( options.debug ) printf("Not SpartaDOS: Sparta sector count != image sector count %d != %d\n",BYTES2(sec1->sectors), atrfs->sectors);
       fprintf(stderr,"SpartaDOS: Sparta sector count != image sector count %d != %d; truncated file -- proceed with caution\n",BYTES2(sec1->sectors), atrfs->sectors);
       // return 1;
    }

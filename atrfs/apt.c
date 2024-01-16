@@ -422,7 +422,7 @@ void apt_prepare_submounts(struct atrfs *atrfs)
                partitions[i].atrfs.fstype = j;
                if ( options.debug ) fprintf(stderr,"DEBUG: %s detected %s image\n",__FUNCTION__,fs_ops[j]->name);
                partitions[i].submount = 1;
-               return;
+               break; // Next partition
             }
          }
       }
