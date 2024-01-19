@@ -1171,6 +1171,7 @@ int load_boot(const unsigned char *load,int size)
    int sectors = load[1];
    if ( sectors * 128 > size ) return -1;
    int target = le16toh(*(uint16_t *)&load[2]);
+   if ( target < 1 || target + size > 0xffff ) return -1;
    memcpy(&mem[target],load,sectors*128); // Sector 1 is first loaded into 0400-047f
    for (int i=0;i<sectors*128;++i) mem_loaded[target+i]=1;
    branch_target[le16toh(*(uint16_t *)&load[4])] = 1;
@@ -1187,6 +1188,20 @@ int load_boot(const unsigned char *load,int size)
       if ( labels[lab].addr >= 0x400 && labels[lab].addr < 0x480 ) page4=1;
    }
    if ( page4 ) for (int i=0x400;i<0x480;++i) mem_loaded[i]=1;
+   return 0;
+}
+
+/*
+ * load_blob()
+ *
+ * Load a blob at a given address.
+ * The caller will have already set the start point(s) as branch targets and set labels for them.
+ */
+int load_blob(int addr,const unsigned char *load,int size)
+{
+   if ( addr+size > 0xffff ) return -1;
+   memcpy(&mem[addr],load,size);
+   for (int i=0;i<size;++i) mem_loaded[addr+i]=1;
    return 0;
 }
 
@@ -1500,7 +1515,7 @@ void output_disasm(void)
          {
             printf("%s$%02X",i?",":"",mem[addr+i]);
          }
-         printf(" ; NOP (unofficial\n");
+         printf(" ; NOP (unofficial)\n");
       }
       else
       {
@@ -1574,16 +1589,81 @@ void output_disasm(void)
 }
 
 /*
+ * usage()
+ */
+void usage(const char *progname)
+{
+   printf("Usage:\n"
+          "\n"
+          "%s [options] [file]\n"
+          "\n"
+          "Dissassemble [file]\n"
+          "Options:\n"
+          " --addr=[xxxx]   Load the file at the specified (hex) address\n"
+          " --start=[xxxx]  Specify a starting address for code execution\n"
+          " --start=[xxxx]  Specify another starting address (repeat as needed\n"
+          "\n"
+          "If no options are specified, the file is auto-parsed for type\n"
+          "Supported types:\n"
+          "  binary load    -- any file that starts with ffff\n"
+          "  boot sectors   -- default if no other match\n"
+          "\n"
+          ,progname);
+}
+
+/*
  * main()
  */
 int main(int argc,char *argv[])
 {
-   // FIXME: For now just assume we have a file with raw boot sectors
+   const char *progname = argv[0];
    if ( argc < 2 )
    {
-      fprintf(stderr,"Must specify data file\n");
+      usage(progname);
       return 1;
    }
+
+   int addr=0;
+   int start=0;
+   while ( argc > 2 )
+   {
+      if ( argv[1][0] != '-' && argv[1][1] != '-' )
+      {
+         usage(progname);
+         return 1;
+      }
+      if ( strncmp(argv[1],"--addr=",sizeof("--addr=")-1) == 0 )
+      {
+         addr = strtol(argv[1]+sizeof("--addr=")-1,NULL,16);
+         if ( addr > 0 && addr < 0xffff )
+         {
+            ++argv;
+            --argc;
+            continue;
+         }
+      }
+      if ( strncmp(argv[1],"--start=",sizeof("--start=")-1) == 0 )
+      {
+         int startaddr;
+         char name[20];
+         startaddr = strtol(argv[1]+sizeof("--start=")-1,NULL,16);
+         if ( startaddr > 0 && startaddr < 0xffff )
+         {
+            ++start;
+            sprintf(name,"START%d",start);
+            add_label(name,startaddr);
+            branch_target[startaddr] = 1;
+
+            ++argv;
+            --argc;
+            continue;
+         }
+      }
+      printf("Invalid option: %s\n",argv[1]);
+      usage(progname);
+      return 1;
+   }
+   
    int fd = open(argv[1],O_RDONLY);
    if ( fd < 0 )
    {
@@ -1597,8 +1677,14 @@ int main(int argc,char *argv[])
    }
    void *data = mmap(NULL,statbuf.st_size,PROT_READ,MAP_SHARED,fd,0);
 
-   if ( ((uint16_t *)data)[0] == 0xffff ) load_binload(data,statbuf.st_size);
-   else load_boot(data,statbuf.st_size);
+   if ( addr ) load_blob(addr,data,statbuf.st_size);
+   else if ( ((uint16_t *)data)[0] == 0xffff ) load_binload(data,statbuf.st_size);
+   else if ( load_boot(data,statbuf.st_size) < 0 )
+   {
+      fprintf(stderr,"Invalid data for boot sectors; failed to parse file type\n");
+      usage(progname);
+      return 1;
+   }
    trace_code();
    fix_up_labels();
    sort_labels();
