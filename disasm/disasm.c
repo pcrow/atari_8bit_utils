@@ -1377,7 +1377,7 @@ void fix_up_labels(void)
       if ( instruction[labels[lab].addr-2] && instruction_bytes[opcode[mem[labels[lab].addr-2]].mode] >= 2 ) addr = labels[lab].addr - 2;
       if ( addr < 0 ) continue;
       name = add_label(NULL,addr);
-      sprintf(labels[lab].name,"(%s+%d)",name,labels[lab].addr-addr);
+      sprintf(labels[lab].name,"%s+%d",name,labels[lab].addr-addr);
    }
 }
 
