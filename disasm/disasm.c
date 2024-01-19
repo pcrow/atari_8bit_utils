@@ -1206,6 +1206,35 @@ int load_blob(int addr,const unsigned char *load,int size)
 }
 
 /*
+ * load_rom()
+ *
+ * Load a 8K or 16K straight ROM
+ */
+int load_rom(const unsigned char *load,int size)
+{
+   int addr = 0xc000 - size;
+   int run;
+   int r;
+
+   if ( size != 8*1024 && size != 16*1024 ) return -1;
+   r = load_blob(addr,load,size);
+   if ( r ) return r;
+   run = le16toh(*(uint16_t *)&mem[0xbffa]);
+   if ( run >= addr && run < 0xc000 )
+   {
+      add_label("CART_STRT",run);
+      branch_target[run] = 1;
+   }
+   run = le16toh(*(uint16_t *)&mem[0xbffe]);
+   if ( run >= addr && run < 0xc000 )
+   {
+      add_label("CART_INIT",run);
+      branch_target[run] = 1;
+   }
+   return 0;
+}
+
+/*
  * load_binload()
  *
  * Load a binary load file into memory.
@@ -1464,12 +1493,12 @@ void output_disasm(void)
             char name[16];
             strcpy(name,labels[lab].name);
             strchr(name,',')[0]=0;
-            printf("%s = $%04X ; read register\n",name,labels[lab].addr);
-            printf("%s = $%04X ; write register\n",c+1,labels[lab].addr);
+            printf("%s\t= $%04X ; read register\n",name,labels[lab].addr);
+            printf("%s\t= $%04X ; write register\n",c+1,labels[lab].addr);
          }
          else // normal case
          {
-            printf("%s = $%04X\n",labels[lab].name,labels[lab].addr);
+            printf("%s\t= $%04X\n",labels[lab].name,labels[lab].addr);
          }
       }
    }
@@ -1606,6 +1635,7 @@ void usage(const char *progname)
           "If no options are specified, the file is auto-parsed for type\n"
           "Supported types:\n"
           "  binary load    -- any file that starts with ffff\n"
+          "  ROM files      -- exactly 16K or 8K with valid init and run addresses\n"
           "  boot sectors   -- default if no other match\n"
           "\n"
           ,progname);
@@ -1679,6 +1709,7 @@ int main(int argc,char *argv[])
 
    if ( addr ) load_blob(addr,data,statbuf.st_size);
    else if ( ((uint16_t *)data)[0] == 0xffff ) load_binload(data,statbuf.st_size);
+   else if ( load_rom(data,statbuf.st_size) == 0 ) ; // It was a ROM
    else if ( load_boot(data,statbuf.st_size) < 0 )
    {
       fprintf(stderr,"Invalid data for boot sectors; failed to parse file type\n");
