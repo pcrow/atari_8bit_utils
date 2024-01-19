@@ -1450,7 +1450,7 @@ void print_label_or_addr(int target,int write)
          char *c = strchr(labels[lab].name,',');
          if ( c ) // separate read/write labels
          {
-            if ( write )
+            if ( !write )
             {
                printf("%s",c+1);
             }
