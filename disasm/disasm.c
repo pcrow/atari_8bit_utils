@@ -1119,7 +1119,7 @@ const char *add_label(const char *name,int addr)
          {
             // Need to add the base label if it's not already there
             int j=i;
-            while ( label_table[j].name[0] == '(' ) --j;
+            while ( strchr(label_table[j].name,'+') ) --j;
             add_label(label_table[j].name,label_table[j].addr);
             return add_label(label_table[i].name,addr);
          }
