@@ -74,22 +74,6 @@ const int instruction_bytes[]={
    [E_RELATIVE] = 2,
 };
 
-const char *mode_printf[]={
-   [E_IMPLIED] = "%s",
-   [E_ACCUMULATOR] = "%s A",
-   [E_IMMEDIATE] = "%s #$%02X",
-   [E_ABSOLUTE] = "%s $%02X%02X",
-   [E_ABSOLUTE_X] = "%s $%02X%02X,X",
-   [E_ABSOLUTE_Y] = "%s $%02X%02X,Y",
-   [E_INDIRECT] = "%s ($%02X%02X)", // JMP; will use label
-   [E_ZEROPAGE] = "%s $%02X",
-   [E_ZEROPAGE_X] = "%s $%02X,X",
-   [E_ZEROPAGE_Y] = "%s $%02X,Y",
-   [E_ZEROPAGE_IND_X] = "%s ($%02X,X)",
-   [E_ZEROPAGE_IND_Y] = "%s ($%02X),Y",
-   [E_RELATIVE] = "%s #$%02X", // BRA; will use label instead
-};
-
 const struct opcode opcode[256]={
    [0x00] = { "BRK", E_IMPLIED, 0 },
    [0x18] = { "CLC", E_IMPLIED, 0 },
@@ -375,6 +359,7 @@ char data_target[64*1024];
 
 // Options
 int bracket;
+int noa;
 
 // Table of known labels; use these instead of Lxxxx
 // https://atariwiki.org/wiki/Wiki.jsp?page=Memory%20Map
@@ -1570,7 +1555,7 @@ void output_disasm(void)
          switch(opcode[mem[addr]].mode)
          {
             case E_ACCUMULATOR:
-               printf(" A");
+               if ( !noa ) printf(" A");
                break;
             case E_IMMEDIATE:
                printf(" #$%02X",mem[addr+1]);
@@ -1646,6 +1631,7 @@ void usage(const char *progname)
           " --start=[xxxx]  Specify a starting address for code execution\n"
           " --start=[xxxx]  Specify another starting address (repeat as needed\n"
           " --bracket       Use brackets for label math: [LABEL+1]\n"
+          " --noa           Leave off the 'A' on ASL, ROR, and the like\n"
           "\n"
           "If no options are specified, the file is auto-parsed for type\n"
           "Supported types:\n"
@@ -1680,6 +1666,13 @@ int main(int argc,char *argv[])
       if ( strcmp(argv[1],"--bracket") == 0 )
       {
          bracket = 1;
+         ++argv;
+         --argc;
+         continue;
+      }
+      if ( strcmp(argv[1],"--noa") == 0 )
+      {
+         noa = 1;
          ++argv;
          --argc;
          continue;
