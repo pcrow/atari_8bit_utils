@@ -1247,6 +1247,7 @@ int load_binload(const unsigned char *load,int size)
 {
    int start,end;
    int init = 0;
+   int first_addr = 0;
 
    while ( size )
    {
@@ -1262,6 +1263,7 @@ int load_binload(const unsigned char *load,int size)
       load +=2;
       size -=2;
       if ( size < 2 ) return -1;
+      if ( !first_addr ) first_addr = start;
       end=le16toh(*(uint16_t *)&load[0]);
       load +=2;
       size -=2;
@@ -1291,6 +1293,8 @@ int load_binload(const unsigned char *load,int size)
          size -= end-start+1;
       }
    }
+   for (int i=0;i<0xffff;++i) if ( branch_target[i] ) return 0;
+   branch_target[first_addr] = 1; // Assume the first block starts the code if there are no start addresses
    return 0;
 }
 
