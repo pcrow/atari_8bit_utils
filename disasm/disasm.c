@@ -1162,12 +1162,17 @@ int load_boot(const unsigned char *load,int size)
    if ( target < 1 || target + size > 0xffff ) return -1;
    memcpy(&mem[target],load,sectors*128); // Sector 1 is first loaded into 0400-047f
    for (int i=0;i<sectors*128;++i) mem_loaded[target+i]=1;
-   branch_target[le16toh(*(uint16_t *)&load[4])] = 1;
-   add_label("BOOT_INI",le16toh(*(uint16_t *)&load[4]));
-   branch_target[le16toh(*(uint16_t *)&load[6])] = 1;
-   add_label("BOOT_EXEC",le16toh(*(uint16_t *)&load[6]));
+   int dosini = le16toh(*(uint16_t *)&load[4]);
+   if ( dosini >= target + 6 )
+   {
+      branch_target[dosini] = 1;
+      add_label("BOOT_INI",dosini);
+   }
+   branch_target[target+6] = 1;
+   add_label("BOOT_EXEC",target+6);
    add_label("BOOT_SECS",target+1);
    add_label("BOOT_ADDR",target+2);
+   add_label("LOAD_ADDR",target+4);
    // Normally don't access 0x400-0x47f in boot code, but just in case, add it if it's referenced.
    trace_code();
    int page4=0;
