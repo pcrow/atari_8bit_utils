@@ -373,6 +373,9 @@ char instruction[64*1024]; // first byte of an instruction?
 char branch_target[64*1024];
 char data_target[64*1024];
 
+// Options
+int bracket;
+
 // Table of known labels; use these instead of Lxxxx
 // https://atariwiki.org/wiki/Wiki.jsp?page=Memory%20Map
 // Script:
@@ -1471,7 +1474,14 @@ void print_label_or_addr(int target,int write)
          }
          else
          {
-            printf("%s",labels[lab].name);
+            if ( bracket && strchr(labels[lab].name,'+') )
+            {
+               printf("[%s]",labels[lab].name);
+            }
+            else
+            {
+               printf("%s",labels[lab].name);
+            }
          }
          return;
       }
@@ -1635,6 +1645,7 @@ void usage(const char *progname)
           " --addr=[xxxx]   Load the file at the specified (hex) address\n"
           " --start=[xxxx]  Specify a starting address for code execution\n"
           " --start=[xxxx]  Specify another starting address (repeat as needed\n"
+          " --bracket       Use brackets for label math: [LABEL+1]\n"
           "\n"
           "If no options are specified, the file is auto-parsed for type\n"
           "Supported types:\n"
@@ -1665,6 +1676,13 @@ int main(int argc,char *argv[])
       {
          usage(progname);
          return 1;
+      }
+      if ( strcmp(argv[1],"--bracket") == 0 )
+      {
+         bracket = 1;
+         ++argv;
+         --argc;
+         continue;
       }
       if ( strncmp(argv[1],"--addr=",sizeof("--addr=")-1) == 0 )
       {
