@@ -23,6 +23,7 @@
  * Defines
  */
 #define BYTE_PSEUDO_OP ".byte"
+#define ARRAY_SIZE(_a) (sizeof(_a)/sizeof((_a)[0]))
 
 /*
  * data types
@@ -67,6 +68,11 @@ struct label {
    char rw; // 'r' for read-only, 'w' for write only
    int btype; // 1: byte, 2: word
    int base; // 2,8,10,16,256 for %1000001, &0101, 65, $41, "A"
+};
+
+struct label_tables {
+   const struct label *table;
+   int entries;
 };
 
 /*
@@ -382,7 +388,7 @@ int noa;
 
 // Table of known labels; use these instead of Lxxxx
 // https://atariwiki.org/wiki/Wiki.jsp?page=Memory%20Map
-const struct label label_table[] = {
+const struct label label_table_atari[] = {
    { 0x0000, "LINZBS", 2, 'a', 1, 16 },
    { 0x0000, "LINFLG", 1, 'a', 1, 16 },
    { 0x0001, "NGFLAG", 1, 'a', 1, 16 },
@@ -491,37 +497,6 @@ const struct label label_table[] = {
    { 0x007C, "HOLDCH", 1, 'a', 1, 16 },
    { 0x007D, "INSDAT", 1, 'a', 1, 16 },
    { 0x007E, "COUNTR", 2, 'a', 1, 16 },
-   { 0x0080, "LOMEM", 2, 'a', 1, 16 },
-   { 0x0082, "VNTP", 2, 'a', 1, 16 },
-   { 0x0084, "VNTD", 2, 'a', 1, 16 },
-   { 0x0086, "VVTP", 2, 'a', 1, 16 },
-   { 0x0088, "STMTAB", 2, 'a', 1, 16 },
-   { 0x008A, "STMCUR", 2, 'a', 1, 16 },
-   { 0x008C, "STARP", 2, 'a', 1, 16 },
-   { 0x008E, "RUNSTK", 2, 'a', 1, 16 },
-   { 0x0090, "MEMTOP", 2, 'a', 1, 16 },
-   // 0092 -- 00ca are reserved for BASIC
-   { 0x00BA, "STOPLN", 2, 'a', 1, 16 },
-   { 0x00C3, "ERRSAVE", 1, 'a', 1, 16 },
-   { 0x00C9, "PTABW", 1, 'a', 1, 16 },
-   { 0x00D4, "FR0", 6, 'a', 1, 16 },
-   { 0x00DA, "FRE", 6, 'a', 1, 16 },
-   { 0x00E0, "FR1", 6, 'a', 1, 16 },
-   { 0x00E6, "FR2", 6, 'a', 1, 16 },
-   { 0x00EC, "FRX", 1, 'a', 1, 16 },
-   { 0x00ED, "EEXP", 1, 'a', 1, 16 },
-   { 0x00EE, "NSIGN", 1, 'a', 1, 16 },
-   { 0x00EF, "ESIGN", 1, 'a', 1, 16 },
-   { 0x00F0, "FCHRFLG", 1, 'a', 1, 16 },
-   { 0x00F1, "DIGRT", 1, 'a', 1, 16 },
-   { 0x00F2, "CIX", 1, 'a', 1, 16 },
-   { 0x00F3, "INBUFF", 2, 'a', 1, 16 },
-   { 0x00F5, "ZTEMP1", 2, 'a', 1, 16 },
-   { 0x00F7, "ZTEMP4", 2, 'a', 1, 16 },
-   { 0x00F9, "ZTEMP3", 2, 'a', 1, 16 },
-   { 0x00FB, "RADFLG", 1, 'a', 1, 16 },
-   { 0x00FC, "FLPTR", 2, 'a', 1, 16 },
-   { 0x00FE, "FPTR2", 2, 'a', 1, 16 },
    { 0x0200, "VDSLST", 2, 'a', 1, 16 },
    { 0x0202, "VPRCED", 2, 'a', 1, 16 },
    { 0x0204, "VINTER", 2, 'a', 1, 16 },
@@ -711,16 +686,6 @@ const struct label label_table[] = {
    { 0x0317, "TIMFLG", 1, 'a', 1, 16 },
    { 0x0318, "STACKP", 1, 'a', 1, 16 },
    { 0x0319, "TSTAT", 1, 'a', 1, 16 },
-   { 0x031A-0x033F, "HATABS", 27, 'a', 1, 16 }, // Handler address tables, 3 bytes per entry, two zeros at end
-   { 0x0340, "IOCB0", 16, 'a', 1, 16 },
-   { 0x0350, "IOCB1", 16, 'a', 1, 16 },
-   { 0x0360, "IOCB2", 16, 'a', 1, 16 },
-   { 0x0370, "IOCB3", 16, 'a', 1, 16 },
-   { 0x0380, "IOCB4", 16, 'a', 1, 16 },
-   { 0x0390, "IOCB5", 16, 'a', 1, 16 },
-   { 0x03A0, "IOCB6", 16, 'a', 1, 16 },
-   { 0x03B0, "IOCB7", 16, 'a', 1, 16 },
-   //{ 0x03C0-0x03E7, "PRNBUF", 1, 'a', 1, 16 },
    { 0x03E8, "SUPERF", 1, 'a', 1, 16 },
    { 0x03E9, "CKEY", 1, 'a', 1, 16 },
    { 0x03EA, "CASSBT", 1, 'a', 1, 16 },
@@ -731,13 +696,9 @@ const struct label label_table[] = {
    { 0x03F9, "MINTLK", 1, 'a', 1, 16 },
    { 0x03FA, "GINTLK", 1, 'a', 1, 16 },
    { 0x03FB, "CHLINK", 2, 'a', 1, 16 },
-   //{ 0x03FD-0x047F, "CASBUF", 1, 'a', 1, 16 },
    { 0x057E, "LBPR1", 1, 'a', 1, 16 },
    { 0x057F, "LBPR2", 1, 'a', 1, 16 },
-   //{ 0x0580-0x05FF, "LBUFF", 1, 'a', 1, 16 },
    { 0x05E0, "PLYARG", 1, 'a', 1, 16 },
-   //{ 0x05E6-0x05EB, "FPSCR", 1, 'a', 1, 16 },
-   //{ 0x05EC-0x05FF, "FPSCR1", 1, 'a', 1, 16 },
    { 0xD000, "HPOSP0", 1, 'w', 1, 16 },
    { 0xD000, "M0PF", 1, 'r', 1, 16 },
    { 0xD001, "HPOSP1", 1, 'w', 1, 16 },
@@ -893,10 +854,62 @@ const struct label label_table[] = {
    { 0xFFF8, "CHKSUN", 1, 'a', 1, 16 },
    { 0xFFFA, "PVECT", 2, 'a', 1, 16 },
 };
+const struct label label_table_atari_cio[] = {
+   { 0x031A-0x033F, "HATABS", 27, 'a', 1, 16 }, // Handler address tables, 3 bytes per entry, two zeros at end
+   { 0x0340, "IOCB0", 16, 'a', 1, 16 },
+   { 0x0350, "IOCB1", 16, 'a', 1, 16 },
+   { 0x0360, "IOCB2", 16, 'a', 1, 16 },
+   { 0x0370, "IOCB3", 16, 'a', 1, 16 },
+   { 0x0380, "IOCB4", 16, 'a', 1, 16 },
+   { 0x0390, "IOCB5", 16, 'a', 1, 16 },
+   { 0x03A0, "IOCB6", 16, 'a', 1, 16 },
+   { 0x03B0, "IOCB7", 16, 'a', 1, 16 },
+   { 0x03C0-0x03E7, "PRNBUF", 40, 'a', 1, 16 }, // printer buffer for LPRINT statements; is this BASIC or CIO?
+   //{ 0x03FD-0x047F, "CASBUF", 1, 'a', 1, 16 }, // 3FD-3FF are also used for other stuff
+};
+const struct label label_table_atari_float[] = {
+   { 0x00D4, "FR0", 6, 'a', 1, 16 },
+   { 0x00DA, "FRE", 6, 'a', 1, 16 },
+   { 0x00E0, "FR1", 6, 'a', 1, 16 },
+   { 0x00E6, "FR2", 6, 'a', 1, 16 },
+   { 0x00EC, "FRX", 1, 'a', 1, 16 },
+   { 0x00ED, "EEXP", 1, 'a', 1, 16 },
+   { 0x00EE, "NSIGN", 1, 'a', 1, 16 },
+   { 0x00EF, "ESIGN", 1, 'a', 1, 16 },
+   { 0x00F0, "FCHRFLG", 1, 'a', 1, 16 },
+   { 0x00F1, "DIGRT", 1, 'a', 1, 16 },
+   { 0x00F2, "CIX", 1, 'a', 1, 16 },
+   { 0x00F3, "INBUFF", 2, 'a', 1, 16 },
+   { 0x00F5, "ZTEMP1", 2, 'a', 1, 16 },
+   { 0x00F7, "ZTEMP4", 2, 'a', 1, 16 },
+   { 0x00F9, "ZTEMP3", 2, 'a', 1, 16 },
+   { 0x00FB, "RADFLG", 1, 'a', 1, 16 },
+   { 0x00FC, "FLPTR", 2, 'a', 1, 16 },
+   { 0x00FE, "FPTR2", 2, 'a', 1, 16 },
+   { 0x05E6, "FPSCR", 6, 'a', 1, 16 },
+   { 0x05EC, "FPSCR1", 4, 'a', 1, 16 },
+};
+const struct label label_table_atari_basic[] = {
+   { 0x0080, "LOMEM", 2, 'a', 1, 16 },
+   { 0x0082, "VNTP", 2, 'a', 1, 16 },
+   { 0x0084, "VNTD", 2, 'a', 1, 16 },
+   { 0x0086, "VVTP", 2, 'a', 1, 16 },
+   { 0x0088, "STMTAB", 2, 'a', 1, 16 },
+   { 0x0090, "MEMTOP", 2, 'a', 1, 16 },
+   { 0x008A, "STMCUR", 2, 'a', 1, 16 },
+   { 0x008C, "STARP", 2, 'a', 1, 16 },
+   { 0x008E, "RUNSTK", 2, 'a', 1, 16 },
+   { 0x00BA, "STOPLN", 2, 'a', 1, 16 },
+   { 0x00C3, "ERRSAVE", 1, 'a', 1, 16 },
+   { 0x00C9, "PTABW", 1, 'a', 1, 16 },
+   { 0x0580, "LBUFF", 128, 'a', 1, 16 }, // BASIC line buffer
+};
 
 // Labels
 struct label *labels;
 int num_labels;
+struct label_tables *label_tables;
+int num_tables;
 
 /*
  * Prototypes
@@ -907,6 +920,37 @@ void trace_code(void);
 /*
  * Code
  */
+
+/*
+ * add_table()
+ */
+void add_table(const struct label *table,int entries)
+{
+   // Skip if table already added:
+   for (int i=0;i<num_tables;++i) if ( label_tables[i].table == table ) return;
+
+   // Add the specified table
+   label_tables = realloc(label_tables,(num_tables+1)*sizeof(label_tables[0]));
+   if ( !label_tables )
+   {
+      fprintf(stderr,"Unable to allocate label table memory\n");
+      exit(1);
+   }
+   label_tables[num_tables].table = table;
+   label_tables[num_tables].entries = entries;
+   ++num_tables;
+}
+
+int add_label_file(const char *filename)
+{
+   if ( !filename || !filename[0] )
+   {
+      printf("Missing label file specification\n");
+      return -1;
+   }
+   // FIXME
+   return 0;
+}
 
 /*
  * add_label()
@@ -936,19 +980,21 @@ const char *add_label(const char *name,int addr,int write)
    // Label name from table
    if ( !name || !*name )
    {
-      // Constant table of OS labels
-      for (unsigned int i=0;i<sizeof(label_table)/sizeof(label_table[0]);++i)
+      for (int table=0; table<num_tables; ++table)
       {
-         if ( write && labels[i].rw == 'r' ) continue;
-         if ( label_table[i].addr == addr ) return add_label(label_table[i].name,addr,write);
-         if ( label_table[i].addr < addr && label_table[i].addr+label_table[i].bytes > addr )
+         for (int i=0;i<label_tables[table].entries;++i)
          {
-            // Need to add the base label if it's not already there
-            add_label(label_table[i].name,label_table[i].addr,write);
-            // Add offset label
-            char newname[32];
-            sprintf(newname,"%s+%d",label_table[i].name,addr-label_table[i].addr);
-            return(add_label(newname,addr,write));
+            if ( write && labels[i].rw == 'r' ) continue;
+            if ( label_tables[table].table[i].addr == addr ) return add_label(label_tables[table].table[i].name,addr,write);
+            if ( label_tables[table].table[i].addr < addr && label_tables[table].table[i].addr+label_tables[table].table[i].bytes > addr )
+            {
+               // Need to add the base label if it's not already there
+               add_label(label_tables[table].table[i].name,label_tables[table].table[i].addr,write);
+               // Add offset label
+               char newname[32];
+               sprintf(newname,"%s+%d",label_tables[table].table[i].name,addr-label_tables[table].table[i].addr);
+               return(add_label(newname,addr,write));
+            }
          }
       }
    }
@@ -1449,6 +1495,8 @@ void usage(const char *progname)
           " --start=[xxxx]  Specify another starting address (repeat as needed\n"
           " --bracket       Use brackets for label math: [LABEL+1]\n"
           " --noa           Leave off the 'A' on ASL, ROR, and the like\n"
+          " --labels=atari,cio,float,basic Specify wanted labels (basic off by default)\n"
+          " --lfile=[filename] Load labels from a file (may be repeated)\n"
           "\n"
           "If no options are specified, the file is auto-parsed for type\n"
           "Supported types:\n"
@@ -1473,6 +1521,7 @@ int main(int argc,char *argv[])
 
    int addr=0;
    int start=0;
+   char *label_table_selection = NULL;
    while ( argc > 2 )
    {
       if ( argv[1][0] != '-' && argv[1][1] != '-' )
@@ -1521,9 +1570,69 @@ int main(int argc,char *argv[])
             continue;
          }
       }
+      if ( strncmp(argv[1],"--labels=",sizeof("--labels=")-1) == 0 )
+      {
+         label_table_selection = argv[1]+sizeof("--labels=")-1;
+         ++argv;
+         --argc;
+         continue;
+      }
+      if ( strncmp(argv[1],"--lfile=",sizeof("--lfile=")-1) == 0 )
+      {
+         if ( add_label_file(argv[1]+sizeof("--lfile=")-1) < 0 ) return 1;
+         ++argv;
+         --argc;
+         continue;
+      }
       printf("Invalid option: %s\n",argv[1]);
       usage(progname);
       return 1;
+   }
+
+   if ( label_table_selection )
+   {
+      while (label_table_selection)
+      {
+         char *c = strrchr(label_table_selection,',');
+         if ( c ) { *c=0; ++c; } // Add the last table first
+         else
+         {
+            c = label_table_selection;
+            label_table_selection=NULL; // Flag done
+         }
+         if (strcmp(c,"atari")==0)
+         {
+            add_table(label_table_atari,ARRAY_SIZE(label_table_atari));
+         }
+         else if  (strcmp(c,"cio")==0)
+         {
+            add_table(label_table_atari,ARRAY_SIZE(label_table_atari));
+            add_table(label_table_atari_cio,ARRAY_SIZE(label_table_atari_cio));
+         }
+         else if  (strcmp(c,"float")==0)
+         {
+            add_table(label_table_atari,ARRAY_SIZE(label_table_atari));
+            add_table(label_table_atari_float,ARRAY_SIZE(label_table_atari_float));
+         }
+         else if  (strcmp(c,"basic")==0)
+         {
+            add_table(label_table_atari,ARRAY_SIZE(label_table_atari));
+            add_table(label_table_atari_cio,ARRAY_SIZE(label_table_atari_cio));
+            add_table(label_table_atari_float,ARRAY_SIZE(label_table_atari_float));
+            add_table(label_table_atari_basic,ARRAY_SIZE(label_table_atari_basic));
+         }
+         else
+         {
+            fprintf(stderr,"Invalid label table selection: %s\n",c);
+         }
+      }
+   }
+   else
+   {
+      add_table(label_table_atari,ARRAY_SIZE(label_table_atari));
+      add_table(label_table_atari_cio,ARRAY_SIZE(label_table_atari_cio));
+      add_table(label_table_atari_float,ARRAY_SIZE(label_table_atari_float));
+      // note default: add_table(label_table_atari_basic,ARRAY_SIZE(label_table_atari_basic));
    }
    
    int fd = open(argv[1],O_RDONLY);
