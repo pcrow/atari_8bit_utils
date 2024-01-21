@@ -1,0 +1,47 @@
+Yet another 6502 disassember!
+
+I wanted to disassemble something, but I didn't find a disassembler that would automatically parse Atari boot sectors, and I wanted it to not try to disassemble data sections, which is a common problem in dissassemblers.  So I wrote my own.  Then I got feedback that it needed more features, so it grew a bit, and here it is.
+
+I wrote it under Linux, but it should compile on most modern platforms.  You might need Cygwin on Windows.
+
+Usage:
+
+disasm [options] [file]
+
+Dissassemble [file]
+Options:
+ --addr=[xxxx]   Load the file at the specified (hex) address
+ --start=[xxxx]  Specify a starting address for code execution
+ --start=[xxxx]  Specify another starting address (repeat as needed
+ --bracket       Use brackets for label math: [LABEL+1]
+ --noa           Leave off the 'A' on ASL, ROR, and the like
+ --labels=atari,cio,float,basic Specify wanted labels (basic off by default)
+ --ltable=[filename] Load label table from a file (may be repeated)
+ --lfile=[filename]  Load active labels from a file (may be repeated)
+
+If no options are specified, the file is auto-parsed for type
+Supported types:
+  binary load    -- any file that starts with ffff
+  ROM files      -- exactly 16K or 8K with valid init and run addresses
+  boot sectors   -- default if no other match
+
+This works by loading the target file into a 64K memory array.  It flags the start and init addresses as branch targets.  Then it goes through starting at each branch target and traces through the code flow, marking each instruction start byte and each new branch target, stopping when it hits an RTS, RTI, or JMP.  This should find all the executable code, but sometimes it does things like save an address in a table and then jump through the table.  In those cases, you'll need to set a --start=xxxx to point to the address.  Likewise if the file doesn't have any start or init address set.
+
+It had built-in label tables for standard Atari OS addresses.  By default, BASIC addresses are turned off, but the others are on.  You can override this with the --labels= option.  (Leave it with nothing after the '=' to turn off all included tables.)
+
+You can add new tables with the --ltable and --lfile options.  If you use --ltable, it will only use the labels that match something it tries to add.  If you use --lfile, it will use all the labels in the file, so they'll all appear in your disassembly.
+
+The syntax for label files is lines of the format:
+  LABEL = $ADDR [optional flags]
+with various extra options.  The ADDR can be in hex ($ or 0x prefix), decimal, or octal (0-prefix).  Spaces or tabs are optional.  Anything following a ';' or '#' character is ignored.  Any line without an '=' sign is ignored.
+
+The options are:
+  +[#]     for multi-byte data (# is length in decimal, $hex, 0xHEX, or 0octal)
+  -r or -w for read or write only hardware register
+  word     for 16-bit word values (often pointers) instead of defaulting to bytes
+  base#    specify base 2,8,10,16 for data display or 256 for string
+  string   same as saying base256
+
+That's pretty much it.
+
+The only big bug right now is that binary load files can have an initialization routine that is overwritten after execution, and this tries to disassemble the initialization routines after all memory blocks have been copied into the 64K memory array, so the original code may have been clobbered.
