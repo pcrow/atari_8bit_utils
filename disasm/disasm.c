@@ -381,6 +381,7 @@ struct syntax_options {
    int noa;
    int org;
    int colon;
+   int noundoc;
 };
 
 /*
@@ -1590,8 +1591,8 @@ void output_disasm(void)
             char name[16];
             strcpy(name,labels[lab].name);
             strchr(name,',')[0]=0;
-            printf("%s\t= $%04X ; read register\n",name,labels[lab].addr);
-            printf("%s\t= $%04X ; write register\n",c+1,labels[lab].addr);
+            printf("%s\t= $%04X "COMMENT" read register\n",name,labels[lab].addr);
+            printf("%s\t= $%04X "COMMENT" write register\n",c+1,labels[lab].addr);
          }
          else // normal case
          {
@@ -1732,21 +1733,23 @@ void output_disasm(void)
          }
          printf("\n");
       }
-      else if ( opcode[mem[addr]].unofficial && strcmp("NOP",opcode[mem[addr]].mnemonic) == 0 )
-      {
-         // NOP has multiple opcodes with the same addressing mode, so we have to
-         // specify the bytes or it won't assemble to the same code
-         int bytes = instruction_bytes[opcode[mem[addr]].mode];
-         printf("\t"BYTE_PSEUDO_OP" ");
-         for (int i=0;i<bytes;++i)
-         {
-            printf("%s$%02X",i?",":"",mem[addr+i]);
-         }
-         printf(" ; NOP (unofficial)\n");
-      }
       else
       {
-         printf("\t%s",opcode[mem[addr]].mnemonic);
+         int didbytes = 0;
+         printf("\t");
+         if ( opcode[mem[addr]].unofficial &&
+              ( syntax.noundoc || strcmp("NOP",opcode[mem[addr]].mnemonic) == 0 ) )
+         {
+            int bytes = instruction_bytes[opcode[mem[addr]].mode];
+            printf(""BYTE_PSEUDO_OP" ");
+            for (int i=0;i<bytes;++i)
+            {
+               printf("%s$%02X",i?",":"",mem[addr+i]);
+            }
+            printf(" "COMMENT" (undocumented opcode) - ");
+            didbytes = 1;
+         }
+         printf("%s",opcode[mem[addr]].mnemonic);
          int target = le16toh(*(uint16_t *)&mem[addr+1]);
          int ztarget = mem[addr+1];
          int btarget = addr+2+(signed char)(mem[addr+1]);
@@ -1808,6 +1811,10 @@ void output_disasm(void)
                break;
             default: break; // Not reached
          }
+         if ( opcode[mem[addr]].unofficial && !didbytes )
+         {
+            printf(" "COMMENT" (undocumented opcode)");
+         }
          printf("\n");
          addr += instruction_bytes[opcode[mem[addr]].mode];
          --addr; // for loop also adds one
@@ -1837,11 +1844,12 @@ void usage(const char *progname)
           "     noa         Leave off the 'A' on ASL, ROR, and the like\n"
           "     org         Use '.org =' instead of '*=' to set PC\n"
           "     colon       Put a colon after labels\n"
+          "     noundoc     No undocumented opcodes\n"
           "     mads        Defaults for MADS assembler: noa,org,colon\n"
           "     ca65        Defaults for ca65 assembler: noa,org,colon\n"
           "     cc65        Defaults for cc65 assembler: noa,org,colon\n"
-          "     xa          Defaults for xa assembler: \n"
-          "     asmedit     Defaults for Atari Assembler/Editor cartridge: \n"
+          "     xa          Defaults for xa assembler: noundoc \n"
+          "     asmedit     Defaults for Atari Assembler/Editor cartridge: noundoc \n"
           "\n"
           "If no options are specified, the file is auto-parsed for type\n"
           "Supported types:\n"
@@ -1923,6 +1931,12 @@ int main(int argc,char *argv[])
                opt+=sizeof("colon")-1;
                continue;
             }
+            if ( strncmp(opt,"noundoc",sizeof("noundoc")-1)==0 )
+            {
+               syntax.noundoc = 1;
+               opt+=sizeof("noundoc")-1;
+               continue;
+            }
 
             // select defaults for a given assembler
             if ( strncmp(opt,"mads",sizeof("mads")-1)==0 )
@@ -1951,13 +1965,13 @@ int main(int argc,char *argv[])
             }
             if ( strncmp(opt,"xa",sizeof("xa")-1)==0 )
             {
-               // no defaults added
+               syntax.noundoc = 1;
                opt+=sizeof("xa")-1;
                continue;
             }
             if ( strncmp(opt,"asmedit",sizeof("asmedit")-1)==0 )
             {
-               // no defaults added
+               syntax.noundoc = 1;
                opt+=sizeof("asmedit")-1;
                continue;
             }
