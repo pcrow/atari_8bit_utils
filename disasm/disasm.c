@@ -43,12 +43,15 @@
 
 // ATASCII values that are the same in ASCII
 #define IS_ASCII(_a) ( ( (_a) >= ' ' && (_a) <= 'A' ) || isalpha(_a) || (_a) == '|' )
-#define IS_QUOTABLE(_a) ( IS_ASCII(_a) && (_a) != '"' ) // don't quote quotes in quotes
-#define SCREEN_TO_ATASCII(_a) ( ( ((_a)&0x7f) < 0x20 ) ? ((_a)+0x40) : ( ((_a)&0x7f) < 0x60 ) ? (_a) - 0x20 : (_a) )
-#define SCREEN_QUOTABLE(_a) IS_QUOTABLE(SCREEN_TO_ATASCII(_a))
+#define IS_QUOTABLE(_a) ( IS_ASCII(_a) && (_a) != syntax.stringquote ) // don't quote quotes in quotes
+#define ATASCII_TO_SCREEN(_a) ( ( ((_a)&0x7f) < 0x20 ) ? ((_a)+0x40) : ( ((_a)&0x7f) < 0x60 ) ? (_a) - 0x20 : (_a) )
+#define SCREEN_TO_ATASCII(_a) ( ( ((_a)&0x7f) < 0x40 ) ? ((_a)+0x20) : ( ((_a)&0x7f) < 0x60 ) ? (_a) - 0x40 : (_a) )
+#define IS_SCREEN_ASCII(_a) IS_ASCII(SCREEN_TO_ATASCII(_a))
+#define IS_SCREEN_QUOTABLE(_a) ( IS_SCREEN_ASCII(_a) && SCREEN_TO_ATASCII(_a) != syntax.screenquote )
 
 #define ARRAY_SIZE(_a) (sizeof(_a)/sizeof((_a)[0]))
 #define MAX_LABEL_SIZE 32
+#define SCREEN_STRING_BASE 255
 
 /*
  * data types
@@ -108,6 +111,8 @@ struct syntax_options {
    int orgdot;
    int colon;
    int noundoc;
+   unsigned char stringquote;
+   unsigned char screenquote;
 };
 
 /*
@@ -1565,8 +1570,8 @@ struct label *find_label(int addr)
  * Look through data sections for text strings.
  * To-do: Checks for regular text or screen-code text.
  */
-struct string_table { char *str; int len; int btype; };
-#define STRING_TABLE_ENTRY(_s) { _s, sizeof(_s)-1, 256 }
+struct string_table { char *str; int len; };
+#define STRING_TABLE_ENTRY(_s) { _s, sizeof(_s)-1 }
 const struct string_table string_table[] = {
    STRING_TABLE_ENTRY("ATARI"),
    STRING_TABLE_ENTRY("atari"),
@@ -1580,63 +1585,78 @@ void find_strings(void)
    {
       if ( !mem_loaded[addr] ) continue;
       if ( instruction[addr] ) continue;
-      for ( unsigned int s=0; s<ARRAY_SIZE(string_table); ++s )
+      for ( int base=256;base >= 255; --base )
       {
-         int match=1;
-         for ( int c=0;c<string_table[s].len;++c )
+         for ( unsigned int s=0; s<ARRAY_SIZE(string_table); ++s )
          {
-            if ( addr+c <= 0xffff &&
-                 mem[addr+c] == string_table[s].str[c] &&
-                 mem_loaded[addr+c] &&
-                 !instruction[addr+c] )
-               continue;
-            else
+            char str[128];
+            strcpy(str,string_table[s].str);
+            if ( base < 256 )
             {
-               match=0;
-               break;
+               for (int i=0;i<string_table[s].len;++i)
+               {
+                  str[i]=ATASCII_TO_SCREEN(str[i]);
+               }
+               if ( strcmp(str,string_table[s].str) == 0 ) continue; // all lower-case; no difference
             }
-         }
-         if ( match )
-         {
-            // Don't count it if there's a label in the middle of the match string
-            for ( int c=1;c<string_table[s].len;++c )
+            int match=1;
+            for ( int c=0;c<string_table[s].len;++c )
             {
-               if ( find_label(addr+c) )
+               if ( addr+c <= 0xffff &&
+                    mem[addr+c] == str[c] &&
+                    mem_loaded[addr+c] &&
+                    !instruction[addr+c] )
+                  continue;
+               else
                {
                   match=0;
                   break;
                }
             }
-         }
-         if ( match )
-         {
-            int start = addr;
-            int len = string_table[s].len;
-            // Expand backwards
-            while ( !find_label(start) &&
-                    start > 0 &&
-                    IS_ASCII(mem[start-1]) &&
-                    !instruction[start-1] &&
-                    mem_loaded[start-1] )
+            if ( match )
             {
-               --start;
-               ++len;
+               // Don't count it if there's a label in the middle of the match string
+               for ( int c=1;c<string_table[s].len;++c )
+               {
+                  if ( find_label(addr+c) )
+                  {
+                     match=0;
+                     break;
+                  }
+               }
             }
-            struct label *l = find_label(start-1);
-            if ( l && l->bytes > 1 ) break; // Already part of a label
-            // Extend forwards
-            while ( !find_label(start+len) &&
-                    start+len < 0xffff &&
-                    IS_ASCII(mem[start+len]) &&
-                    !instruction[start+len] &&
-                    mem_loaded[start+len] )
+            if ( match )
             {
-               ++len;
+               int start = addr;
+               int len = string_table[s].len;
+               // Expand backwards
+               while ( !find_label(start) &&
+                       start > 0 &&
+                       !instruction[start-1] &&
+                       mem_loaded[start-1] &&
+                       ( (base == 256) ? IS_ASCII(mem[start-1]) : IS_SCREEN_ASCII(mem[start-1]) )
+                  )
+               {
+                  --start;
+                  ++len;
+               }
+               struct label *l = find_label(start-1);
+               if ( l && l->bytes > 1 ) break; // Already part of a label
+               // Extend forwards
+               while ( !find_label(start+len) &&
+                       start+len < 0xffff &&
+                       !instruction[start+len] &&
+                       mem_loaded[start+len] &&
+                       ( (base == 256) ? IS_ASCII(mem[start+len]) : IS_SCREEN_ASCII(mem[start+len]) )
+                  )
+               {
+                  ++len;
+               }
+               // Add the label
+               struct label label_str = { start, "", len, 'a', 1, base, 0 };
+               add_label(NULL,start,0,&label_str);
+               break;
             }
-            // Add the label
-            struct label label_str = { start, "", len, 'a', 1, string_table[s].btype, 0 };
-            add_label(NULL,start,0,&label_str);
-            break;
          }
       }
    }
@@ -1850,12 +1870,39 @@ void output_disasm(void)
                   case 10:
                      printf("\t"BYTE_PSEUDO_OP" %u",val);
                      break;
+                  case SCREEN_STRING_BASE:
+                     if ( syntax.screenquote )
+                     {
+                        if ( count > STRING_MAX ) count = STRING_MAX;
+                        if ( IS_SCREEN_QUOTABLE(val) )
+                        {
+                           printf("\t"BYTE_PSEUDO_OP" %c",syntax.screenquote);
+                           for ( int i=0; i<count; ++i )
+                           {
+                              if ( IS_SCREEN_QUOTABLE(mem[addr]) )
+                              {
+                                 printf("%c",SCREEN_TO_ATASCII(mem[addr]));
+                                 ++addr;
+                              }
+                              else break;
+                           }
+                           --addr;
+                           printf("%c",syntax.stringquote);
+                        }
+                     }
+                     else
+                     {
+                        printf("\t"BYTE_PSEUDO_OP" $%02X",val);
+                        if ( IS_SCREEN_QUOTABLE(val) )
+                           printf(" "COMMENT" Screen code for '%c'",SCREEN_TO_ATASCII(val));
+                     }
+                     break;
                   case 256:
                      // If a string, consume as many bytes as possible within the label
                      if ( count > STRING_MAX ) count = STRING_MAX;
                      if ( IS_QUOTABLE(val) )
                      {
-                        printf("\t"BYTE_PSEUDO_OP" %c",'"');
+                        printf("\t"BYTE_PSEUDO_OP" %c",syntax.stringquote);
                         for ( int i=0; i<count; ++i )
                         {
                            if ( IS_QUOTABLE(mem[addr]) )
@@ -1866,7 +1913,7 @@ void output_disasm(void)
                            else break;
                         }
                         --addr;
-                        printf("%c",'"');
+                        printf("%c",syntax.stringquote);
                         break;
                      }
                      // else: ATASCII-specific character in hex
@@ -2024,6 +2071,7 @@ int main(int argc,char *argv[])
    int addr=0;
    int start=0;
    char *label_table_selection = NULL;
+   syntax.stringquote = '"'; // Works with most
    while ( argc > 2 )
    {
       if ( argv[1][0] != '-' && argv[1][1] != '-' )
@@ -2094,6 +2142,8 @@ int main(int argc,char *argv[])
                syntax.noa = 1;
                syntax.org = 1;
                syntax.colon = 1;
+               syntax.stringquote = '\'';
+               syntax.screenquote = '"';
                opt+=sizeof("mads")-1;
                continue;
             }
