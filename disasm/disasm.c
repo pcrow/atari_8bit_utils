@@ -376,6 +376,13 @@ const struct opcode opcode[256]={
    [0x70] = { "BVS", E_RELATIVE, 0 },
 };
 
+struct syntax_options {
+   int bracket;
+   int noa;
+   int org;
+   int colon;
+};
+
 /*
  * global variables
  */
@@ -390,11 +397,11 @@ char branch_target[64*1024];
 char data_target[64*1024];
 
 // Options
-int bracket;
-int noa;
+struct syntax_options syntax;
 
 // Table of known labels; use these instead of Lxxxx
 // https://atariwiki.org/wiki/Wiki.jsp?page=Memory%20Map
+// There's an alogorical story about the data below.  It's the label table fable.
 const struct label label_table_atari[] = {
    { 0x0000, "LINZBS", 2, 'a', 2, 16 },
    { 0x0000, "LINFLG", 1, 'a', 1, 16 },
@@ -1551,7 +1558,7 @@ void print_label_or_addr(int target,int write)
       if ( write && labels[lab].rw == 'r' ) continue;
       if ( labels[lab].addr == target )
       {
-         if ( bracket && strchr(labels[lab].name,'+') )
+         if ( syntax.bracket && strchr(labels[lab].name,'+') )
          {
             printf("[%s]",labels[lab].name);
          }
@@ -1606,7 +1613,14 @@ void output_disasm(void)
       }
       if ( !set )
       {
-         printf("\t*= $%04X\n",addr);
+         if ( syntax.org )
+         {
+            printf(".org");
+            if ( syntax.colon ) printf(":");
+         }
+         printf("\t");
+         if ( !syntax.org ) printf("*");
+         printf("= $%04X\n",addr);
          set=1;
       }
       // Display this address
@@ -1617,6 +1631,7 @@ void output_disasm(void)
             if ( !strchr(labels[lab].name,'+') )
             {
                printf("%s",labels[lab].name);
+               if ( syntax.colon ) printf(":");
             }
             break;
          }
@@ -1739,7 +1754,7 @@ void output_disasm(void)
          switch(opcode[mem[addr]].mode)
          {
             case E_ACCUMULATOR:
-               if ( !noa ) printf(" A");
+               if ( !syntax.noa ) printf(" A");
                break;
             case E_IMMEDIATE:
                printf(" #$%02X",mem[addr+1]);
@@ -1814,11 +1829,19 @@ void usage(const char *progname)
           " --addr=[xxxx]   Load the file at the specified (hex) address\n"
           " --start=[xxxx]  Specify a starting address for code execution\n"
           " --start=[xxxx]  Specify another starting address (repeat as needed\n"
-          " --bracket       Use brackets for label math: [LABEL+1]\n"
-          " --noa           Leave off the 'A' on ASL, ROR, and the like\n"
           " --labels=atari,cio,float,basic Specify wanted labels (basic off by default)\n"
           " --ltable=[filename] Load label table from a file (may be repeated)\n"
           " --lfile=[filename]  Load active labels from a file (may be repeated)\n"
+          " --syntax=[option][,option]  Set various syntax options:\n"
+          "     bracket     Use brackets for label math: [LABEL+1]\n"
+          "     noa         Leave off the 'A' on ASL, ROR, and the like\n"
+          "     org         Use '.org =' instead of '*=' to set PC\n"
+          "     colon       Put a colon after labels\n"
+          "     mads        Defaults for MADS assembler: noa,org,colon\n"
+          "     ca65        Defaults for ca65 assembler: noa,org,colon\n"
+          "     cc65        Defaults for cc65 assembler: noa,org,colon\n"
+          "     xa          Defaults for xa assembler: \n"
+          "     asmedit     Defaults for Atari Assembler/Editor cartridge: \n"
           "\n"
           "If no options are specified, the file is auto-parsed for type\n"
           "Supported types:\n"
@@ -1853,14 +1876,98 @@ int main(int argc,char *argv[])
       }
       if ( strcmp(argv[1],"--bracket") == 0 )
       {
-         bracket = 1;
+         syntax.bracket = 1;
          ++argv;
          --argc;
          continue;
       }
       if ( strcmp(argv[1],"--noa") == 0 )
       {
-         noa = 1;
+         syntax.noa = 1;
+         ++argv;
+         --argc;
+         continue;
+      }
+      if ( strncmp(argv[1],"--syntax=",sizeof("--syntax=")-1) == 0 )
+      {
+         const char *opt = argv[1]+sizeof("--syntax=")-1;
+
+         while ( *opt )
+         {
+            // remove commas
+            while ( *opt == ',' ) ++opt;
+            if ( !*opt ) break; // ended with a ','; weird, but allow it
+
+            // specific syntax options
+            if ( strncmp(opt,"bracket",sizeof("bracket")-1)==0 )
+            {
+               syntax.bracket = 1;
+               opt+=sizeof("bracket")-1;
+               continue;
+            }
+            if ( strncmp(opt,"noa",sizeof("noa")-1)==0 )
+            {
+               syntax.noa = 1;
+               opt+=sizeof("noa")-1;
+               continue;
+            }
+            if ( strncmp(opt,"org",sizeof("org")-1)==0 )
+            {
+               syntax.org = 1;
+               opt+=sizeof("org")-1;
+               continue;
+            }
+            if ( strncmp(opt,"colon",sizeof("colon")-1)==0 )
+            {
+               syntax.colon = 1;
+               opt+=sizeof("colon")-1;
+               continue;
+            }
+
+            // select defaults for a given assembler
+            if ( strncmp(opt,"mads",sizeof("mads")-1)==0 )
+            {
+               syntax.noa = 1;
+               syntax.org = 1;
+               syntax.colon = 1;
+               opt+=sizeof("mads")-1;
+               continue;
+            }
+            if ( strncmp(opt,"ca65",sizeof("ca65")-1)==0 )
+            {
+               syntax.noa = 1;
+               syntax.org = 1;
+               syntax.colon = 1;
+               opt+=sizeof("ca65")-1;
+               continue;
+            }
+            if ( strncmp(opt,"cc65",sizeof("cc65")-1)==0 )
+            {
+               syntax.noa = 1;
+               syntax.org = 1;
+               syntax.colon = 1;
+               opt+=sizeof("cc65")-1;
+               continue;
+            }
+            if ( strncmp(opt,"xa",sizeof("xa")-1)==0 )
+            {
+               // no defaults added
+               opt+=sizeof("xa")-1;
+               continue;
+            }
+            if ( strncmp(opt,"asmedit",sizeof("asmedit")-1)==0 )
+            {
+               // no defaults added
+               opt+=sizeof("asmedit")-1;
+               continue;
+            }
+
+            // Didn't find anything
+            printf("Invalid option: %s\n",argv[1]);
+            usage(progname);
+            return 1;
+         }
+
          ++argv;
          --argc;
          continue;
