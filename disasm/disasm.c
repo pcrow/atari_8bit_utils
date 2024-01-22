@@ -10,7 +10,6 @@
  */
 
 #include <stdio.h>
-#include <endian.h>
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
@@ -18,6 +17,19 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <ctype.h>
+#ifdef _WIN32 // Includes 64-bit windows; macro differentiates from old 16-bit API
+#define le16toh(_x) (_x) // x86 and arm Windows are little endian
+#endif
+#if defined(__APPLE__) && !defined(__POWERPC__)
+#define le16toh(_x) (_x) // x86 and arm64 Macs are little endian
+#endif
+#if defined(__APPLE__) && defined(__POWERPC__)
+#include <byteswap.h> // I don't know if this will work on PowerPC OS X
+#define le16toh(_x) bswap_16(_x) // PowerPC Macs are big endian
+#endif
+#ifndef le16toh
+#include <endian.h> // This is the POSIX way
+#endif
 
 /*
  * Defines
