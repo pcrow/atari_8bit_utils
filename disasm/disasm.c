@@ -1893,7 +1893,7 @@ void usage(const char *progname)
           "     noundoc     No undocumented opcodes\n"
           "     mads        Defaults for MADS assembler: noa,org,colon\n"
           "     ca65        Defaults for ca65 assembler: noa,org,colon\n"
-          "     cc65        Defaults for cc65 assembler: noa,org,colon\n"
+          "     cc65        Alias for ca65\n"
           "     xa          Defaults for xa assembler: noundoc \n"
           "     asmedit     Defaults for Atari Assembler/Editor cartridge: noundoc \n"
           "\n"
@@ -1994,16 +1994,8 @@ int main(int argc,char *argv[])
                opt+=sizeof("mads")-1;
                continue;
             }
-            if ( strncmp(opt,"ca65",sizeof("ca65")-1)==0 )
-            {
-               syntax.noa = 1;
-               syntax.org = 1;
-               syntax.orgdot = 1;
-               syntax.colon = 1;
-               opt+=sizeof("ca65")-1;
-               continue;
-            }
-            if ( strncmp(opt,"cc65",sizeof("cc65")-1)==0 )
+            if ( strncmp(opt,"ca65",sizeof("ca65")-1)==0 ||
+                 strncmp(opt,"cc65",sizeof("cc65")-1)==0 )
             {
                syntax.noa = 1;
                syntax.org = 1;
