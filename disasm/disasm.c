@@ -1139,7 +1139,8 @@ int add_label_file(const char *filename)
             case 8:
             case 10:
             case 16:
-            case 256:
+            case 255: // screen code string
+            case 256: // ATASCII string
                break;
             default:
                printf("Invalid label line: invalid base\n");
@@ -1156,6 +1157,14 @@ int add_label_file(const char *filename)
       if ( c )
       {
          base = 256;
+         for (int i=0;i<6;++i) *c++=' ';
+      }
+
+      // 'screen' to specify base 255 for screen-code string
+      c=strstr(equal,"screen");
+      if ( c )
+      {
+         base = 255;
          for (int i=0;i<6;++i) *c++=' ';
       }
 

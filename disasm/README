@@ -50,6 +50,7 @@ The options are:
   word     for 16-bit word values (often pointers) instead of defaulting to bytes
   base#    specify base 2,8,10,16 for data display or 256 for string
   string   same as saying base256
+  screen   screen-code string (also base255)
 
 Handling of binary load files is a bit tricky, as they can load blocks that overlap previous blocks, which is perfectly normal for initialization routines.  The disassembler watches for this, and will display the output before overwriting memory.  There may be cases where this results in code being treated as data because it was accessed from code not yet loaded.  The disassembler does track the order of the blocks, so the output will be presented in the order that the blocks appear in the original file.
 
