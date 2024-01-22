@@ -42,8 +42,10 @@
 #define STRING_MAX 40 // maximum number of bytes for string: .byte "Long string"
 
 // ATASCII values that are the same in ASCII
-#define IS_ATASCII(_a) ( ( (_a) >= ' ' && (_a) <= 'A' ) || isalpha(_a) || (_a) == '|' )
-#define IS_QUOTABLE(_a) ( IS_ATASCII(_a) && (_a) != '"' ) // don't quote quotes in quotes
+#define IS_ASCII(_a) ( ( (_a) >= ' ' && (_a) <= 'A' ) || isalpha(_a) || (_a) == '|' )
+#define IS_QUOTABLE(_a) ( IS_ASCII(_a) && (_a) != '"' ) // don't quote quotes in quotes
+#define SCREEN_TO_ATASCII(_a) ( ( ((_a)&0x7f) < 0x20 ) ? ((_a)+0x40) : ( ((_a)&0x7f) < 0x60 ) ? (_a) - 0x20 : (_a) )
+#define SCREEN_QUOTABLE(_a) IS_QUOTABLE(SCREEN_TO_ATASCII(_a))
 
 #define ARRAY_SIZE(_a) (sizeof(_a)/sizeof((_a)[0]))
 #define MAX_LABEL_SIZE 32
@@ -1544,6 +1546,103 @@ void trace_code(void)
 }
 
 /*
+ * find_label()
+ *
+ * Return the label entry for a given address or NULL
+ */
+struct label *find_label(int addr)
+{
+   for (int lab=0;lab<num_labels;++lab)
+   {
+      if ( labels[lab].addr == addr ) return &labels[lab];
+   }
+   return NULL;
+}
+
+/*
+ * find_strings()
+ *
+ * Look through data sections for text strings.
+ * To-do: Checks for regular text or screen-code text.
+ */
+struct string_table { char *str; int len; int btype; };
+#define STRING_TABLE_ENTRY(_s) { _s, sizeof(_s)-1, 256 }
+const struct string_table string_table[] = {
+   STRING_TABLE_ENTRY("ATARI"),
+   STRING_TABLE_ENTRY("atari"),
+   STRING_TABLE_ENTRY("COPYRIGHT"),
+   STRING_TABLE_ENTRY("Copyright"),
+   STRING_TABLE_ENTRY("copyright"),
+};
+void find_strings(void)
+{
+   for (int addr=0;addr<0xffff;++addr)
+   {
+      if ( !mem_loaded[addr] ) continue;
+      if ( instruction[addr] ) continue;
+      for ( unsigned int s=0; s<ARRAY_SIZE(string_table); ++s )
+      {
+         int match=1;
+         for ( int c=0;c<string_table[s].len;++c )
+         {
+            if ( addr+c <= 0xffff &&
+                 mem[addr+c] == string_table[s].str[c] &&
+                 mem_loaded[addr+c] &&
+                 !instruction[addr+c] )
+               continue;
+            else
+            {
+               match=0;
+               break;
+            }
+         }
+         if ( match )
+         {
+            // Don't count it if there's a label in the middle of the match string
+            for ( int c=1;c<string_table[s].len;++c )
+            {
+               if ( find_label(addr+c) )
+               {
+                  match=0;
+                  break;
+               }
+            }
+         }
+         if ( match )
+         {
+            int start = addr;
+            int len = string_table[s].len;
+            // Expand backwards
+            while ( !find_label(start) &&
+                    start > 0 &&
+                    IS_ASCII(mem[start-1]) &&
+                    !instruction[start-1] &&
+                    mem_loaded[start-1] )
+            {
+               --start;
+               ++len;
+            }
+            struct label *l = find_label(start-1);
+            if ( l && l->bytes > 1 ) break; // Already part of a label
+            // Extend forwards
+            while ( !find_label(start+len) &&
+                    start+len < 0xffff &&
+                    IS_ASCII(mem[start+len]) &&
+                    !instruction[start+len] &&
+                    mem_loaded[start+len] )
+            {
+               ++len;
+            }
+            // Add the label
+            struct label label_str = { start, "", len, 'a', 1, string_table[s].btype, 0 };
+            add_label(NULL,start,0,&label_str);
+            break;
+         }
+      }
+   }
+}
+
+/*
  * fix_up_labels()
  *
  * Check for any label that is to an offset from an instruction.
@@ -1551,6 +1650,8 @@ void trace_code(void)
  * instruction with an offset.
  *
  * Generally these imply either self-modifying code or data incorrectly parsed as code
+ *
+ * Also find any text strings in data and change the type as appropriate.
  */
 void fix_up_labels(void)
 {
@@ -1567,6 +1668,8 @@ void fix_up_labels(void)
       name = add_label(NULL,addr,0,NULL);
       sprintf(labels[lab].name,"%s+%d",name,labels[lab].addr-addr);
    }
+
+   find_strings();
 }
 
 /*
@@ -1771,7 +1874,7 @@ void output_disasm(void)
                   default:
                   case 16:
                      printf("\t"BYTE_PSEUDO_OP" $%02X",val);
-                     if ( IS_ATASCII(val) )
+                     if ( IS_ASCII(val) )
                         printf(" "COMMENT" '%c'",val);
                      break;
                }
