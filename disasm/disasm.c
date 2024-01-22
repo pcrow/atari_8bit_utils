@@ -1911,6 +1911,7 @@ int main(int argc,char *argv[])
             {
                syntax.bracket = 1;
                opt+=sizeof("bracket")-1;
+               if ( *opt == 's' ) ++opt; // Allow plural
                continue;
             }
             if ( strncmp(opt,"noa",sizeof("noa")-1)==0 )
