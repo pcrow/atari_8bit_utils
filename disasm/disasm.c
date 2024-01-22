@@ -91,6 +91,7 @@ struct syntax_options {
    int bracket;
    int noa;
    int org;
+   int orgdot;
    int colon;
    int noundoc;
 };
@@ -1647,12 +1648,13 @@ void output_disasm(void)
          {
             if ( syntax.org )
             {
-               printf(".org");
-               if ( syntax.colon ) printf(":");
+               if ( syntax.orgdot ) printf(".");
+               printf("org");
+               //if ( syntax.colon ) printf(":");
             }
             printf("\t");
-            if ( !syntax.org ) printf("*");
-            printf("= $%04X\n",addr);
+            if ( !syntax.org ) printf("*= ");
+            printf("$%04X\n",addr);
             set=1;
          }
          // Display this address
@@ -1984,6 +1986,7 @@ int main(int argc,char *argv[])
             {
                syntax.noa = 1;
                syntax.org = 1;
+               syntax.orgdot = 1;
                syntax.colon = 1;
                opt+=sizeof("ca65")-1;
                continue;
@@ -1992,6 +1995,7 @@ int main(int argc,char *argv[])
             {
                syntax.noa = 1;
                syntax.org = 1;
+               syntax.orgdot = 1;
                syntax.colon = 1;
                opt+=sizeof("cc65")-1;
                continue;
