@@ -1889,6 +1889,7 @@ void output_disasm(void)
                            --addr;
                            printf("%c",syntax.screenquote);
                         }
+                        else printf("\t"BYTE_PSEUDO_OP" $%02X "COMMENT" Screen code for '%c'",val,SCREEN_TO_ATASCII(val));
                      }
                      else
                      {
