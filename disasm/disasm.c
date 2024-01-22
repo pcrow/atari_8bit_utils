@@ -1887,7 +1887,7 @@ void output_disasm(void)
                               else break;
                            }
                            --addr;
-                           printf("%c",syntax.stringquote);
+                           printf("%c",syntax.screenquote);
                         }
                      }
                      else
