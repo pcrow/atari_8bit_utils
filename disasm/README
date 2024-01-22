@@ -13,11 +13,20 @@ Options:
  --addr=[xxxx]   Load the file at the specified (hex) address
  --start=[xxxx]  Specify a starting address for code execution
  --start=[xxxx]  Specify another starting address (repeat as needed
- --bracket       Use brackets for label math: [LABEL+1]
- --noa           Leave off the 'A' on ASL, ROR, and the like
  --labels=atari,cio,float,basic Specify wanted labels (basic off by default)
  --ltable=[filename] Load label table from a file (may be repeated)
  --lfile=[filename]  Load active labels from a file (may be repeated)
+ --syntax=[option][,option]  Set various syntax options:
+     bracket     Use brackets for label math: [LABEL+1]
+     noa         Leave off the 'A' on ASL, ROR, and the like
+     org         Use '.org =' instead of '*=' to set PC
+     colon       Put a colon after labels
+     noundoc     No undocumented opcodes
+     mads        Defaults for MADS assembler: noa,org,colon
+     ca65        Defaults for ca65 assembler: noa,org,colon
+     cc65        Defaults for cc65 assembler: noa,org,colon
+     xa          Defaults for xa assembler: noundoc
+     asmedit     Defaults for Atari Assembler/Editor cartridge: noundoc
 
 If no options are specified, the file is auto-parsed for type
 Supported types:
@@ -42,6 +51,6 @@ The options are:
   base#    specify base 2,8,10,16 for data display or 256 for string
   string   same as saying base256
 
-That's pretty much it.
+Handling of binary load files is a bit tricky, as they can load blocks that overlap previous blocks, which is perfectly normal for initialization routines.  The disassembler watches for this, and will display the output before overwriting memory.  There may be cases where this results in code being treated as data because it was accessed from code not yet loaded.  The disassembler does track the order of the blocks, so the output will be presented in the order that the blocks appear in the original file.
 
-The only big bug right now is that binary load files can have an initialization routine that is overwritten after execution, and this tries to disassemble the initialization routines after all memory blocks have been copied into the 64K memory array, so the original code may have been clobbered.
+In theory, you should be able to disassemble a binary load file, reassemble the output, and get the same binary.  The only difference would be the elimination of any stray FFFF headers for subsequent blocks, which are supposed to be ignored anyway.
