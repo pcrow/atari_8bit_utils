@@ -23,9 +23,9 @@
 #if defined(__APPLE__) && !defined(__POWERPC__)
 #define le16toh(_x) (_x) // x86 and arm64 Macs are little endian
 #endif
-#if defined(__APPLE__) && defined(__POWERPC__)
-#include <byteswap.h> // I don't know if this will work on PowerPC OS X
-#define le16toh(_x) bswap_16(_x) // PowerPC Macs are big endian
+#if defined(__APPLE__) && defined(__POWERPC__) // based on post by tsom on AtariAge
+#include <libkern/OSByteOrder.h>
+#define le16toh(x) OSSwapLittleToHostInt16(x)
 #endif
 #ifndef le16toh
 #include <endian.h> // This is the POSIX way
