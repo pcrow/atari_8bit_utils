@@ -86,6 +86,14 @@ struct label_tables {
    int entries;
 };
 
+struct syntax_options {
+   int bracket;
+   int noa;
+   int org;
+   int colon;
+   int noundoc;
+};
+
 /*
  * Const tables
  */
@@ -375,30 +383,6 @@ const struct opcode opcode[256]={
    [0x50] = { "BVC", E_RELATIVE, 0 },
    [0x70] = { "BVS", E_RELATIVE, 0 },
 };
-
-struct syntax_options {
-   int bracket;
-   int noa;
-   int org;
-   int colon;
-   int noundoc;
-};
-
-/*
- * global variables
- */
-
-// The 6502 memory
-unsigned char mem[64*1024];
-
-// Flags per-byte
-char mem_loaded[64*1024];
-char instruction[64*1024]; // first byte of an instruction?
-char branch_target[64*1024];
-char data_target[64*1024];
-
-// Options
-struct syntax_options syntax;
 
 // Table of known labels; use these instead of Lxxxx
 // https://atariwiki.org/wiki/Wiki.jsp?page=Memory%20Map
@@ -923,6 +907,22 @@ const struct label label_table_atari_basic[] = {
 // Templates for 'orig' value when adding new labels
 const struct label label_dec = { -1, "", 1, 'a', 1, 10 };
 const struct label label_word = { -1, "", 2, 'a', 2, 16 };
+
+/*
+ * global variables
+ */
+
+// The 6502 memory
+unsigned char mem[64*1024];
+
+// Flags per-byte
+char mem_loaded[64*1024];
+char instruction[64*1024]; // first byte of an instruction?
+char branch_target[64*1024];
+char data_target[64*1024];
+
+// Options
+struct syntax_options syntax;
 
 // Labels
 struct label *labels;
