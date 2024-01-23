@@ -956,6 +956,7 @@ int num_tables;
  * Prototypes
  */
 void trace_code(void);
+struct label *find_label(int addr);
 void fix_up_labels(void);
 void sort_labels(void);
 void output_disasm(void);
@@ -1016,6 +1017,7 @@ int add_label_file(const char *filename)
       int addr;
       int inst = 0;
       int data = 0;
+      int jsrparms = 0;
 
       /*
        * line format:
@@ -1106,9 +1108,33 @@ int add_label_file(const char *filename)
             c[0]=' ';
             c[1]=' ';
          }
+         else if ( strncmp(c+1,"p=",2)==0 )
+         {
+            c[0]=' ';
+            c[1]=' ';
+            c[2]=' ';
+            c+=3;
+            char *end;
+            if ( *c == '$' ) // allow '$' for hex
+            {
+               jsrparms = strtol(c+1,&end,16);
+            }
+            else
+            {
+               jsrparms = strtol(c,&end,0);
+            }
+            if ( end == c || jsrparms < 0 || jsrparms > 0x20 )
+            {
+               printf("Invalid JSR parameter byte count\n");
+               printf("  %s\n",line_orig);
+               fclose(f);
+               return -3;
+            }
+            while ( c < end ) *c++ = ' ';
+         }
          else
          {
-            printf("Invalid label line: '/' must be followed by i or d.\n");
+            printf("Invalid label line: '/' must be followed by i, d, or p.\n");
             printf("  %s\n",line_orig);
             fclose(f);
             return -3;
@@ -1231,6 +1257,7 @@ int add_label_file(const char *filename)
       table[entries].rw = rw;
       table[entries].btype = display;
       table[entries].base = base;
+      if ( jsrparms ) table[entries].base = jsrparms + 0x80; // overload base
       ++entries;
 
       // Flag instruction or data
@@ -1503,6 +1530,7 @@ void trace_at_addr(int addr)
 {
    while ( mem_loaded[addr] && !instruction[addr] && addr < 0xfffe )
    {
+      int extra_bytes = 0;
       instruction[addr] = 1;
 
       // If this is a branch, flag the target
@@ -1516,6 +1544,9 @@ void trace_at_addr(int addr)
       {
          branch_target[le16toh(*(uint16_t *)&mem[addr+1])]=1;
          add_label(NULL,le16toh(*(uint16_t *)&mem[addr+1]),0,NULL);
+         // Save space for parameters if special label instructions
+         struct label *l = find_label(le16toh(*(uint16_t *)&mem[addr+1]));
+         if ( l && l->base > 0x80 ) extra_bytes = l->base - 0x80;
       }
       // If this is a JMP absolute, flag the target and stop
       else if ( mem[addr] == 0x4C )
@@ -1527,18 +1558,21 @@ void trace_at_addr(int addr)
       else if ( strcmp("JAM",opcode[mem[addr]].mnemonic) == 0 )
       {
          instruction[addr] = 0;
+         branch_target[addr] = 0;
          return;
       }
       // Clear if told this must be data
       else if ( data_target[addr] )
       {
          instruction[addr] = 0;
+         branch_target[addr] = 0;
          return;
       }
       // Clear undocumented opcodes if option is disabled
       else if ( noundoc && opcode[mem[addr]].unofficial )
       {
          instruction[addr] = 0;
+         branch_target[addr] = 0;
          return;
       }
       // Do not add labels for unofficial NOP opcodes that address data
@@ -1580,6 +1614,7 @@ void trace_at_addr(int addr)
 
       // Next instruction
       addr += instruction_bytes[opcode[mem[addr]].mode];
+      addr += extra_bytes;
    }
 }
 

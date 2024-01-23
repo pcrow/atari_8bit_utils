@@ -53,6 +53,7 @@ The options are:
   string   same as saying base256
   screen   screen-code string (also base255)
   /d or /i label is for data or an instruction; override auto-detect
+  /p=#     label is for a subroutine that adjusts the return pointer to consume # bytes
 
 Handling of binary load files is a bit tricky, as they can load blocks that overlap previous blocks, which is perfectly normal for initialization routines.  The disassembler watches for this, and will display the output before overwriting memory.  There may be cases where this results in code being treated as data because it was accessed from code not yet loaded.  The disassembler does track the order of the blocks, so the output will be presented in the order that the blocks appear in the original file.
 
