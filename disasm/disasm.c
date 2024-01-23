@@ -1014,6 +1014,8 @@ int add_label_file(const char *filename)
       int display = 1; // default to byte, not word
       int base = 16; // valid: 2, 8, 10, 16, 256 (string)
       int addr;
+      int inst = 0;
+      int data = 0;
 
       /*
        * line format:
@@ -1086,6 +1088,31 @@ int add_label_file(const char *filename)
             return -3;
          }
          equal = end;
+      }
+
+      // /d for data, /i for instruction
+      c=strchr(equal,'/');
+      if ( c )
+      {
+         if ( c[1] == 'i' )
+         {
+            inst = 1;
+            c[0]=' ';
+            c[1]=' ';
+         }
+         else if ( c[1] == 'd' )
+         {
+            data = 1;
+            c[0]=' ';
+            c[1]=' ';
+         }
+         else
+         {
+            printf("Invalid label line: '/' must be followed by i or d.\n");
+            printf("  %s\n",line_orig);
+            fclose(f);
+            return -3;
+         }
       }
 
       // -r, -w, or -a for hardware registers
@@ -1205,6 +1232,10 @@ int add_label_file(const char *filename)
       table[entries].btype = display;
       table[entries].base = base;
       ++entries;
+
+      // Flag instruction or data
+      if ( inst ) branch_target[addr] = 1;
+      if ( data ) data_target[addr] = 1;
    }
    // add the table
    add_table(table,entries);
@@ -1494,6 +1525,18 @@ void trace_at_addr(int addr)
       }
       // If this is a JAM, remove the instruction flag and stop
       else if ( strcmp("JAM",opcode[mem[addr]].mnemonic) == 0 )
+      {
+         instruction[addr] = 0;
+         return;
+      }
+      // Clear if told this must be data
+      else if ( data_target[addr] )
+      {
+         instruction[addr] = 0;
+         return;
+      }
+      // Clear undocumented opcodes if option is disabled
+      else if ( noundoc && opcode[mem[addr]].unofficial )
       {
          instruction[addr] = 0;
          return;
@@ -1840,9 +1883,6 @@ void output_disasm(void)
          {
             lab = -1;
          }
-
-         // Clear undocumented opcodes if option is disabled
-         if ( instruction[addr] && noundoc && opcode[mem[addr]].unofficial ) instruction[addr] = 0;
 
          if ( !instruction[addr] )
          {
