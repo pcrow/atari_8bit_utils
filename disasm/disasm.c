@@ -944,6 +944,7 @@ char data_target[64*1024];
 
 // Options
 struct syntax_options syntax;
+int noundoc;
 
 // Labels
 struct label *labels;
@@ -1222,13 +1223,16 @@ const char *add_label(const char *name,int addr,int write,const struct label *or
    for (int i=0;i<num_labels;++i)
    {
       if ( write && labels[i].rw == 'r' ) continue;
+      if ( !write && labels[i].rw == 'w' ) continue;
       if ( labels[i].addr == addr ) return labels[i].name;
       if ( labels[i].addr < addr && labels[i].addr+labels[i].bytes > addr )
       {
+         if (strchr(labels[i].name,'+')) continue; // don't offset from an offset
          // Check for exact match
          for (int j=i+1;j<num_labels;++j)
          {
             if ( write && labels[j].rw == 'r' ) continue;
+            if ( !write && labels[j].rw == 'w' ) continue;
             if ( labels[j].addr == addr ) return labels[j].name;
          }
          // Add offset label
@@ -1249,7 +1253,8 @@ const char *add_label(const char *name,int addr,int write,const struct label *or
       {
          for (int i=0;i<label_tables[table].entries;++i)
          {
-            if ( write && labels[i].rw == 'r' ) continue;
+            if ( write && label_tables[table].table[i].rw == 'r' ) continue;
+            if ( !write && label_tables[table].table[i].rw == 'w' ) continue;
             if ( label_tables[table].table[i].addr == addr ) return add_label(label_tables[table].table[i].name,addr,write,&label_tables[table].table[i]);
             if ( label_tables[table].table[i].addr < addr && label_tables[table].table[i].addr+label_tables[table].table[i].bytes > addr )
             {
@@ -1735,6 +1740,7 @@ void print_label_or_addr(int target,int write)
    for (int lab=0;lab<num_labels;++lab)
    {
       if ( write && labels[lab].rw == 'r' ) continue;
+      if ( !write && labels[lab].rw == 'w' ) continue;
       if ( labels[lab].addr == target )
       {
          if ( syntax.bracket && strchr(labels[lab].name,'+') )
@@ -1834,6 +1840,10 @@ void output_disasm(void)
          {
             lab = -1;
          }
+
+         // Clear undocumented opcodes if option is disabled
+         if ( instruction[addr] && noundoc && opcode[mem[addr]].unofficial ) instruction[addr] = 0;
+
          if ( !instruction[addr] )
          {
             // check for word labels, but not at odd offsets
@@ -2057,12 +2067,13 @@ void usage(const char *progname)
           " --labels=atari,cio,float,basic Specify wanted labels (basic off by default)\n"
           " --ltable=[filename] Load label table from a file (may be repeated)\n"
           " --lfile=[filename]  Load active labels from a file (may be repeated)\n"
+          " --noundoc       Undocumented opcodes imply data, not instructions\n"
           " --syntax=[option][,option]  Set various syntax options:\n"
           "     bracket     Use brackets for label math: [LABEL+1]\n"
           "     noa         Leave off the 'A' on ASL, ROR, and the like\n"
           "     org         Use '.org =' instead of '*=' to set PC\n"
           "     colon       Put a colon after labels\n"
-          "     noundoc     No undocumented opcodes\n"
+          "     noundoc     Use comments for undocumented opcodes\n"
           "     mads        Defaults for MADS assembler: noa,org,colon\n"
           "     ca65        Defaults for ca65 assembler: noa,org,colon\n"
           "     cc65        Alias for ca65\n"
@@ -2239,6 +2250,13 @@ int main(int argc,char *argv[])
       if ( strncmp(argv[1],"--ltable=",sizeof("--ltable=")-1) == 0 )
       {
          if ( add_label_file(argv[1]+sizeof("--ltable=")-1) < 0 ) return 1;
+         ++argv;
+         --argc;
+         continue;
+      }
+      if ( strncmp(argv[1],"--noundoc",sizeof("--noundoc")-1) == 0 )
+      {
+         noundoc = 1;
          ++argv;
          --argc;
          continue;

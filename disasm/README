@@ -16,12 +16,13 @@ Options:
  --labels=atari,cio,float,basic Specify wanted labels (basic off by default)
  --ltable=[filename] Load label table from a file (may be repeated)
  --lfile=[filename]  Load active labels from a file (may be repeated)
+ --noundoc       Undocumented opcodes imply data, not instructions
  --syntax=[option][,option]  Set various syntax options:
      bracket     Use brackets for label math: [LABEL+1]
      noa         Leave off the 'A' on ASL, ROR, and the like
      org         Use '.org =' instead of '*=' to set PC
      colon       Put a colon after labels
-     noundoc     No undocumented opcodes
+     noundoc     Use comments for undocumented opcodes
      mads        Defaults for MADS assembler: noa,org,colon
      ca65        Defaults for ca65 assembler: noa,org,colon
      cc65        Defaults for cc65 assembler: noa,org,colon
