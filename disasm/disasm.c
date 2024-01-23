@@ -1126,6 +1126,7 @@ int add_label_file(const char *filename)
             fclose(f);
             return -3;
          }
+         ++bytes; // +1 is two bytes
          while ( c < end ) *c++ = ' '; // wipe option
       }
 
@@ -1662,6 +1663,15 @@ void find_strings(void)
                   ++len;
                }
                // Add the label
+               l = find_label(start);
+               if ( l )
+               {
+                  if ( l->bytes != 0 ) break; // label already set
+                  if ( l->base != 0 ) break; // non-default already
+                  l->bytes = len;
+                  l->base = base;
+                  break; // set
+               }
                struct label label_str = { start, "", len, 'a', 1, base, 0 };
                add_label(NULL,start,0,&label_str);
                break;
@@ -1933,6 +1943,8 @@ void output_disasm(void)
                      printf("\t"BYTE_PSEUDO_OP" $%02X",val);
                      if ( IS_ASCII(val) )
                         printf(" "COMMENT" '%c'",val);
+                     if ( IS_SCREEN_QUOTABLE(val) && val != SCREEN_TO_ATASCII(val) )
+                        printf(" "COMMENT" Screen code for '%c'",SCREEN_TO_ATASCII(val));
                      break;
                }
             }
