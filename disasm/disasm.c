@@ -2413,7 +2413,11 @@ int main(int argc,char *argv[])
       return 2;
    }
    void *data = mmap(NULL,statbuf.st_size,PROT_READ,MAP_SHARED,fd,0);
-
+   if ( data == MAP_FAILED )
+   {
+      fprintf(stderr,"Unable to memory map source file: %s\n",argv[1]);
+      return 2;
+   }
    if ( addr ) load_blob(addr,data,statbuf.st_size);
    else if ( ((uint16_t *)data)[0] == 0xffff ) load_binload(data,statbuf.st_size);
    else if ( load_rom(data,statbuf.st_size) == 0 ) ; // It was a ROM
