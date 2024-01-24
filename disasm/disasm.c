@@ -1503,7 +1503,7 @@ int load_binload(const unsigned char *load,int size)
       if ( start <= 0x2e0 && end >= 0x2e1 )
       {
          // Add target, but do not add label just in case there are more; only the last one runs
-         branch_target[le16toh(*(uint16_t *)&load[0x2e0-start])] = 1;
+         branch_target[le16toh(*(uint16_t *)&mem[0x2e0])] = 1;
       }
    }
    // Run address at end
