@@ -51,7 +51,6 @@
 
 #define ARRAY_SIZE(_a) (sizeof(_a)/sizeof((_a)[0]))
 #define MAX_LABEL_SIZE 32
-#define SCREEN_STRING_BASE 255
 
 /*
  * data types
@@ -70,6 +69,13 @@ enum address_mode {
    E_ZEROPAGE_IND_X,
    E_ZEROPAGE_IND_Y,
    E_RELATIVE, // branches
+};
+
+enum base_overload {
+   E_ATASCII_STRING = 256,
+   E_SCREEN_STRING = 255,
+   E_ATASCII_INVERSE_STRING = 254,
+   E_SCREEN_INVERSE_STRING = 253
 };
 
 struct opcode {
@@ -1194,8 +1200,10 @@ int add_label_file(const char *filename)
             case 8:
             case 10:
             case 16:
-            case 255: // screen code string
-            case 256: // ATASCII string
+            case E_SCREEN_INVERSE_STRING:
+            case E_ATASCII_INVERSE_STRING:
+            case E_SCREEN_STRING:
+            case E_ATASCII_STRING:
                break;
             default:
                printf("Invalid label line: invalid base\n");
@@ -1671,27 +1679,68 @@ const struct string_table string_table[] = {
    STRING_TABLE_ENTRY("COPYRIGHT"),
    STRING_TABLE_ENTRY("Copyright"),
    STRING_TABLE_ENTRY("copyright"),
+   STRING_TABLE_ENTRY("PRESS"),
+   STRING_TABLE_ENTRY("TRIGGER"),
+   STRING_TABLE_ENTRY("PLEASE"),
 };
+void string_to_base(unsigned char *dest,const char *src,enum base_overload base)
+{
+   while ( *src )
+   {
+      switch (base)
+      {
+         case E_ATASCII_STRING:
+            *dest++ = *src++;
+            break;
+         case E_SCREEN_STRING:
+            *dest++ = ATASCII_TO_SCREEN(*src);
+            ++src;
+            break;
+         case E_ATASCII_INVERSE_STRING:
+            *dest++ = (*src++ | 0x80);
+            break;
+         case E_SCREEN_INVERSE_STRING:
+            *dest++ = (ATASCII_TO_SCREEN(*src) | 0x80);
+            ++src;
+            break;
+         default: break; // not reached
+      }
+   }
+   *dest = 0;
+}
+int is_char_match_base(unsigned char c,enum base_overload base)
+{
+   switch (base)
+   {
+      case E_ATASCII_STRING:
+         return IS_ASCII(c);
+         break;
+      case E_SCREEN_STRING:
+         return IS_SCREEN_ASCII(c);
+         break;
+      case E_ATASCII_INVERSE_STRING:
+         return IS_ASCII(c^0x80);
+         break;
+      case E_SCREEN_INVERSE_STRING:
+         return IS_SCREEN_ASCII(c^0x80);
+         break;
+      default:
+         return 0; // not reached
+   }
+}
 void find_strings(void)
 {
+   // FIXME: The performance of this is horrible, but my computer is stupid fast
    for (int addr=0;addr<0xffff;++addr)
    {
       if ( !mem_loaded[addr] ) continue;
       if ( instruction[addr] ) continue;
-      for ( int base=256;base >= 255; --base )
+      for ( int base=E_ATASCII_STRING; base >= E_SCREEN_INVERSE_STRING; --base )
       {
          for ( unsigned int s=0; s<ARRAY_SIZE(string_table); ++s )
          {
-            char str[128];
-            strcpy(str,string_table[s].str);
-            if ( base < 256 )
-            {
-               for (int i=0;i<string_table[s].len;++i)
-               {
-                  str[i]=ATASCII_TO_SCREEN(str[i]);
-               }
-               if ( strcmp(str,string_table[s].str) == 0 ) continue; // all lower-case; no difference
-            }
+            unsigned char str[128];
+            string_to_base(str,string_table[s].str,base);
             int match=1;
             for ( int c=0;c<string_table[s].len;++c )
             {
@@ -1706,19 +1755,20 @@ void find_strings(void)
                   break;
                }
             }
-            if ( match )
+            if ( !match ) continue;
+
+            // Don't count it if there's a label in the middle of the match string
+            for ( int c=1;c<string_table[s].len;++c )
             {
-               // Don't count it if there's a label in the middle of the match string
-               for ( int c=1;c<string_table[s].len;++c )
+               if ( find_label(addr+c) )
                {
-                  if ( find_label(addr+c) )
-                  {
-                     match=0;
-                     break;
-                  }
+                  match=0;
+                  break;
                }
             }
-            if ( match )
+            if ( !match ) continue;
+
+            // Expand to collect neighboring characters
             {
                int start = addr;
                int len = string_table[s].len;
@@ -1727,8 +1777,7 @@ void find_strings(void)
                        start > 0 &&
                        !instruction[start-1] &&
                        mem_loaded[start-1] &&
-                       ( (base == 256) ? IS_ASCII(mem[start-1]) : IS_SCREEN_ASCII(mem[start-1]) )
-                  )
+                       is_char_match_base(mem[start-1],base) )
                {
                   --start;
                   ++len;
@@ -1740,8 +1789,7 @@ void find_strings(void)
                        start+len < 0xffff &&
                        !instruction[start+len] &&
                        mem_loaded[start+len] &&
-                       ( (base == 256) ? IS_ASCII(mem[start+len]) : IS_SCREEN_ASCII(mem[start+len]) )
-                  )
+                       is_char_match_base(mem[start+len],base) )
                {
                   ++len;
                }
@@ -1974,7 +2022,7 @@ void output_disasm(void)
                   case 10:
                      printf("\t"BYTE_PSEUDO_OP" %u",val);
                      break;
-                  case SCREEN_STRING_BASE:
+                  case E_SCREEN_STRING:
                      if ( syntax.screenquote )
                      {
                         if ( count > STRING_MAX ) count = STRING_MAX;
@@ -2002,7 +2050,7 @@ void output_disasm(void)
                            printf(" "COMMENT" Screen code for '%c'",SCREEN_TO_ATASCII(val));
                      }
                      break;
-                  case 256:
+                  case E_ATASCII_STRING:
                      // If a string, consume as many bytes as possible within the label
                      if ( count > STRING_MAX ) count = STRING_MAX;
                      if ( IS_QUOTABLE(val) )
@@ -2023,6 +2071,16 @@ void output_disasm(void)
                      }
                      // else: ATASCII-specific character in hex
                      // fall through
+                  case E_ATASCII_INVERSE_STRING:
+                     printf("\t"BYTE_PSEUDO_OP" $%02X",val);
+                     if ( IS_ASCII(val^0x80) )
+                        printf(" "COMMENT" Inverse character '%c'",val^0x80);
+                     break;
+                  case E_SCREEN_INVERSE_STRING:
+                     printf("\t"BYTE_PSEUDO_OP" $%02X",val);
+                     if ( IS_SCREEN_QUOTABLE(val^0x80) )
+                        printf(" "COMMENT" Screen code for inverse '%c'",SCREEN_TO_ATASCII(val^0x80));
+                     break;
                   default:
                   case 16:
                      printf("\t"BYTE_PSEUDO_OP" $%02X",val);
