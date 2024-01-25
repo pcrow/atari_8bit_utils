@@ -117,6 +117,7 @@ struct syntax_options {
    int orgdot;
    int colon;
    int noundoc;
+   int mads;
    unsigned char stringquote;
    unsigned char screenquote;
 };
@@ -2072,11 +2073,51 @@ void output_disasm(void)
                      // else: ATASCII-specific character in hex
                      // fall through
                   case E_ATASCII_INVERSE_STRING:
+                     if ( syntax.mads )
+                     {
+                        if ( count > STRING_MAX ) count = STRING_MAX;
+                        if ( IS_QUOTABLE(val^0x80) )
+                        {
+                           printf("\tdta c'");
+                           for ( int i=0; i<count; ++i )
+                           {
+                              if ( IS_QUOTABLE(mem[addr]^0x80) )
+                              {
+                                 printf("%c",mem[addr]^0x80);
+                                 ++addr;
+                              }
+                              else break;
+                           }
+                           --addr;
+                           printf("'* "COMMENT" inverse");
+                           break;
+                        }
+                     }
                      printf("\t"BYTE_PSEUDO_OP" $%02X",val);
                      if ( IS_ASCII(val^0x80) )
                         printf(" "COMMENT" Inverse character '%c'",val^0x80);
                      break;
                   case E_SCREEN_INVERSE_STRING:
+                     if ( syntax.mads )
+                     {
+                        if ( count > STRING_MAX ) count = STRING_MAX;
+                        if ( IS_QUOTABLE(val^0x80) )
+                        {
+                           printf("\tdta d'");
+                           for ( int i=0; i<count; ++i )
+                           {
+                              if ( IS_QUOTABLE(mem[addr]^0x80) )
+                              {
+                                 printf("%c",mem[addr]^0x80);
+                                 ++addr;
+                              }
+                              else break;
+                           }
+                           --addr;
+                           printf("'*  "COMMENT" inverse screen-codes");
+                           break;
+                        }
+                     }
                      printf("\t"BYTE_PSEUDO_OP" $%02X",val);
                      if ( IS_SCREEN_QUOTABLE(val^0x80) )
                         printf(" "COMMENT" Screen code for inverse '%c'",SCREEN_TO_ATASCII(val^0x80));
@@ -2310,6 +2351,7 @@ int main(int argc,char *argv[])
                syntax.colon = 1;
                syntax.stringquote = '\'';
                syntax.screenquote = '"';
+               syntax.mads = 1;
                opt+=sizeof("mads")-1;
                continue;
             }
