@@ -261,7 +261,7 @@ int atr_preinit(void)
    }
    if ( master_atrfs.fd < 0 )
    {
-      fprintf(stderr,"Failed to open %s; must have write permission\n",options.filename);
+      fprintf(stderr,"Failed to open %s; check permissions (read-write and read-only both failed)\n",options.filename);
       return 1;
    }
    master_atrfs.atrsize = master_atrfs.atrstat.st_size;
