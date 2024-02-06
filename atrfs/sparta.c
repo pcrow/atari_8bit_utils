@@ -444,9 +444,9 @@ int sparta_sanity(struct atrfs *atrfs)
       if ( options.debug ) printf("Not SpartaDOS: first bitmap >= sector count %d != %d\n",BYTES2(sec1->first_bitmap), atrfs->sectors);
       return 1;
    }
-   if ( BYTES2(sec1->sec_num_allocation) >= atrfs->sectors )
+   if ( BYTES2(sec1->sec_num_allocation) > atrfs->sectors )
    {
-      if ( options.debug ) printf("Not SpartaDOS: sector number alloc >= sector count %d != %d\n",BYTES2(sec1->sec_num_allocation), atrfs->sectors);
+      if ( options.debug ) printf("Not SpartaDOS: sector number alloc > sector count %d > %d\n",BYTES2(sec1->sec_num_allocation), atrfs->sectors);
       return 1;
    }
    if ( BYTES2(sec1->sec_num_dir_alloc) >= atrfs->sectors )
