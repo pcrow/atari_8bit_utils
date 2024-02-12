@@ -327,14 +327,14 @@ int scan_apt_partitions(struct atrfs *atrfs,void *mem,int header_offset,int firs
       this->working = this->mem;
       if ( (this->start+1) * 512 > atrfs->atrstat.st_size )
       {
-         fprintf(stderr,"ATP partition says it starts at sector %u which is past the end of the file\n",this->start);
+         fprintf(stderr,"APT partition says it starts at sector %u which is past the end of the file\n",this->start);
          exit (1);
       }
       if ( (this->start+this->sectors) * 512 > atrfs->atrstat.st_size )
       {
-         fprintf(stderr,"ATP partition says it runs through sector %u which is past the end of the file\n",this->start + this->sectors);
+         fprintf(stderr,"APT partition says it runs through sector %u which is past the end of the file\n",this->start + this->sectors);
          this->sectors = atrfs->atrstat.st_size/512 - this->start;
-         fprintf(stderr,"ATP partition adjusted to %u sectors\n",this->sectors);
+         fprintf(stderr,"APT partition adjusted to %u sectors\n",this->sectors);
       }
       this->bytes_per_sector = 64 << (entry->access_flags & 0x03);
       this->bytes_access = (entry->access_flags >> 2) & 0x03;
