@@ -2131,6 +2131,13 @@ int mydos_newfs(struct atrfs *atrfs)
    sec1->drive_bits = (atrfs->fstype == ATR_DOS1 ) ? 0x0f : (atrfs->fstype == ATR_MYDOS ) ? 0xff : 0x03;
 #endif
 
+   // Sanity: DOS 2.5 requires the second VTOC sector
+   if ( atrfs->fstype == ATR_DOS25 && atrfs->sectors < 1024 )
+   {
+      atrfs->fstype = ATR_DOS2;
+      fprintf(stderr,"Warning: Switched from DOS 2.5 to DOS 2.  DOS 2.5 requires sector 1024; this image only has %d sectors\n",atrfs->sectors);
+   }
+
    // Set VTOC sector count or DOS flag
    struct mydos_vtoc *vtoc = SECTOR(360);
    int first_vtoc = 360;
