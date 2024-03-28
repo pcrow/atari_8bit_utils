@@ -108,6 +108,14 @@ char *atr_info(const char *path,int filesize)
    {
       b+=sprintf(b,"BASIC Save file\n");
    }
+   // Mac/65 tokenized source file
+   else if ( filesize > 6 &&
+             BYTES2(filebuf+0) == 0xfefe && // Magic header
+             BYTES2(filebuf+2)+4 == filesize // Size of remaining data
+      )
+   {
+      b+=sprintf(b,"Mac/65 tokenized save file\n");
+   }
    else
    {
       b+=sprintf(b,"File type unknown\n");
