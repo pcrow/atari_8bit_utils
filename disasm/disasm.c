@@ -1353,6 +1353,7 @@ const char *add_label(const char *name,int addr,int write,const struct label *or
    }
 
    labels[num_labels].rw = 'a'; // All new labels are for any access
+   labels[num_labels].base = 16; // default to hex
    if ( orig )
    {
       memcpy(&labels[num_labels],orig,sizeof(*orig));
