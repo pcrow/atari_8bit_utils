@@ -1960,6 +1960,7 @@ void output_disasm(void)
             // Get label if in a longer label (for base and type)
             if ( labels[lab].addr < addr && labels[lab].addr+labels[lab].bytes > addr )
             {
+               if ( strchr(labels[lab].name,'+') ) continue;
                break;
             }
 
