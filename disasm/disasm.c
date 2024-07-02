@@ -42,11 +42,11 @@
 #define STRING_MAX 40 // maximum number of bytes for string: .byte "Long string"
 
 // ATASCII values that are the same in ASCII
-#define IS_ASCII(_a) ( ( (_a) >= ' ' && (_a) <= 'A' ) || isalpha(_a) || (_a) == '|' )
-#define IS_QUOTABLE(_a) ( IS_ASCII(_a) && (_a) != syntax.stringquote ) // don't quote quotes in quotes
+#define IS_ASCII(_a) ( ( (_a) >= ' ' && (_a) <= 'A' ) || isalpha(_a) || (_a) == '|' || (_a) == 0x9b )
+#define IS_QUOTABLE(_a) ( IS_ASCII(_a) && (_a) != syntax.stringquote && (_a) != 0x9b ) // don't quote quotes in quotes
 #define ATASCII_TO_SCREEN(_a) ( ( ((_a)&0x7f) < 0x20 ) ? ((_a)+0x40) : ( ((_a)&0x7f) < 0x60 ) ? (_a) - 0x20 : (_a) )
 #define SCREEN_TO_ATASCII(_a) ( ( ((_a)&0x7f) < 0x40 ) ? ((_a)+0x20) : ( ((_a)&0x7f) < 0x60 ) ? (_a) - 0x40 : (_a) )
-#define IS_SCREEN_ASCII(_a) IS_ASCII(SCREEN_TO_ATASCII(_a))
+#define IS_SCREEN_ASCII(_a) ( (_a) != 0x9b && IS_ASCII(SCREEN_TO_ATASCII(_a)) )
 #define IS_SCREEN_QUOTABLE(_a) ( IS_SCREEN_ASCII(_a) && SCREEN_TO_ATASCII(_a) != syntax.screenquote )
 
 #define ARRAY_SIZE(_a) (sizeof(_a)/sizeof((_a)[0]))
