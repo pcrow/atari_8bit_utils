@@ -1352,6 +1352,7 @@ const char *add_label(const char *name,int addr,int write,const struct label *or
       exit(1);
    }
 
+   memset(&labels[num_labels],0,sizeof(labels[num_labels]));
    labels[num_labels].rw = 'a'; // All new labels are for any access
    labels[num_labels].base = 16; // default to hex
    if ( orig )
