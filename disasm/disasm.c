@@ -118,6 +118,7 @@ struct syntax_options {
    int colon;
    int noundoc;
    int noscreencode;
+   int listing; // Print out address and bytes for each line
    int mads;
    unsigned char stringquote;
    unsigned char screenquote;
@@ -1947,6 +1948,34 @@ void output_disasm(void)
             printf("$%04X\n",addr);
             set=1;
          }
+
+         // If listing option, display hex codes
+         if ( syntax.listing )
+         {
+            printf("%04X %02X ",addr,mem[addr]);
+            if ( instruction[addr] )
+            {
+               switch( instruction_bytes[opcode[mem[addr]].mode] )
+               {
+                  case 1:
+                     printf("      ");
+                     break;
+                  case 2:
+                     printf("%02X    ",mem[addr+1]);
+                     break;
+                  case 3:
+                     printf("%02X %02X ",mem[addr+1],mem[addr+2]);
+                     break;
+               }
+            }
+            else
+            {
+               // FIXME: handle multi-byte data
+               printf("      ");
+            }
+            printf("| ");
+         }
+
          // Display this address
          for (lab=0;lab<num_labels;++lab)
          {
@@ -2258,6 +2287,7 @@ void usage(const char *progname)
           "     xa           Defaults for xa assembler: noundoc \n"
           "     asmedit      Defaults for Atari Assembler/Editor cartridge: noundoc \n"
           "     noscreencode Do not add comments about screen code characters\n"
+          "     listing      Print address and hex codes for each line (broken for multi-byte data\n"
           "\n"
           "If no options are specified, the file is auto-parsed for type\n"
           "Supported types:\n"
@@ -2387,6 +2417,12 @@ int main(int argc,char *argv[])
             {
                syntax.noundoc = 1;
                opt+=sizeof("asmedit")-1;
+               continue;
+            }
+            if ( strncmp(opt,"listing",sizeof("listing")-1)==0 )
+            {
+               syntax.listing = 1;
+               opt+=sizeof("listing")-1;
                continue;
             }
 
