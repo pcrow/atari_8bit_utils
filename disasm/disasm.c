@@ -2043,27 +2043,37 @@ void output_disasm(void)
             if ( lab >= 0 && labels[lab].btype == 2 && labels[lab].bytes >= 2 && (labels[lab].bytes&0x01)==0 )
             {
                unsigned int val = le16toh(*(uint16_t *)&mem[addr]);
-               int base = 16;
-               if ( lab >= 0 ) base = labels[lab].base;
-               switch(base)
+               // look up label for val
+               struct label *val_label = find_label(val);
+               // if label found, use that
+               if ( val_label )
                {
-                  case 2:
-                     printf(""WORD_PSEUDO_OP" %%");
-                     for ( int i=0x8000; i; i=i>>1 )
-                     {
-                        printf("%d",(val&i)>0);
-                     }
-                     break;
-                  case 8:
-                     printf(""WORD_PSEUDO_OP" &%o",val);
-                     break;
-                  case 10:
-                     printf(""WORD_PSEUDO_OP" %u",val);
-                     break;
-                  case 16:
-                  default: // for words, strings make no sense
-                     printf(""WORD_PSEUDO_OP" $%04X",val);
-                     break;
+                  printf(""WORD_PSEUDO_OP" %s",val_label->name);
+               }
+               else // else display data
+               {
+                  int base = 16;
+                  if ( lab >= 0 ) base = labels[lab].base;
+                  switch(base)
+                  {
+                     case 2:
+                        printf(""WORD_PSEUDO_OP" %%");
+                        for ( int i=0x8000; i; i=i>>1 )
+                        {
+                           printf("%d",(val&i)>0);
+                        }
+                        break;
+                     case 8:
+                        printf(""WORD_PSEUDO_OP" &%o",val);
+                        break;
+                     case 10:
+                        printf(""WORD_PSEUDO_OP" %u",val);
+                        break;
+                     case 16:
+                     default: // for words, strings make no sense
+                        printf(""WORD_PSEUDO_OP" $%04X",val);
+                        break;
+                  }
                }
                ++addr;
             }
