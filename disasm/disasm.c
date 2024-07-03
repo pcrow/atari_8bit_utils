@@ -120,6 +120,8 @@ struct syntax_options {
    int noscreencode;
    int listing; // Print out address and bytes for each line
    int mads;
+   int indent_count; // default 1
+   int indent_tab; // default true
    unsigned char stringquote;
    unsigned char screenquote;
 };
@@ -1890,12 +1892,34 @@ void print_label_or_addr(int target,int write)
 }
 
 /*
+ * do_indent()
+ */
+void do_indent(int chars_printed)
+{
+   if ( syntax.indent_tab )
+   {
+      int tabs = syntax.indent_count;
+      if ( chars_printed / 8 >= tabs ) tabs = 1; // Always indent some
+      else tabs -= chars_printed/8;
+      for (int i=0;i<tabs;++i) printf("\t");
+   }
+   else
+   {
+      int spaces = syntax.indent_count;
+      if ( chars_printed >= spaces ) spaces = 1; // Always indent some
+      else spaces -= chars_printed;
+      printf("%*s",spaces,"");
+   }
+}
+
+/*
  * output_disasm()
  */
 void output_disasm(void)
 {
    static int block=1; // Next block to process
    int max_block = block;
+   int chars_printed;
 
    // Display labels that are outside loaded memory
    for (int lab=0;lab<num_labels;++lab)
@@ -1904,18 +1928,27 @@ void output_disasm(void)
       if ( strchr(labels[lab].name,'+') ) continue; // Don't need to print 'LABEL+1' fake labels
       if ( !mem_loaded[labels[lab].addr] )
       {
+         chars_printed = 0;
          char *c = strchr(labels[lab].name,',');
+         if ( syntax.listing ) printf("              | ");
          if ( c ) // separate read/write labels
          {
             char name[16];
             strcpy(name,labels[lab].name);
             strchr(name,',')[0]=0;
-            printf("%s\t= $%04X "COMMENT" read register\n",name,labels[lab].addr);
-            printf("%s\t= $%04X "COMMENT" write register\n",c+1,labels[lab].addr);
+            chars_printed=printf("%s",name);
+            do_indent(chars_printed);
+            printf("= $%04X "COMMENT" read register\n",labels[lab].addr);
+            if ( syntax.listing ) printf("              | ");
+            chars_printed=printf("%s",c+1);
+            do_indent(chars_printed);
+            printf("= $%04X "COMMENT" write register\n",labels[lab].addr);
          }
          else // normal case
          {
-            printf("%s\t= $%04X\n",labels[lab].name,labels[lab].addr);
+            chars_printed=printf("%s",labels[lab].name);
+            do_indent(chars_printed);
+            printf("= $%04X\n",labels[lab].addr);
          }
          labels[lab].defined = 1; // don't print again
       }
@@ -1935,15 +1968,17 @@ void output_disasm(void)
             set=0;
             continue;
          }
+         chars_printed = 0;
          if ( !set )
          {
+            if ( syntax.listing ) printf("              | ");
             if ( syntax.org )
             {
-               if ( syntax.orgdot ) printf(".");
-               printf("org");
+               if ( syntax.orgdot ) chars_printed = printf(".");
+               chars_printed += printf("org");
                //if ( syntax.colon ) printf(":");
             }
-            printf("\t");
+            do_indent(chars_printed);
             if ( !syntax.org ) printf("*= ");
             printf("$%04X\n",addr);
             set=1;
@@ -1977,14 +2012,15 @@ void output_disasm(void)
          }
 
          // Display this address
+         chars_printed = 0;
          for (lab=0;lab<num_labels;++lab)
          {
             if ( labels[lab].addr == addr )
             {
                if ( !strchr(labels[lab].name,'+') )
                {
-                  printf("%s",labels[lab].name);
-                  if ( syntax.colon ) printf(":");
+                  chars_printed += printf("%s",labels[lab].name);
+                  if ( syntax.colon ) chars_printed += printf(":");
                }
                break;
             }
@@ -1994,12 +2030,12 @@ void output_disasm(void)
                if ( strchr(labels[lab].name,'+') ) continue;
                break;
             }
-
          }
          if ( lab >= num_labels )
          {
             lab = -1;
          }
+         do_indent(chars_printed);
 
          if ( !instruction[addr] )
          {
@@ -2012,21 +2048,21 @@ void output_disasm(void)
                switch(base)
                {
                   case 2:
-                     printf("\t"WORD_PSEUDO_OP" %%");
+                     printf(""WORD_PSEUDO_OP" %%");
                      for ( int i=0x8000; i; i=i>>1 )
                      {
                         printf("%d",(val&i)>0);
                      }
                      break;
                   case 8:
-                     printf("\t"WORD_PSEUDO_OP" &%o",val);
+                     printf(""WORD_PSEUDO_OP" &%o",val);
                      break;
                   case 10:
-                     printf("\t"WORD_PSEUDO_OP" %u",val);
+                     printf(""WORD_PSEUDO_OP" %u",val);
                      break;
                   case 16:
                   default: // for words, strings make no sense
-                     printf("\t"WORD_PSEUDO_OP" $%04X",val);
+                     printf(""WORD_PSEUDO_OP" $%04X",val);
                      break;
                }
                ++addr;
@@ -2044,17 +2080,17 @@ void output_disasm(void)
                switch(base)
                {
                   case 2:
-                     printf("\t"BYTE_PSEUDO_OP" %%");
+                     printf(""BYTE_PSEUDO_OP" %%");
                      for ( int i=0x80; i; i=i>>1 )
                      {
                         printf("%d",(val&i)>0);
                      }
                      break;
                   case 8:
-                     printf("\t"BYTE_PSEUDO_OP" &%o",val);
+                     printf(""BYTE_PSEUDO_OP" &%o",val);
                      break;
                   case 10:
-                     printf("\t"BYTE_PSEUDO_OP" %u",val);
+                     printf(""BYTE_PSEUDO_OP" %u",val);
                      break;
                   case E_SCREEN_STRING:
                      if ( syntax.screenquote )
@@ -2062,7 +2098,7 @@ void output_disasm(void)
                         if ( count > STRING_MAX ) count = STRING_MAX;
                         if ( IS_SCREEN_QUOTABLE(val) )
                         {
-                           printf("\t"BYTE_PSEUDO_OP" %c",syntax.screenquote);
+                           printf(""BYTE_PSEUDO_OP" %c",syntax.screenquote);
                            for ( int i=0; i<count; ++i )
                            {
                               if ( IS_SCREEN_QUOTABLE(mem[addr]) )
@@ -2075,11 +2111,11 @@ void output_disasm(void)
                            --addr;
                            printf("%c",syntax.screenquote);
                         }
-                        else printf("\t"BYTE_PSEUDO_OP" $%02X "COMMENT" Screen code for '%c'",val,SCREEN_TO_ATASCII(val));
+                        else printf(""BYTE_PSEUDO_OP" $%02X "COMMENT" Screen code for '%c'",val,SCREEN_TO_ATASCII(val));
                      }
                      else
                      {
-                        printf("\t"BYTE_PSEUDO_OP" $%02X",val);
+                        printf(""BYTE_PSEUDO_OP" $%02X",val);
                         if ( !syntax.noscreencode && IS_SCREEN_QUOTABLE(val) )
                            printf(" "COMMENT" Screen code for '%c'",SCREEN_TO_ATASCII(val));
                      }
@@ -2089,7 +2125,7 @@ void output_disasm(void)
                      if ( count > STRING_MAX ) count = STRING_MAX;
                      if ( IS_QUOTABLE(val) )
                      {
-                        printf("\t"BYTE_PSEUDO_OP" %c",syntax.stringquote);
+                        printf(""BYTE_PSEUDO_OP" %c",syntax.stringquote);
                         for ( int i=0; i<count; ++i )
                         {
                            if ( IS_QUOTABLE(mem[addr]) )
@@ -2111,7 +2147,7 @@ void output_disasm(void)
                         if ( count > STRING_MAX ) count = STRING_MAX;
                         if ( IS_QUOTABLE(val^0x80) )
                         {
-                           printf("\tdta c'");
+                           printf("dta c'");
                            for ( int i=0; i<count; ++i )
                            {
                               if ( IS_QUOTABLE(mem[addr]^0x80) )
@@ -2126,7 +2162,7 @@ void output_disasm(void)
                            break;
                         }
                      }
-                     printf("\t"BYTE_PSEUDO_OP" $%02X",val);
+                     printf(""BYTE_PSEUDO_OP" $%02X",val);
                      if ( IS_ASCII(val^0x80) )
                         printf(" "COMMENT" Inverse character '%c'",val^0x80);
                      break;
@@ -2136,7 +2172,7 @@ void output_disasm(void)
                         if ( count > STRING_MAX ) count = STRING_MAX;
                         if ( IS_QUOTABLE(val^0x80) )
                         {
-                           printf("\tdta d'");
+                           printf("dta d'");
                            for ( int i=0; i<count; ++i )
                            {
                               if ( IS_QUOTABLE(mem[addr]^0x80) )
@@ -2151,13 +2187,13 @@ void output_disasm(void)
                            break;
                         }
                      }
-                     printf("\t"BYTE_PSEUDO_OP" $%02X",val);
+                     printf(""BYTE_PSEUDO_OP" $%02X",val);
                      if ( !syntax.noscreencode && IS_SCREEN_QUOTABLE(val^0x80) )
                         printf(" "COMMENT" Screen code for inverse '%c'",SCREEN_TO_ATASCII(val^0x80));
                      break;
                   default:
                   case 16:
-                     printf("\t"BYTE_PSEUDO_OP" $%02X",val);
+                     printf(""BYTE_PSEUDO_OP" $%02X",val);
                      if ( IS_ASCII(val) )
                         printf(" "COMMENT" '%c'",val);
                      if ( !syntax.noscreencode && IS_SCREEN_QUOTABLE(val) && val != SCREEN_TO_ATASCII(val) )
@@ -2170,7 +2206,6 @@ void output_disasm(void)
          else
          {
             int didbytes = 0;
-            printf("\t");
             if ( opcode[mem[addr]].unofficial &&
                  ( syntax.noundoc || strcmp("NOP",opcode[mem[addr]].mnemonic) == 0 ) )
             {
@@ -2288,6 +2323,7 @@ void usage(const char *progname)
           "     asmedit      Defaults for Atari Assembler/Editor cartridge: noundoc \n"
           "     noscreencode Do not add comments about screen code characters\n"
           "     listing      Print address and hex codes for each line (broken for multi-byte data\n"
+          "     indent=[#][s|t]   Specify a number of spaces or tabs to indent (default: 1t)\n"
           "\n"
           "If no options are specified, the file is auto-parsed for type\n"
           "Supported types:\n"
@@ -2314,6 +2350,8 @@ int main(int argc,char *argv[])
    int start=0;
    char *label_table_selection = NULL;
    syntax.stringquote = '"'; // Works with most
+   syntax.indent_count = 1; // default to 1 tab to indent
+   syntax.indent_tab = 1;
    while ( argc > 2 )
    {
       if ( argv[1][0] != '-' && argv[1][1] != '-' )
@@ -2424,6 +2462,27 @@ int main(int argc,char *argv[])
                syntax.listing = 1;
                opt+=sizeof("listing")-1;
                continue;
+            }
+            if ( strncmp(opt,"indent=",sizeof("indent=")-1)==0 )
+            {
+               const void *save_opt = opt;
+               opt+=sizeof("indent=")-1;
+               syntax.indent_count=atoi(opt);
+               while (isdigit(*opt)) ++opt;
+               if ( *opt == 't' )
+               {
+                  syntax.indent_tab = 1;
+                  ++opt;
+                  continue;
+               }
+               else if ( *opt == 's' )
+               {
+                  syntax.indent_tab = 0;
+                  ++opt;
+                  continue;
+               }
+               // Bad syntax; abort
+               opt = save_opt;
             }
 
             // Didn't find anything
