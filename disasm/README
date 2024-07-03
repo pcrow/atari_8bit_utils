@@ -28,6 +28,9 @@ Options:
      cc65        Defaults for cc65 assembler: noa,org,colon
      xa          Defaults for xa assembler: noundoc
      asmedit     Defaults for Atari Assembler/Editor cartridge: noundoc
+     noscreencode Do not add comments about screen code characters
+     listing      Print address and hex codes for each line (broken for multi-byte data
+     indent=[#][s|t]   Specify a number of spaces or tabs to indent (default: 1t)
 
 If no options are specified, the file is auto-parsed for type
 Supported types:
