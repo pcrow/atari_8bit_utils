@@ -117,6 +117,7 @@ struct syntax_options {
    int orgdot;
    int colon;
    int noundoc;
+   int noscreencode;
    int mads;
    unsigned char stringquote;
    unsigned char screenquote;
@@ -2050,7 +2051,7 @@ void output_disasm(void)
                      else
                      {
                         printf("\t"BYTE_PSEUDO_OP" $%02X",val);
-                        if ( IS_SCREEN_QUOTABLE(val) )
+                        if ( !syntax.noscreencode && IS_SCREEN_QUOTABLE(val) )
                            printf(" "COMMENT" Screen code for '%c'",SCREEN_TO_ATASCII(val));
                      }
                      break;
@@ -2122,7 +2123,7 @@ void output_disasm(void)
                         }
                      }
                      printf("\t"BYTE_PSEUDO_OP" $%02X",val);
-                     if ( IS_SCREEN_QUOTABLE(val^0x80) )
+                     if ( !syntax.noscreencode && IS_SCREEN_QUOTABLE(val^0x80) )
                         printf(" "COMMENT" Screen code for inverse '%c'",SCREEN_TO_ATASCII(val^0x80));
                      break;
                   default:
@@ -2130,7 +2131,7 @@ void output_disasm(void)
                      printf("\t"BYTE_PSEUDO_OP" $%02X",val);
                      if ( IS_ASCII(val) )
                         printf(" "COMMENT" '%c'",val);
-                     if ( IS_SCREEN_QUOTABLE(val) && val != SCREEN_TO_ATASCII(val) )
+                     if ( !syntax.noscreencode && IS_SCREEN_QUOTABLE(val) && val != SCREEN_TO_ATASCII(val) )
                         printf(" "COMMENT" Screen code for '%c'",SCREEN_TO_ATASCII(val));
                      break;
                }
@@ -2246,16 +2247,17 @@ void usage(const char *progname)
           " --lfile=[filename]  Load active labels from a file (may be repeated)\n"
           " --noundoc       Undocumented opcodes imply data, not instructions\n"
           " --syntax=[option][,option]  Set various syntax options:\n"
-          "     bracket     Use brackets for label math: [LABEL+1]\n"
-          "     noa         Leave off the 'A' on ASL, ROR, and the like\n"
-          "     org         Use '.org =' instead of '*=' to set PC\n"
-          "     colon       Put a colon after labels\n"
-          "     noundoc     Use comments for undocumented opcodes\n"
-          "     mads        Defaults for MADS assembler: noa,org,colon\n"
-          "     ca65        Defaults for ca65 assembler: noa,org,colon\n"
-          "     cc65        Alias for ca65\n"
-          "     xa          Defaults for xa assembler: noundoc \n"
-          "     asmedit     Defaults for Atari Assembler/Editor cartridge: noundoc \n"
+          "     bracket      Use brackets for label math: [LABEL+1]\n"
+          "     noa          Leave off the 'A' on ASL, ROR, and the like\n"
+          "     org          Use '.org =' instead of '*=' to set PC\n"
+          "     colon        Put a colon after labels\n"
+          "     noundoc      Use comments for undocumented opcodes\n"
+          "     mads         Defaults for MADS assembler: noa,org,colon\n"
+          "     ca65         Defaults for ca65 assembler: noa,org,colon\n"
+          "     cc65         Alias for ca65\n"
+          "     xa           Defaults for xa assembler: noundoc \n"
+          "     asmedit      Defaults for Atari Assembler/Editor cartridge: noundoc \n"
+          "     noscreencode Do not add comments about screen code characters\n"
           "\n"
           "If no options are specified, the file is auto-parsed for type\n"
           "Supported types:\n"
@@ -2343,6 +2345,13 @@ int main(int argc,char *argv[])
             {
                syntax.noundoc = 1;
                opt+=sizeof("noundoc")-1;
+               continue;
+            }
+            if ( strncmp(opt,"noscreencode",sizeof("noscreencode")-1)==0 )
+            {
+               syntax.noscreencode = 1;
+               opt+=sizeof("noscreencode")-1;
+               if ( *opt == 's' ) ++opt; // Allow plural
                continue;
             }
 
