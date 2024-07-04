@@ -38,6 +38,7 @@
 // Assembler-specific text
 #define BYTE_PSEUDO_OP ".byte"
 #define WORD_PSEUDO_OP ".word"
+#define POST_OPCODE "\t" // should be a syntax option
 #define COMMENT ";"
 #define STRING_MAX 40 // maximum number of bytes for string: .byte "Long string"
 
@@ -2233,10 +2234,15 @@ void output_disasm(void)
             int ztarget = mem[addr+1];
             int btarget = addr+2+(signed char)(mem[addr+1]);
             int write = (strncmp(opcode[mem[addr]].mnemonic,"ST",2)==0);
+            if ( opcode[mem[addr]].mode != E_IMPLIED && opcode[mem[addr]].mode != E_ACCUMULATOR ) printf (POST_OPCODE); // tab or space after opcode
             switch(opcode[mem[addr]].mode)
             {
+               case E_IMPLIED: break;
                case E_ACCUMULATOR:
-                  if ( !syntax.noa ) printf(" A");
+                  if ( !syntax.noa )
+                  {
+                     printf(POST_OPCODE"A");
+                  }
                   break;
                case E_IMMEDIATE:
                   printf(" #$%02X",mem[addr+1]);
