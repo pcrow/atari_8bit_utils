@@ -2049,7 +2049,7 @@ void output_disasm(void)
                // if label found, use that
                if ( val_label )
                {
-                  printf(""WORD_PSEUDO_OP" %s",val_label->name);
+                  printf(""WORD_PSEUDO_OP""POST_OPCODE"%s",val_label->name);
                }
                else // else display data
                {
@@ -2058,21 +2058,21 @@ void output_disasm(void)
                   switch(base)
                   {
                      case 2:
-                        printf(""WORD_PSEUDO_OP" %%");
+                        printf(""WORD_PSEUDO_OP""POST_OPCODE"%%");
                         for ( int i=0x8000; i; i=i>>1 )
                         {
                            printf("%d",(val&i)>0);
                         }
                         break;
                      case 8:
-                        printf(""WORD_PSEUDO_OP" &%o",val);
+                        printf(""WORD_PSEUDO_OP""POST_OPCODE"&%o",val);
                         break;
                      case 10:
-                        printf(""WORD_PSEUDO_OP" %u",val);
+                        printf(""WORD_PSEUDO_OP""POST_OPCODE"%u",val);
                         break;
                      case 16:
                      default: // for words, strings make no sense
-                        printf(""WORD_PSEUDO_OP" $%04X",val);
+                        printf(""WORD_PSEUDO_OP""POST_OPCODE"$%04X",val);
                         break;
                   }
                }
@@ -2091,17 +2091,17 @@ void output_disasm(void)
                switch(base)
                {
                   case 2:
-                     printf(""BYTE_PSEUDO_OP" %%");
+                     printf(""BYTE_PSEUDO_OP""POST_OPCODE"%%");
                      for ( int i=0x80; i; i=i>>1 )
                      {
                         printf("%d",(val&i)>0);
                      }
                      break;
                   case 8:
-                     printf(""BYTE_PSEUDO_OP" &%o",val);
+                     printf(""BYTE_PSEUDO_OP""POST_OPCODE"&%o",val);
                      break;
                   case 10:
-                     printf(""BYTE_PSEUDO_OP" %u",val);
+                     printf(""BYTE_PSEUDO_OP""POST_OPCODE"%u",val);
                      break;
                   case E_SCREEN_STRING:
                      if ( syntax.screenquote )
@@ -2109,7 +2109,7 @@ void output_disasm(void)
                         if ( count > STRING_MAX ) count = STRING_MAX;
                         if ( IS_SCREEN_QUOTABLE(val) )
                         {
-                           printf(""BYTE_PSEUDO_OP" %c",syntax.screenquote);
+                           printf(""BYTE_PSEUDO_OP""POST_OPCODE"%c",syntax.screenquote);
                            for ( int i=0; i<count; ++i )
                            {
                               if ( IS_SCREEN_QUOTABLE(mem[addr]) )
@@ -2122,11 +2122,11 @@ void output_disasm(void)
                            --addr;
                            printf("%c",syntax.screenquote);
                         }
-                        else printf(""BYTE_PSEUDO_OP" $%02X "COMMENT" Screen code for '%c'",val,SCREEN_TO_ATASCII(val));
+                        else printf(""BYTE_PSEUDO_OP""POST_OPCODE"$%02X "COMMENT" Screen code for '%c'",val,SCREEN_TO_ATASCII(val));
                      }
                      else
                      {
-                        printf(""BYTE_PSEUDO_OP" $%02X",val);
+                        printf(""BYTE_PSEUDO_OP""POST_OPCODE"$%02X",val);
                         if ( !syntax.noscreencode && IS_SCREEN_QUOTABLE(val) )
                            printf(" "COMMENT" Screen code for '%c'",SCREEN_TO_ATASCII(val));
                      }
@@ -2136,7 +2136,7 @@ void output_disasm(void)
                      if ( count > STRING_MAX ) count = STRING_MAX;
                      if ( IS_QUOTABLE(val) )
                      {
-                        printf(""BYTE_PSEUDO_OP" %c",syntax.stringquote);
+                        printf(""BYTE_PSEUDO_OP""POST_OPCODE"%c",syntax.stringquote);
                         for ( int i=0; i<count; ++i )
                         {
                            if ( IS_QUOTABLE(mem[addr]) )
@@ -2173,7 +2173,7 @@ void output_disasm(void)
                            break;
                         }
                      }
-                     printf(""BYTE_PSEUDO_OP" $%02X",val);
+                     printf(""BYTE_PSEUDO_OP""POST_OPCODE"$%02X",val);
                      if ( IS_ASCII(val^0x80) )
                         printf(" "COMMENT" Inverse character '%c'",val^0x80);
                      break;
@@ -2198,13 +2198,13 @@ void output_disasm(void)
                            break;
                         }
                      }
-                     printf(""BYTE_PSEUDO_OP" $%02X",val);
+                     printf(""BYTE_PSEUDO_OP""POST_OPCODE"$%02X",val);
                      if ( !syntax.noscreencode && IS_SCREEN_QUOTABLE(val^0x80) )
                         printf(" "COMMENT" Screen code for inverse '%c'",SCREEN_TO_ATASCII(val^0x80));
                      break;
                   default:
                   case 16:
-                     printf(""BYTE_PSEUDO_OP" $%02X",val);
+                     printf(""BYTE_PSEUDO_OP""POST_OPCODE"$%02X",val);
                      if ( IS_ASCII(val) )
                         printf(" "COMMENT" '%c'",val);
                      if ( !syntax.noscreencode && IS_SCREEN_QUOTABLE(val) && val != SCREEN_TO_ATASCII(val) )
@@ -2221,7 +2221,7 @@ void output_disasm(void)
                  ( syntax.noundoc || strcmp("NOP",opcode[mem[addr]].mnemonic) == 0 ) )
             {
                int bytes = instruction_bytes[opcode[mem[addr]].mode];
-               printf(""BYTE_PSEUDO_OP" ");
+               printf(""BYTE_PSEUDO_OP""POST_OPCODE"");
                for (int i=0;i<bytes;++i)
                {
                   printf("%s$%02X",i?",":"",mem[addr+i]);
@@ -2245,60 +2245,52 @@ void output_disasm(void)
                   }
                   break;
                case E_IMMEDIATE:
-                  printf(" #$%02X",mem[addr+1]);
+                  printf("#$%02X",mem[addr+1]);
                   break;
                case E_ABSOLUTE:
-                  printf(" ");
                   print_label_or_addr(target,write);
                   break;
                case E_ABSOLUTE_X:
-                  printf(" ");
                   print_label_or_addr(target,write);
                   printf(",X");
                   break;
                case E_ABSOLUTE_Y:
-                  printf(" ");
                   print_label_or_addr(target,write);
                   printf(",Y");
                   break;
                case E_INDIRECT:
-                  printf(" (");
                   print_label_or_addr(target,0);
                   printf(")");
                   break;
                case E_ZEROPAGE:
-                  printf(" ");
                   print_label_or_addr(ztarget,write);
                   break;
                case E_ZEROPAGE_X:
-                  printf(" ");
                   print_label_or_addr(ztarget,write);
                   printf(",X");
                   break;
                case E_ZEROPAGE_Y:
-                  printf(" ");
                   print_label_or_addr(ztarget,write);
                   printf(",Y");
                   break;
                case E_ZEROPAGE_IND_X:
-                  printf(" (");
+                  printf("(");
                   print_label_or_addr(ztarget,write);
                   printf(",X)");
                   break;
                case E_ZEROPAGE_IND_Y:
-                  printf(" (");
+                  printf("(");
                   print_label_or_addr(ztarget,write);
                   printf("),Y");
                   break;
                case E_RELATIVE:
-                  printf(" ");
                   print_label_or_addr(btarget,0);
                   break;
                default: break; // Not reached
             }
             if ( opcode[mem[addr]].unofficial && !didbytes )
             {
-               printf(" "COMMENT" (undocumented opcode)");
+               printf(POST_OPCODE""COMMENT" (undocumented opcode)");
             }
             printf("\n");
             addr += instruction_bytes[opcode[mem[addr]].mode];
