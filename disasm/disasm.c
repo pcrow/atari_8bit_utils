@@ -2259,6 +2259,7 @@ void output_disasm(void)
                   printf(",Y");
                   break;
                case E_INDIRECT:
+                  printf("(");
                   print_label_or_addr(target,0);
                   printf(")");
                   break;
