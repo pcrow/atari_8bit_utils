@@ -1841,7 +1841,7 @@ void fix_up_labels(void)
       if ( !mem_loaded[labels[lab].addr] ) continue;
       if ( instruction[labels[lab].addr] ) continue;
       if ( instruction[labels[lab].addr-1] && instruction_bytes[opcode[mem[labels[lab].addr-1]].mode] >= 2 ) addr = labels[lab].addr - 1;
-      if ( instruction[labels[lab].addr-2] && instruction_bytes[opcode[mem[labels[lab].addr-2]].mode] >= 2 ) addr = labels[lab].addr - 2;
+      if ( instruction[labels[lab].addr-2] && instruction_bytes[opcode[mem[labels[lab].addr-2]].mode] >= 3 ) addr = labels[lab].addr - 2;
       if ( addr < 0 ) continue;
       name = add_label(NULL,addr,0,NULL);
       sprintf(labels[lab].name,"%s+%d",name,labels[lab].addr-addr);
