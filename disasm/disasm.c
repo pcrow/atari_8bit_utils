@@ -2314,7 +2314,7 @@ void usage(const char *progname)
           "Options:\n"
           " --addr=[xxxx]   Load the file at the specified (hex) address\n"
           " --start=[xxxx]  Specify a starting address for code execution\n"
-          " --start=[xxxx]  Specify another starting address (repeat as needed\n"
+          " --start=[xxxx]  Specify another starting address (repeat as needed)\n"
           " --labels=atari,cio,float,basic Specify wanted labels (basic off by default)\n"
           " --ltable=[filename] Load label table from a file (may be repeated)\n"
           " --lfile=[filename]  Load active labels from a file (may be repeated)\n"
