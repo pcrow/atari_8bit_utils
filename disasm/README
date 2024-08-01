@@ -52,6 +52,7 @@ with various extra options.  The ADDR can be in hex ($ or 0x prefix), decimal, o
 
 The options are:
   +[#]     for multi-byte data (# is length in decimal, $hex, 0xHEX, or 0octal)
+  -[#]     for labels referenced with negative offsets
   -r or -w for read or write only hardware register
   word     for 16-bit word values (often pointers) instead of defaulting to bytes
   base#    specify base 2,8,10,16 for data display or 256 for string
