@@ -55,6 +55,7 @@ The options are:
   -[#]     for labels referenced with negative offsets
   -r or -w for read or write only hardware register
   word     for 16-bit word values (often pointers) instead of defaulting to bytes
+  dbyte    for 16-bit word values in big-endian order
   base#    specify base 2,8,10,16 for data display or 256 for string
   string   same as saying base256
   screen   screen-code string (also base255)

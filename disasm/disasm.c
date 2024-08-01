@@ -38,6 +38,7 @@
 // Assembler-specific text
 #define BYTE_PSEUDO_OP ".byte"
 #define WORD_PSEUDO_OP ".word"
+#define DBYTE_PSEUDO_OP ".dbyte" // like word, but reverse endian
 #define POST_OPCODE "\t" // should be a syntax option
 #define COMMENT ";"
 #define STRING_MAX 40 // maximum number of bytes for string: .byte "Long string"
@@ -1276,6 +1277,14 @@ int add_label_file(const char *filename)
          for (int i=0;i<4;++i) *c++=' ';
       }
 
+      // word to specify .word instead of .byte for data
+      c=strstr(equal,"dbyte");
+      if ( c )
+      {
+         display = 3;
+         for (int i=0;i<5;++i) *c++=' ';
+      }
+
       // Check for garbage
       c=equal+1;
       while ( isspace(*c) ) ++c;
@@ -2197,15 +2206,26 @@ void output_disasm(void)
          if ( !instruction[addr] )
          {
             // check for word labels, but not at odd offsets
-            if ( lab >= 0 && labels[lab].btype == 2 && labels[lab].bytes >= 2 && (labels[lab].bytes&0x01)==0 )
+            if ( lab >= 0 && (labels[lab].btype == 2 || labels[lab].btype == 3) && labels[lab].bytes >= 2 && (labels[lab].bytes&0x01)==0 )
             {
-               unsigned int val = le16toh(*(uint16_t *)&mem[addr]);
+               unsigned int val;
+               const char *op;
+               if ( labels[lab].btype == 2 )
+               {
+                  val = le16toh(*(uint16_t *)&mem[addr]);
+                  op = WORD_PSEUDO_OP;
+               }
+               else
+               {
+                  val = be16toh(*(uint16_t *)&mem[addr]);
+                  op = DBYTE_PSEUDO_OP;
+               }
                // look up label for val
                struct label *val_label = find_label(val);
                // if label found, use that
                if ( val_label )
                {
-                  printf(""WORD_PSEUDO_OP""POST_OPCODE"%s",val_label->name);
+                  printf("%s"POST_OPCODE"%s",op,val_label->name);
                }
                else // else display data
                {
@@ -2214,21 +2234,21 @@ void output_disasm(void)
                   switch(base)
                   {
                      case 2:
-                        printf(""WORD_PSEUDO_OP""POST_OPCODE"%%");
+                        printf("%s"POST_OPCODE"%%",op);
                         for ( int i=0x8000; i; i=i>>1 )
                         {
                            printf("%d",(val&i)>0);
                         }
                         break;
                      case 8:
-                        printf(""WORD_PSEUDO_OP""POST_OPCODE"&%o",val);
+                        printf("%s"POST_OPCODE"&%o",op,val);
                         break;
                      case 10:
-                        printf(""WORD_PSEUDO_OP""POST_OPCODE"%u",val);
+                        printf("%s"POST_OPCODE"%u",op,val);
                         break;
                      case 16:
                      default: // for words, strings make no sense
-                        printf(""WORD_PSEUDO_OP""POST_OPCODE"$%04X",val);
+                        printf("%s"POST_OPCODE"$%04X",op,val);
                         break;
                   }
                }
