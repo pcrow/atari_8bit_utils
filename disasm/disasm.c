@@ -951,6 +951,8 @@ unsigned char mem[64*1024];
 // Flags per-byte
 uint16_t mem_loaded[64*1024];
 char instruction[64*1024]; // first byte of an instruction?
+char operand[64*1024]; // second or third byte of an instruction?
+char evaluated[64*1024]; // Used in testing for possible instruction sequences
 char branch_target[64*1024];
 char data_target[64*1024];
 
@@ -1629,8 +1631,129 @@ void trace_at_addr(int addr)
       }
 
       // Next instruction
+      for (int i=1;i<=instruction_bytes[opcode[mem[addr]].mode];++i)
+      {
+         operand[addr+i] = 1;
+      }
       addr += instruction_bytes[opcode[mem[addr]].mode];
       addr += extra_bytes;
+   }
+}
+
+/*
+ * test_instructions_at_addr()
+ *
+ * Given an address, see how many valid instructions are found starting at that address.
+ * If it ends with a JMP or RTS, return the count.
+ * If it encounters a BRK, JAM, or invalid opcode, return 0.
+ *
+ * Also evaluate branch targets.  If they're already flaged as instructions, good.
+ * If not, then use then recurse and see if they hit an invalid instructions.
+ *
+ * Count may be inflated by one for each time it hits an existing
+ * instruction (possibly on each branch).
+ */
+int test_instructions_at_addr(int addr,int recurse)
+{
+   int count = 0;
+   if ( !recurse ) memset(evaluated,0,sizeof(evaluated));
+   //int start_addr = addr;
+
+   while ( 1 )
+   {
+      ++count;
+      if ( instruction[addr] ) return count;
+      if ( evaluated[addr] ) return count;
+      if ( !mem_loaded[addr] )
+      {
+         //if ( !recurse ) printf("; not block at %04X due to mem not loaded after %d\n",start_addr,count);
+         return 0; // Invalid if not loaded
+      }
+      if ( data_target[addr] )
+      {
+         //if ( !recurse ) printf("; not block at %04X due to data target after %d\n",start_addr,count);
+         return 0; // Encountered a data target; highly unlikely to be valid
+      }
+      if ( mem[addr] == 0 || /* BRK */
+           strcmp("JAM",opcode[mem[addr]].mnemonic) == 0 ||
+           ( noundoc && opcode[mem[addr]].unofficial ) )
+      {
+         //if ( !recurse ) printf("; not block at %04X due to bad opcode after %d\n",start_addr,count);
+         return 0;
+      }
+      if ( strcmp("JMP",opcode[mem[addr]].mnemonic) == 0 ||
+           strcmp("RTS",opcode[mem[addr]].mnemonic) == 0 ||
+           strcmp("RTI",opcode[mem[addr]].mnemonic) == 0
+         )
+      {
+         //if ( !recurse ) printf("; block at %04X after %d: %s\n",start_addr,count,opcode[mem[addr]].mnemonic);
+         return count;
+      }
+   
+      evaluated[addr] = 1;
+      // Check branches
+      if ( mem[addr] == 0x4C /* JMP absolute */ || mem[addr] == 0x20 /* JSR absolute */ )
+      {
+         int target = le16toh(*(uint16_t *)&mem[addr+1]);
+         if ( mem_loaded[target] )
+         {
+            int more = test_instructions_at_addr(target,1);
+            if ( !more )
+            {
+               //if ( !recurse ) printf("; not block at %04X after %d, bad target: %s\n",start_addr,count,opcode[mem[addr]].mnemonic);
+               return 0;
+            }
+            count += more;
+         }
+      }
+      if ( opcode[mem[addr]].mode == E_RELATIVE ) // Branch
+      {
+         int target = addr+2+(signed char)(mem[addr+1]);;
+         int more = test_instructions_at_addr(target,1);
+            if ( !more )
+            {
+               //if ( !recurse ) printf("; not block at %04X after %d, bad branch: %s\n",start_addr,count,opcode[mem[addr]].mnemonic);
+               return 0;
+            }
+         count += more;
+      }
+
+      addr += instruction_bytes[opcode[mem[addr]].mode];
+   }
+}
+
+/*
+ * find_blocks()
+ *
+ * Scan for blocks of instructions following existing instructions
+ */
+void find_blocks(void)
+{
+   int found = 1;
+   while ( found )
+   {
+      found = 0;
+      for (int addr=1;addr<64*1024;++addr)
+      {
+         int threshold = 2; // Not sure what a good threshold is
+         // Already know what this byte is for?
+         if ( !mem_loaded[addr] || instruction[addr] || operand[addr] || data_target[addr] ) continue;
+
+         // Previous byte was an unprocessed RTS; check with a higher threshold
+         if ( mem_loaded[addr-1] && mem[addr-1] == 0x60 && !instruction[addr-1] && !operand[addr-1] && !data_target[addr-1] )
+         {
+            threshold=5; // arbitrary
+         }
+         else if ( !instruction[addr-1] && !operand[addr-1] ) continue;
+      
+         if ( test_instructions_at_addr(addr,0) > threshold )
+         {
+            branch_target[addr] = 2; // Fake branch target
+            add_label(NULL,addr,0,NULL);
+            trace_code(); // Add new block found including branch targets
+            ++found;
+         }
+      }
    }
 }
 
@@ -2644,6 +2767,7 @@ int main(int argc,char *argv[])
       return 1;
    }
    trace_code();
+   find_blocks();
    fix_up_labels();
    sort_labels();
    output_disasm();

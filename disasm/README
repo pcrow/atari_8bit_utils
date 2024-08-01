@@ -40,6 +40,8 @@ Supported types:
 
 This works by loading the target file into a 64K memory array.  It flags the start and init addresses as branch targets.  Then it goes through starting at each branch target and traces through the code flow, marking each instruction start byte and each new branch target, stopping when it hits an RTS, RTI, or JMP.  This should find all the executable code, but sometimes it does things like save an address in a table and then jump through the table.  In those cases, you'll need to set a --start=xxxx to point to the address.  Likewise if the file doesn't have any start or init address set.
 
+It will also try to infer blocks of code if a valid set of instructions follows a JMP or RTS.  This can save the day if the code uses jump tables.  If an inferred code path hits a BRK or invalid instruction, it assumes it's data.
+
 It had built-in label tables for standard Atari OS addresses.  By default, BASIC addresses are turned off, but the others are on.  You can override this with the --labels= option.  (Leave it with nothing after the '=' to turn off all included tables.)
 
 You can add new tables with the --ltable and --lfile options.  If you use --ltable, it will only use the labels that match something it tries to add.  If you use --lfile, it will use all the labels in the file, so they'll all appear in your disassembly.
