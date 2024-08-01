@@ -1359,24 +1359,17 @@ const char *add_label(const char *name,int addr,int write,const struct label *or
          {
             if ( write && label_tables[table].table[i].rw == 'r' ) continue;
             if ( !write && label_tables[table].table[i].rw == 'w' ) continue;
-            if ( label_tables[table].table[i].addr == addr ) return add_label(label_tables[table].table[i].name,addr,write,&label_tables[table].table[i]);
-            if ( label_tables[table].table[i].addr < addr && label_tables[table].table[i].addr+label_tables[table].table[i].bytes > addr )
+            if ( label_tables[table].table[i].addr - label_tables[table].table[i].negative <= addr && label_tables[table].table[i].addr + label_tables[table].table[i].bytes > addr )
             {
-               // Need to add the base label if it's not already there
-               add_label(label_tables[table].table[i].name,label_tables[table].table[i].addr,write,&label_tables[table].table[i]);
-               // Add offset label
-               char newname[MAX_LABEL_SIZE+1+3*sizeof(int)+1];
-               sprintf(newname,"%s+%d",label_tables[table].table[i].name,addr-label_tables[table].table[i].addr);
-               return(add_label(newname,addr,write,&label_tables[table].table[i]));
-            }
-            if ( label_tables[table].table[i].addr-label_tables[table].table[i].negative <= addr && label_tables[table].table[i].addr > addr )
-            {
-               // Need to add the base label if it's not already there
-               add_label(label_tables[table].table[i].name,label_tables[table].table[i].addr,write,&label_tables[table].table[i]);
-               // Add offset label
-               char newname[MAX_LABEL_SIZE+1+3*sizeof(int)+1];
-               sprintf(newname,"%s-%d",label_tables[table].table[i].name,label_tables[table].table[i].addr-addr);
-               return(add_label(newname,addr,write,&label_tables[table].table[i]));
+               // Add this label, but include all offsets as well
+               for ( int off=-label_tables[table].table[i].negative; off<label_tables[table].table[i].bytes; ++off )
+               {
+                  if ( !off ) continue;
+                  char newname[MAX_LABEL_SIZE+1+3*sizeof(int)+1];
+                  sprintf(newname,"%s%s%d",label_tables[table].table[i].name,off>0?"+":"",off);
+                  add_label(newname,addr+off,write,&label_tables[table].table[i]);
+               }
+               return add_label(label_tables[table].table[i].name,label_tables[table].table[i].addr,write,&label_tables[table].table[i]);
             }
          }
       }
@@ -1999,7 +1992,8 @@ void fix_up_labels(void)
    {
       int addr = -1;
       const char *name;
-      
+
+      if ( strchr(labels[lab].name,'-') ) continue; // Manual offset labels are assumed to be valid
       if ( !mem_loaded[labels[lab].addr] ) continue;
       if ( instruction[labels[lab].addr] ) continue;
       if ( instruction[labels[lab].addr-1] && instruction_bytes[opcode[mem[labels[lab].addr-1]].mode] >= 2 ) addr = labels[lab].addr - 1;
@@ -2722,7 +2716,7 @@ int main(int argc,char *argv[])
          int entries = label_tables[num_tables-1].entries;
          for (int i=0;i<entries;++i)
          {
-            add_label(t[i].name,t[i].addr,0,&t[i]);
+            add_label(NULL,t[i].addr,0,NULL); // Will get offsets added automatically
          }
          ++argv;
          --argc;
