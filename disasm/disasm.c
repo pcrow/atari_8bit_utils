@@ -1349,6 +1349,7 @@ int add_label_file(const char *filename)
  */
 const char *add_label(const char *name,int addr,int write,const struct label *orig)
 {
+   if ( addr == 0x8d ) { fprintf(stderr,"Bad addr: %04X\n",addr); ++*(int *)NULL; }
    // Check if label already exists
    for (int i=0;i<num_labels;++i)
    {
@@ -1679,6 +1680,12 @@ void trace_at_addr(int addr)
          }
       }
 
+      // Flag operand bytes to avoid testing them for new instruction blocks
+      for (int i=1;i<=instruction_bytes[opcode[mem[addr]].mode];++i)
+      {
+         operand[addr+i] = 1;
+      }
+
       // Check if done
       if ( strcmp("JMP",opcode[mem[addr]].mnemonic) == 0 ||
            strcmp("RTS",opcode[mem[addr]].mnemonic) == 0 ||
@@ -1689,10 +1696,6 @@ void trace_at_addr(int addr)
       }
 
       // Next instruction
-      for (int i=1;i<=instruction_bytes[opcode[mem[addr]].mode];++i)
-      {
-         operand[addr+i] = 1;
-      }
       addr += instruction_bytes[opcode[mem[addr]].mode];
       addr += extra_bytes;
    }
