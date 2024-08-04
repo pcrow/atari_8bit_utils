@@ -482,7 +482,7 @@ const struct label label_table_atari[] = {
    { .addr=0x0040, .name="FREQ", .bytes=1, .rw='a', .btype=1, .base=16},
    { .addr=0x0041, .name="SOUNDR", .bytes=1, .rw='a', .btype=1, .base=16},
    { .addr=0x0042, .name="CRITIC", .bytes=1, .rw='a', .btype=1, .base=16},
-   //{ .addr=0x0043-0x0049, .name="FMSZPG", .bytes=1, .rw='a', .btype=1, .base=16},
+   //{ .addr=0x0043, .name="FMSZPG", .bytes=7, .rw='a', .btype=1, .base=16},
    { .addr=0x0043, .name="ZBUFP", .bytes=2, .rw='a', .btype=2, .base=16},
    { .addr=0x0045, .name="ZDRVA", .bytes=2, .rw='a', .btype=2, .base=16},
    { .addr=0x0047, .name="ZSBA", .bytes=2, .rw='a', .btype=2, .base=16},
@@ -579,7 +579,7 @@ const struct label label_table_atari[] = {
    { .addr=0x0244, .name="COLDST", .bytes=1, .rw='a', .btype=1, .base=16},
    { .addr=0x0245, .name="RECLEN", .bytes=1, .rw='a', .btype=1, .base=16},
    { .addr=0x0246, .name="DSKTIM", .bytes=1, .rw='a', .btype=1, .base=16},
-   //{ .addr=0x0247-0x026E, .name="LINBUF", .bytes=1, .rw='a', .btype=1, .base=16}, // 40-character line buffer; not sure about what the other stuff in the same range is
+   //{ .addr=0x0247, .name="LINBUF", .bytes=40, .rw='a', .btype=1, .base=16}, // 40-character line buffer; not sure about what the other stuff in the same range is
    { .addr=0x0247, .name="PDVMSK", .bytes=1, .rw='a', .btype=1, .base=16},
    { .addr=0x0248, .name="SHPDVS", .bytes=1, .rw='a', .btype=1, .base=16},
    { .addr=0x0249, .name="PDIMSK", .bytes=1, .rw='a', .btype=1, .base=16},
@@ -725,7 +725,7 @@ const struct label label_table_atari[] = {
    { .addr=0x03EA, .name="CASSBT", .bytes=1, .rw='a', .btype=1, .base=16},
    { .addr=0x03EB, .name="CARTCK", .bytes=1, .rw='a', .btype=1, .base=16},
    { .addr=0x03EC, .name="DEERF", .bytes=1, .rw='a', .btype=1, .base=16},
-   //{ .addr=0x03ED-0x03F7, .name="ACMVAR", .bytes=1, .rw='a', .btype=1, .base=16},
+   //{ .addr=0x03ED, .name="ACMVAR", .bytes=11, .rw='a', .btype=1, .base=16},
    { .addr=0x03F8, .name="BASICF", .bytes=1, .rw='a', .btype=1, .base=16},
    { .addr=0x03F9, .name="MINTLK", .bytes=1, .rw='a', .btype=1, .base=16},
    { .addr=0x03FA, .name="GINTLK", .bytes=1, .rw='a', .btype=1, .base=16},
@@ -889,8 +889,25 @@ const struct label label_table_atari[] = {
    { .addr=0xFFFA, .name="PVECT", .bytes=2, .rw='a', .btype=2, .base=16},
 };
 const struct label label_table_atari_cio[] = {
-   { .addr=0x031A-0x033F, .name="HATABS", .bytes=27, .rw='a', .btype=1, .base=16}, // Handler address tables, 3 bytes per entry, two zeros at end
-   { .addr=0x0340, .name="IOCB0", .bytes=16, .rw='a', .btype=1, .base=16},
+   { .addr=0x031A, .name="HATABS", .bytes=38, .rw='a', .btype=1, .base=16}, // Handler address tables, 3 bytes per entry, two zeros at end
+   // IOCB fields are usually referenced by name, not IOCB offset
+   { .addr=0x0340, .name="ICHID", .bytes=1, .rw='a', .btype=1, .base=16},
+   { .addr=0x0341, .name="ICDNO", .bytes=1, .rw='a', .btype=1, .base=16},
+   { .addr=0x0342, .name="ICCOM", .bytes=1, .rw='a', .btype=1, .base=16},
+   { .addr=0x0343, .name="ICSTA", .bytes=1, .rw='a', .btype=1, .base=16},
+   { .addr=0x0344, .name="ICBAL", .bytes=1, .rw='a', .btype=1, .base=16},
+   { .addr=0x0345, .name="ICBAH", .bytes=1, .rw='a', .btype=1, .base=16},
+   { .addr=0x0346, .name="ICPTL", .bytes=1, .rw='a', .btype=1, .base=16},
+   { .addr=0x0347, .name="ICPTH", .bytes=1, .rw='a', .btype=1, .base=16},
+   { .addr=0x0348, .name="ICBLL", .bytes=1, .rw='a', .btype=1, .base=16},
+   { .addr=0x0349, .name="ICBLH", .bytes=1, .rw='a', .btype=1, .base=16},
+   { .addr=0x034A, .name="ICAX1", .bytes=1, .rw='a', .btype=1, .base=16},
+   { .addr=0x034B, .name="ICAX2", .bytes=1, .rw='a', .btype=1, .base=16},
+   { .addr=0x034C, .name="ICAX3", .bytes=1, .rw='a', .btype=1, .base=16},
+   { .addr=0x034D, .name="ICAX4", .bytes=1, .rw='a', .btype=1, .base=16},
+   { .addr=0x034E, .name="ICAX5", .bytes=1, .rw='a', .btype=1, .base=16},
+   { .addr=0x034F, .name="ICAX6", .bytes=1, .rw='a', .btype=1, .base=16},
+   //{ .addr=0x0340, .name="IOCB0", .bytes=16, .rw='a', .btype=1, .base=16},
    { .addr=0x0350, .name="IOCB1", .bytes=16, .rw='a', .btype=1, .base=16},
    { .addr=0x0360, .name="IOCB2", .bytes=16, .rw='a', .btype=1, .base=16},
    { .addr=0x0370, .name="IOCB3", .bytes=16, .rw='a', .btype=1, .base=16},
@@ -898,8 +915,8 @@ const struct label label_table_atari_cio[] = {
    { .addr=0x0390, .name="IOCB5", .bytes=16, .rw='a', .btype=1, .base=16},
    { .addr=0x03A0, .name="IOCB6", .bytes=16, .rw='a', .btype=1, .base=16},
    { .addr=0x03B0, .name="IOCB7", .bytes=16, .rw='a', .btype=1, .base=16},
-   { .addr=0x03C0-0x03E7, .name="PRNBUF", .bytes=40, .rw='a', .btype=1, .base=16}, // printer buffer for LPRINT statements; is this BASIC or CIO?
-   //{ .addr=0x03FD-0x047F, .name="CASBUF", .bytes=1, .rw='a', .btype=1, .base=16}, // 3FD-3FF are also used for other stuff
+   { .addr=0x03C0, .name="PRNBUF", .bytes=40, .rw='a', .btype=1, .base=16}, // printer buffer for LPRINT statements; is this BASIC or CIO?
+   //{ .addr=0x03FD, .name="CASBUF", .bytes=0x83, .rw='a', .btype=1, .base=16}, // 3FD-3FF are also used for other stuff
 };
 const struct label label_table_atari_float[] = {
    { .addr=0x00D4, .name="FR0", .bytes=6, .rw='a', .btype=1, .base=16},
@@ -1376,7 +1393,7 @@ const char *add_label(const char *name,int addr,int write,const struct label *or
                   if ( !off ) continue;
                   char newname[MAX_LABEL_SIZE+1+3*sizeof(int)+1];
                   sprintf(newname,"%s%s%d",label_tables[table].table[i].name,off>0?"+":"",off);
-                  add_label(newname,addr+off,write,&label_tables[table].table[i]);
+                  add_label(newname,label_tables[table].table[i].addr+off,write,&label_tables[table].table[i]);
                }
                return add_label(label_tables[table].table[i].name,label_tables[table].table[i].addr,write,&label_tables[table].table[i]);
             }
@@ -2030,6 +2047,18 @@ void sort_labels(void)
    qsort(labels,num_labels,sizeof(labels[0]),cmp_label);
 }
 
+/*
+ * print_all_labels()
+ *
+ * For debugging, display all labels
+ */
+void print_all_labels(void)
+{
+   for (int lab=0;lab<num_labels;++lab)
+   {
+      fprintf(stderr,"%s\t= $%04X\n",labels[lab].name,labels[lab].addr);
+   }
+}
 
 /*
  * print_label_or_addr()
@@ -2823,5 +2852,6 @@ int main(int argc,char *argv[])
    find_blocks();
    fix_up_labels();
    sort_labels();
+   // print_all_labels(); // enable for debugging
    output_disasm();
 }
