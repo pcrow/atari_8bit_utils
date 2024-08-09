@@ -456,12 +456,17 @@ int main (int argc,char *argv[])
    }
    c1=getc(fin);
    c2=getc(fin);
-   if (c1 != c2 || c1 != 0xff) {
+   if (c1==0x84 && c2==0x09) {
+      printf("DOS 1 Binary file:  %s\n",*argv);
+   }
+   else if (c1 != c2 || c1 != 0xff) {
       printf("%s: Not an Atari 8-bit binary load format file\n",*argv);
       fclose(fin);
       exit(1);
    }
-   printf("Binary file:  %s\n",*argv);
+   else {
+      printf("Binary file:  %s\n",*argv);
+   }
 
    fout=NULL;
    if (argc>1) {
