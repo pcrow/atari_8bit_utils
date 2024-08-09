@@ -60,9 +60,18 @@ char *atr_info(const char *path,int filesize)
 
    struct basic_header *basic=(void *)filebuf;
    // Binary load file
-   if ( filesize > 6 && filebuf[0] == 0xff && filebuf[1] == 0xff )
+   if ( filesize > 6 && (
+           ( filebuf[0] == 0xff && filebuf[1] == 0xff ) ||
+           ( filebuf[0] == 0x84 && filebuf[1] == 0x09 ) ))
    {
-      b+=sprintf(b,"Binary load file\n");
+      if ( filebuf[0] == 0xff )
+      {
+         b+=sprintf(b,"Binary load file\n");
+      }
+      else
+      {
+         b+=sprintf(b,"Binary load file (old DOS 1 format)\n");
+      }
       f=filebuf;
       f+=2;
       filesize -= 2;
