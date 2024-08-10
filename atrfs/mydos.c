@@ -1944,6 +1944,7 @@ int mydos_create(struct atrfs *atrfs,const char *path, mode_t mode)
       dirent->flags = FLAGS_MYDOS_REGULAR; // Regular file without file numbers
    char *buf = SECTOR(start);
    memset(buf,0,atrfs->sectorsize);
+   if ( atrfs->fstype == ATR_DOS1 ) buf[atrfs->sectorsize-1] = 0x80; // Flag EOF and zero bytes used
    if ( start < 720 || atrfs->fstype == ATR_DOS25 )
    {
       buf[atrfs->sectorsize-3] = entry << 2;
