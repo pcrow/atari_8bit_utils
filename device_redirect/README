@@ -1,0 +1,17 @@
+Device Redirection
+
+Atari DOS 1 had an interesting feature in it's menu:  DEFINE DEVICE
+This let you define a device handler that would send all I/O to a given file.  While you could have X: direct to D:XDEV, the more obvious use case would be to redefine P: as a file, allowing you to print to a file.
+
+This feature was not widely understood or used, and was dropped from DOS 2.0, so most users never knew about it.  Anyone trying to play with it now would likely find that it was broken, as it used internal OS calls and was incompatible with XL systems.
+
+The idea, though, was pretty simple: Create a device handler that takes any OPEN request, and substitutes an OPEN for a given file name.  I extracted the code from DOS 1, simplified it, fixed the XL incompatibility, and created this project.
+
+The result is a BASIC program that creates a binary load file to define or redefine a device to point to a file.  Note that the file does not have to be on D:, it can be on any device that takes a path name, such as H: or N:.  You can prepend this binary load file to any other binary load file, such as an AUTORUN.SYS file or other program that you want to adjust the behavior of.
+
+One quick test is redirecting C: to a file, and then using CSAVE and CLOAD in BASIC.  It works great.
+
+The biggest limitation is that the Atari OS will reset the handler address table if you press System Reset, and the code here does not intercept things to re-install itself.
+
+If you just want to play with it, there's an ATR image that will boot directly to the program to generate a redirection binary.  Note that I've used my AUTORUN.SYS that will enable BASIC on XL systems automatically, so you don't have to worry about it.
+

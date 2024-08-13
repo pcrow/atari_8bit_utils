@@ -13,6 +13,10 @@ BASIC Autorun
 
 There are lots of AUTORUN.SYS files for running BASIC programs, but what if BASIC isn't available?  Well, this one will enable BASIC first if it's disabled on an XL/XE system.  If it's a 400/800/1200XL, it will display "BASIC REQUIRED" and hang.  Also, the command text is stored in ATASCII, so it's easy to edit the binary.
 
+DEVICE REDIRECT
+
+I took the DOS 1 "define device" feature, fixed it, and made it available as a stand-alone tool that doesn't care what DOS you're using.  You can use this to redirect all I/O for a given device (e.g., C:) to a file (e.g., H:CDEV).
+
 SIO2Linux
 
 Pavel Machek made an initial attempt at communicating with the Atari through an SIO2PC cable using Linux's serial port drivers. He came up with a simple floppy emulator he called "femul.c"
