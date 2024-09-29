@@ -7,7 +7,7 @@
  *
  *
  * Compilation:
- *	gcc -W -Wall -o sio2linux sio2linux-3.1.0.c
+ *	gcc -W -Wall -o sio2linux sio2linux.c
  *
  * Currently, this does not support the 'format' or 'verify' SIO
  * commands.
@@ -22,6 +22,9 @@
  *	  This might not be possible.  It seems that the read responses from
  *	  my 1050 aren't visible on the Linux serial port.  This may be
  *	  a limitation in my sio2pc cable.
+ *        Would it be possible to send SIO commands to other devices, ignoring
+ *        the Atari, potentially using the sio2pc device to access a disk or other
+ *        device directly, not using an Atari computer at all?
  *
  *	* Add a keyboard user interface to add/remove/swap disks during
  *	  run time.
@@ -41,6 +44,7 @@
  *	  case, emulating the raw 600 baud signal would require a significant
  *	  programming effort, which is not something I'm likely to do anytime
  *	  soon.
+ *        I'm not sure this is possible with my original sio2pc cable.
  *
  *	* Add support for printers
  *
@@ -295,6 +299,7 @@ int snoop; /* If true, display detailed data on unmapped drives */
 int quiet; /* If true, don't display per-I/O data */
 int noring; /* If true, the serial port ring detect doesn't work */
 char *serial;
+char sbuf[64];
 int uspr=208333; /* microseconds per revolution, default for 288 RPM */
 int speed=19200; /* Baud rate */
 
@@ -340,7 +345,19 @@ int main(int argc,char *argv[])
 	for(i=0;i<MAXDISKS;++i) {
 		disks[i].diskfd= -1;
 	}
-	serial="/dev/ttyS0";
+
+        // Set default for serial port device
+        {
+                struct stat stat_mouse,stat_tty;
+                serial="/dev/ttyS0";
+                if (stat("/dev/mouse",&stat_mouse)==0) {
+                        stat(serial,&stat_tty);
+                        if (stat_mouse.st_rdev==stat_tty.st_rdev) {
+                                printf("%s is the mouse, using ttyS1 as default serial device\n",serial);
+                                serial="/dev/ttyS1";
+                        }
+                }
+	}
 	for(i=1;i<argc;i++) {
 		if (*(argv[i]) == '-') {
 			switch( (argv[i])[1] ) {
@@ -385,7 +402,16 @@ int main(int argc,char *argv[])
 					fprintf(stderr, "Must have a parameter for '-s'\n" );
 					exit(1);
 				}
-				serial=argv[i];
+                                if ( argv[i][0] == '/' )
+                                        serial=argv[i];
+                                else if ( isdigit(argv[i][0]) ) {
+                                        serial=sbuf;
+                                        sprintf(serial,"/dev/ttyS%s",argv[i]);
+                                }
+                                else {
+                                        serial=sbuf;
+                                        sprintf(serial,"/dev/%s",argv[i]);
+                                }
 				break;
 			    default:
 				err( "Bad command line argument." );
@@ -776,21 +802,10 @@ void write_atr_head(int disk)
  * get_atari()
  *
  * Open the serial device and return the file descriptor.
- * It assumes that it is /dev/ttyS0 unless there's a symlink
- * from /dev/mouse to that, in which case /dev/ttyS1 is used.
  */
 static int get_atari(void)
 {
 	int fd;
-	struct stat stat_mouse,stat_tty;
-
-	if (stat("/dev/mouse",&stat_mouse)==0) {
-		stat(serial,&stat_tty);
-		if (stat_mouse.st_rdev==stat_tty.st_rdev) {
-			printf("/dev/ttyS0 is the mouse, using ttyS1\n");
-			serial="/dev/ttyS1";
-		}
-	}
 
 	fd = open(serial,O_RDWR);
 	if (fd<0) {
@@ -1124,6 +1139,7 @@ static void decode(unsigned char *buf)
 			disks[disk].track[TRACK18(sec)].bad[OFF18(sec)]=1;
 			if ( !quiet ) printf("announce bad sector %d: ",sec);
 		}
+                // fall through
 	    case 'R':
 		if ( !quiet) printf("read sector %d: ",sec);
 		if ( !disks[disk].active ) {
@@ -1307,12 +1323,15 @@ static void decode(unsigned char *buf)
  * wait_for_cmd()
  *
  * Wait for the ring indicator to specify that a command block is being sent
+ *
+ * This is no longer used, as the ring indicator doesn't always work as desired
  */
 void wait_for_cmd(int fd)
 {
   int r;
 
   r=ioctl(fd,TIOCMIWAIT,TIOCM_RNG);
+  (void) r; // not used
 }
 
 /************************************************************************/
