@@ -489,7 +489,22 @@ static void ack(unsigned char c)
  * the start of the file, and the 5th sector links to the 2nd sector, with the
  * actual file offset being determined based on the assumption of a sequential
  * read.
+ * In theory, this should work with only two sectors per file.  You always need
+ * unique first sector for opening the file, but then the second sector could link
+ * back to itself as files must be read sequentially.  If the sectors per file is
+ * more than 5, then the calculations need to take into account skipping sectors 360-368.
+ *
+ * We need any subdirectories to have 8 sectors since they don't follow the sector
+ * chaining system.
+ *
+ * Future: Consider a sort option
  */
+#define SECSPERFILE 8
+#define ROOTSKIP 2
+#define RAW_FILENUM(_dirnum,_filenum) ((_dirnum)*64+(_filenum))
+#define RAW_START_SEC(_dirnum,_filenum) (4 + RAW_FILENUM(_dirnum,_filenum)*SECSPERFILE)
+#define START_SEC(_dirnum,_filenum) (RAW_START_SEC(_dirnum,_filenum+1) < 360 ? RAW_START_SEC(_dirnum,_filenum) | RAW_START_SEC(_dirnum,(_filenum)+ROOTSKIP))
+#define SEC_TO_FILENUM(_sec) ((_sec) < 360?((_sec)-3)/SECSPERFILE:((_sec)-3)/SECSPERFILE-ROOTSKIP)
 void senddirdata(int disk,int sec)
 {
 	int size;
@@ -513,7 +528,7 @@ void senddirdata(int disk,int sec)
 	if ( sec==360 ) { /* Create sector map */
 		buf[2]=total/256;
 		buf[1]=total%256;
-		free = total - 5*64;
+		free = total - SECSPERFILE*64;
 		buf[4]=free/256;
 		buf[3]=free%256;
 		buf[0]=2; /* ??? */
@@ -522,7 +537,7 @@ void senddirdata(int disk,int sec)
 			bit=i%8;
 			bit=7-bit;
 			bit=1<<bit;
-			if(i>=4+64*5 && i!=720 && (i<360 || i>368)) {
+			if(i>=4+64*SECSPERFILE && i!=720 && (i<360 || i>368)) {
 				buf[byte]|=bit;
 			}
 		}
@@ -551,7 +566,7 @@ void senddirdata(int disk,int sec)
 
 			de=readdir(disks[disk].dir);
 			fn=(sec-361)*8+i;
-			start=4+fn*5;
+			start=4+fn*SECSPERFILE;
 			if ( de ) {
                                 if ( de->d_name[0]=='.' ) {
                                         --i;
@@ -578,13 +593,13 @@ void senddirdata(int disk,int sec)
 		sendrawdata(buf,size);
 		return;
 	}
-	if ( sec>=4 && sec<4+64*5 ) { /* send file data */
+	if ( sec>=4 && sec<4+64*SECSPERFILE ) { /* send file data */
 		int fn;
 		int off;
 		off_t seekto;
 
-		fn=(sec-4)/5;
-		off=sec-4-fn*5;
+		fn=(sec-4)/SECSPERFILE;
+		off=sec-4-fn*SECSPERFILE;
 		if ( off ) {
 			/* This file had better be open already */
 			if ( fn != disks[disk].afileno ) {
@@ -622,9 +637,9 @@ void senddirdata(int disk,int sec)
 		r=read(disks[disk].filefd,buf,125);
 		buf[125]=fn<<2;
 		buf[126]=sec+1;
-		if ( off==4 ) {
-			buf[126] -= 4;
-			disks[disk].secoff+=4;
+		if ( off==SECSPERFILE-1 ) {
+			buf[126] -= (SECSPERFILE-1);
+			disks[disk].secoff+=(SECSPERFILE-1);
 		}
 		buf[127]=r;
 		if ( r<125 ) {
@@ -1128,15 +1143,16 @@ static void decode(unsigned char *buf)
 	    case 0x36: if ( !quiet) printf( "D6: " ); disk = 5; break;
 	    case 0x37: if ( !quiet) printf( "D7: " ); disk = 6; break;
 	    case 0x38: if ( !quiet) printf( "D8: " ); disk = 7; break;
-	    case 0x40: if ( !quiet) printf( "P: " ); printer = 0; break;
-	    case 0x41: if ( !quiet) printf( "P1: " ); printer = 0; break;
-	    case 0x42: if ( !quiet) printf( "P2: " ); printer = 1; break;
-	    case 0x43: if ( !quiet) printf( "P3: " ); printer = 2; break;
-	    case 0x44: if ( !quiet) printf( "P4: " ); printer = 3; break;
-	    case 0x45: if ( !quiet) printf( "P5: " ); printer = 4; break;
-	    case 0x46: if ( !quiet) printf( "P6: " ); printer = 5; break;
-	    case 0x47: if ( !quiet) printf( "P7: " ); printer = 6; break;
-	    case 0x48: if ( !quiet) printf( "P8: " ); printer = 7; break;
+	    case 0x40: if ( !quiet) printf( "P: " ); printer = 1; break;
+	    case 0x41: if ( !quiet) printf( "P2: " ); printer = 2; break;
+	    case 0x42: if ( !quiet) printf( "P3: " ); printer = 3; break;
+	    case 0x43: if ( !quiet) printf( "P4: " ); printer = 4; break;
+	    case 0x44: if ( !quiet) printf( "P5: " ); printer = 5; break;
+	    case 0x45: if ( !quiet) printf( "P6: " ); printer = 6; break;
+	    case 0x46: if ( !quiet) printf( "P7: " ); printer = 7; break;
+	    case 0x47: if ( !quiet) printf( "P8: " ); printer = 8; break;
+	    case 0x48: if ( !quiet) printf( "P9: " ); printer = 9; break;
+            case 0x4F: if ( !quiet) printf( "Poll: " ); break; // fart noise during boot
 	    case 0x50: if ( !quiet) printf( "R1: " ); rs = 0; break;
 	    case 0x51: if ( !quiet) printf( "R2: " ); rs = 1; break;
 	    case 0x52: if ( !quiet) printf( "R3: " ); rs = 2; break;
@@ -1144,7 +1160,7 @@ static void decode(unsigned char *buf)
                 default: if ( !quiet) printf( "0x%02x: ignored\n",buf[0]);return;
 	}
 	if (disk>=0&&!disks[disk].active) { if ( !quiet) printf( "[no image] " ); }
-	if (printer>=0) {if ( !quiet) printf("[Printers not supported]\n"); return; }
+	if ( printer>=0 && printer != 9 ) {if ( !quiet) printf("[Printers not supported]\n"); return; }
 	if (rs>=0) {if ( !quiet) printf("[Serial ports not supported]\n"); return; }
 
 	sec = buf[2] + 256*buf[3];
@@ -1172,6 +1188,30 @@ static void decode(unsigned char *buf)
 		senddata(disk,sec);
 		break;
 	    case 'W': 
+                if ( printer == 9 ) {
+                        unsigned char pbuf[80];
+                        int i;
+                        int sum=0;
+
+                        if ( !quiet) printf("write: ");
+                        usleep(ACK1);
+                        ack('A');
+                        for( i=0; i<40; i++ ) {
+                                read( atari, &pbuf[i], 1 );	
+                                sum = sum + pbuf[i];
+                                sum = (sum & 0xff) + (sum >> 8);
+                        }
+                        read(atari,&i,1);
+                        if ((i & 0xff) != (sum & 0xff) && !quiet) printf( "[BAD SUM]" );
+                        usleep(ACK2);
+                        ack('A');
+                        usleep(COMPLETE1);
+                        ack('C');
+                        if ( !quiet ) printf(" %.40s",pbuf);
+                        // for (i=0;i<40;++i) printf("%02X ",pbuf[i]);
+                        // siomanage(pbuf); // Process command set by the Atari
+                        break;
+                }
 		if ( !quiet) printf("write sector %d: ",sec);
 		if ( !disks[disk].active ) break;
 		usleep(ACK1);
@@ -1204,7 +1244,18 @@ static void decode(unsigned char *buf)
 		ack('C');
 		break;
 	    case 'S': 
-		if ( !quiet) printf( "status:" ); 
+		if ( !quiet) printf( "status:" );
+                if ( printer == 9 )
+                {
+                        usleep(ACK1);
+                        ack('A');
+			static unsigned char status[] = { 0,0,0,0};
+			usleep(COMPLETE1);
+			ack('C');
+			usleep(COMPLETE2);
+			sendrawdata(status,sizeof(status));
+                        break;
+                }
 		if ( !disks[disk].active ) break;
 		usleep(ACK1);
 		ack('A');
