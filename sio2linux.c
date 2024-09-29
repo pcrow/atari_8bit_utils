@@ -33,6 +33,9 @@
  *	  Linux file system.  It could use My-DOS style subdirectories.
  *        Support for creating new files could be added.
  *        Support for more than one file open at a time could be added.
+ *        This really needs a full redesign where we track what directory entries
+ *        have been sent, so it doesn't mess up if files are added or removed.
+ *        Another option would be to also simulate SpartaDOS images.
  *
  *	* Add support for cassette transfers, allowing BASIC programming with
  *	  fast I/O, but without the memory cost of DOS, as well as support for
@@ -57,6 +60,10 @@
  *
  *	* Add 1030 T: emulation
  *        The boot process is probably quite similar to the 850 mechanism.
+ *
+ *      * Add support for .ATX copy-protected images.
+ *
+ *      * Could we add support for the FujiNet N: device?
  *
  * Version History:
  *
@@ -524,13 +531,16 @@ void senddirdata(int disk,int sec)
 	}
 	if ( sec>=361 && sec<=368 ) { /* Create directory */
 		rewinddir(disks[disk].dir);
-		readdir(disks[disk].dir);
-		readdir(disks[disk].dir);
 		for(i=0;i<8*(sec-361);++i) {
-			if (!readdir(disks[disk].dir)) {
+			de=readdir(disks[disk].dir);
+                        if ( !de ) {
 				sendrawdata(buf,size);
 				return;
 			}
+                        // skip hidden dot files
+                        if ( de->d_name[0]=='.' ) {
+                                --i;
+                        }
 		}
 		for(i=0;i<8;++i) {
 			int start;
@@ -543,6 +553,10 @@ void senddirdata(int disk,int sec)
 			fn=(sec-361)*8+i;
 			start=4+fn*5;
 			if ( de ) {
+                                if ( de->d_name[0]=='.' ) {
+                                        --i;
+                                        continue;
+                                }
 				memset(&ad,0,sizeof(ad));
 				strcpy(path,disks[disk].dirname);
 				strcat(path,"/");
@@ -588,7 +602,10 @@ void senddirdata(int disk,int sec)
 			rewinddir(disks[disk].dir);
 			readdir(disks[disk].dir);
 			readdir(disks[disk].dir);
-			for(i=0;i<=fn;++i) de=readdir(disks[disk].dir);
+			for(i=0;i<=fn;++i) {
+                                de=readdir(disks[disk].dir);
+                                if ( de && de->d_name[0]=='.' ) --i;
+                        }
 			strcpy(path,disks[disk].dirname);
 			strcat(path,"/");
 			strcat(path,de->d_name);
@@ -1124,7 +1141,7 @@ static void decode(unsigned char *buf)
 	    case 0x51: if ( !quiet) printf( "R2: " ); rs = 1; break;
 	    case 0x52: if ( !quiet) printf( "R3: " ); rs = 2; break;
 	    case 0x53: if ( !quiet) printf( "R4: " ); rs = 3; break;
-	    default: if ( !quiet) printf( "???: ignored\n");return;
+                default: if ( !quiet) printf( "0x%02x: ignored\n",buf[0]);return;
 	}
 	if (disk>=0&&!disks[disk].active) { if ( !quiet) printf( "[no image] " ); }
 	if (printer>=0) {if ( !quiet) printf("[Printers not supported]\n"); return; }
