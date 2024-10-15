@@ -155,7 +155,6 @@
  *	<pavel@atrey.karlin.mff.cuni.cz> distribute under GPL.
  */
 
-
 /*
  * Standard include files
  */
@@ -179,6 +178,8 @@
 #ifndef MAXPATHLEN
 #define MAXPATHLEN 1024
 #endif
+
+#define ARRAY_SIZE(_x) ((int)(sizeof(_x)/sizeof(_x[0])))
 
 /*
  * Data structures
@@ -237,6 +238,7 @@ struct image {
 	/*
 	 * Stuff for directories as virtual disk images
 	 */
+        struct host_mydos *mydos; /* If emulating a MyDOS image */
 	DIR *dir;		/* NULL if not a directory */
 	int filefd;		/* fd of open file in directory */
 	int afileno;		/* afileno (0-63) of open file */
@@ -250,6 +252,53 @@ struct image {
 	struct timeval lasttime;/* time that lastsec[] was read */
 	struct trackformat track[40]; /* format information derived from observations */
 };
+
+/*
+ * struct mydos_dir
+ *
+ * This tracks one subdirectory (or the root directory) in a MyDOS
+ * host image.
+ */
+struct mydos_dir {
+        char *host_dir;
+        int entry_count; // 0..64
+        char atari_name[64][8+3+1]; // +1 for NUL
+        char *host_name[64]; // strdup, so remember to free
+        int isdir[64]; // true if a subdirectory
+        int subdir_index[64]; // Index into array for active subdirectories
+        int secskip[64]; // If reading the second sector, add this many in referencing the host file
+        int hostfd[64]; // file descriptor on host file system
+        off_t file_bytes[64];
+        int file_write[64]; // true if write permission
+        struct timeval last_access; // Updated on any access to dir or file in dir
+        // FIXME: variables for tracking files open for writing
+        int isopen[64]; // true if file is open for writing
+};
+
+struct host_mydos {
+        int mydos; // true if MyDOS extensions to DOS 2.0s are allowed
+        int write; // true if write support enabled
+        struct mydos_dir dir[63]; // Root is 0, 1..63 for subdirs
+};
+
+struct mydos_vtoc {
+        unsigned char vtoc_sectors; // SD: X*2-3 ; DD: X-1 (extra SD sectors allocated in pairs)
+        unsigned char total_sectors[2];
+        unsigned char free_sectors[2];
+        unsigned char unused[5];
+        unsigned char bitmap[118]; // sectors 0-943; continues on sector 359, 358,... as needed
+};
+
+struct mydos_sort_dir {
+        int order;
+        char atari_name[8+3+1];
+        char d_name[256];
+};
+        
+
+#define MYDOS_SIZE_TO_SECTORS(_size) ((_size + 125)/125)
+#define MYDOS_FILE_START(_dirnum,_filenum) ( !(_dirnum) ? (_filenum)+4 : (_dirnum) * 1024 + 1024 + 512 + (_filenum))
+#define MYDOS_DIR_START(_dirnum,_filenum) ( !(_dirnum) ? (_filenum)*8+1024 : (_dirnum) * 1024 + 1024 + (_filenum)*8)
 
 /*
  * Prototypes
@@ -269,6 +318,8 @@ static void decode(unsigned char *buf);
 void write_atr_head(int disk);
 void snoopread(int disk,int sec);
 int afnamecpy(char *an,const char *n);
+void init_mydos_drive(int disk,char *hostdir,int write);
+void read_mydos_sector(int disk,int sec);
 
 /*
  * Macros
@@ -278,7 +329,7 @@ int afnamecpy(char *an,const char *n);
 #define SEEK1(n,i)	(ATRHEAD + ((n<4)?((n-1)*128):(3*128+(n-4)*disks[i].secsize)))
 #define SEEK2(n,i)	(ATRHEAD + ((n-1)*disks[i].secsize))
 #define ATRHEAD		16
-#define MAXDISKS	8
+#define MAXDISKS	15 // Hard to access beyond 9
 #define TRACK18(n)	(((n)-1)/18) /* track of sector 'n' if 18 sectors per track (0-39) */
 #define OFF18(n)	(((n)-1)%18) /* offset of sector 'n' in track (0-17) */
 #define TRACKSTART(n)	((((n)-1)/18)*18+1)
@@ -335,7 +386,7 @@ int main(int argc,char *argv[])
 	"  -B     next parameter is blank double-density image to create\n" \
 	"  -x     skip next drive image\n" \
 	"  -n     no ring detect on serial port (some USB converters)\n" \
-	"  <file> disk image to mount as next disk (D1 through D8 in order)\n" \
+	"  <file> disk image to mount as next disk (D1 through D15 in order)\n" \
         "  <dir>  directory to mount as next disk\n"
 
 	if (argc==1) {
@@ -660,6 +711,10 @@ static void senddata(int disk,int sec)
 	off_t check,to;
 	int i;
 
+        if ( disks[disk].mydos ) {
+                read_mydos_sector(disk,sec);
+                return;
+        }
 	if ( disks[disk].dir ) {
 		senddirdata(disk,sec);
 		return;
@@ -961,6 +1016,10 @@ static void loaddisk(char *path,int disk)
 				disks[disk].diskfd=open(path,O_RDONLY);
 			}
 			else if ( errno == EISDIR ) {
+                                init_mydos_drive(disk,path,1); // FIXME: set write from command-line option
+                                printf( "D%d: %s simulated disk\n",disk+1,path);
+                        }
+			else if ( errno == EISDIR ) {
 				disks[disk].filefd = -1;
 				disks[disk].afileno = -1;
 				disks[disk].dir=opendir(path);
@@ -979,7 +1038,7 @@ static void loaddisk(char *path,int disk)
 		}
 	}
 
-	if (disks[disk].diskfd<0) {
+	if (disks[disk].diskfd<0 && !disks[disk].mydos) {
 		fprintf(stderr,"Unable to open disk image %s; drive %d disabled\n",path,disk);
 		return;
 	}
@@ -1143,6 +1202,13 @@ static void decode(unsigned char *buf)
 	    case 0x36: if ( !quiet) printf( "D6: " ); disk = 5; break;
 	    case 0x37: if ( !quiet) printf( "D7: " ); disk = 6; break;
 	    case 0x38: if ( !quiet) printf( "D8: " ); disk = 7; break;
+	    case 0x39: if ( !quiet) printf( "D9: " ); disk = 8; break;
+	    case 0x3A: if ( !quiet) printf( "D10: " ); disk = 9; break;
+	    case 0x3B: if ( !quiet) printf( "D11: " ); disk = 10; break;
+	    case 0x3C: if ( !quiet) printf( "D12: " ); disk = 11; break;
+	    case 0x3D: if ( !quiet) printf( "D13: " ); disk = 12; break;
+	    case 0x3E: if ( !quiet) printf( "D14: " ); disk = 13; break;
+	    case 0x3F: if ( !quiet) printf( "D15: " ); disk = 14; break;
 	    case 0x40: if ( !quiet) printf( "P: " ); printer = 1; break;
 	    case 0x41: if ( !quiet) printf( "P2: " ); printer = 2; break;
 	    case 0x42: if ( !quiet) printf( "P3: " ); printer = 3; break;
@@ -1410,12 +1476,15 @@ void wait_for_cmd(int fd)
 int afnamecpy(char *an,const char *n)
 {
 	int i;
+        if ( *n == '.' ) return 0; // Skip dot files
 	for(i=0;i<11;++i) an[i]=' '; /* Space fill the Atari name */
 	an[11]=0;
 	for(i=0;i<8;++i) {
 		if (!*n) return(1); /* Ok */
 		if (*n=='.') break; /* Extension */
 		if (*n==':') return(0); /* Illegal name */
+		if (*n=='~') return(0); /* Illegal name */
+		if (*n=='#') return(0); /* Illegal name */
 		if (1) an[i]=toupper(*n);
 		else an[i]= *n;
 		++n;
@@ -1425,6 +1494,8 @@ int afnamecpy(char *an,const char *n)
 		if (!*n) return(1); /* Ok */
 		if (*n=='.') return(0); /* Illegal name */
 		if (*n==':') return(0); /* Illegal name */
+		if (*n=='~') return(0); /* Illegal name */
+		if (*n=='#') return(0); /* Illegal name */
 		if (1) an[i]=toupper(*n);
 		else an[i]= *n;
 		++n;
@@ -1432,3 +1503,581 @@ int afnamecpy(char *an,const char *n)
 	if (*n) return(0); /* Extension too long or more than 11 characters */
 	return(1);
 }
+
+/*
+ * init_mydos_drive()
+ *
+ * Initialize a directory to appear as an Atari drive (D1: through D15:) in
+ * MyDOS format.  Note that if there are no subdirectories, this will be DOS 2.0s
+ * format.
+ */
+void init_mydos_drive(int disk,char *hostdir,int write)
+{
+        disks[disk].mydos = calloc(1,sizeof(struct host_mydos));
+        if ( !disks[disk].mydos ) return; // memory full error; won't happen
+        disks[disk].mydos->dir[0].host_dir = strdup(hostdir);
+        disks[disk].mydos->write = write;
+        disks[disk].mydos->mydos = 1; // FIXME: Allow it to be just DOS 2.0s from command line
+        // No, on demand: mydos_read_dir(disks[disk].mydos,0); // Read the root directory
+        disks[disk].active=1;
+        disks[disk].secsize=128;
+        disks[disk].seccount=65535; // all sectors are valid
+        disks[disk].seekcode=direct;
+        disks[disk].dirname=hostdir;
+        disks[disk].filefd = -1;
+        disks[disk].afileno = -1;
+        return;
+}
+
+/*
+ * mydos_readdir_compare()
+ *
+ * Comparison function for qsort
+ */
+int mydos_readdir_compare(const void *a,const void *b)
+{
+        return memcmp(a,b,sizeof(struct mydos_sort_dir));
+}
+
+/*
+ * mydos_readdir_sorted()
+ *
+ * Read a directory into a dynamically allocated array, and sort it
+ */
+struct mydos_sort_dir *mydos_readdir_sorted(char *path,int *entries)
+{
+        struct mydos_sort_dir *dir_array;
+        int array_len = 64;
+        *entries = 0;
+
+        dir_array = malloc(array_len * sizeof(dir_array[0]));
+        if ( !dir_array )
+        {
+                return NULL;
+        }
+
+        // Read in all the entries
+        DIR *dir = opendir(path);
+        if ( !dir ) return NULL;
+        struct dirent *de;
+        while ( NULL != (de=readdir(dir)) )
+        {
+                if ( *entries == array_len )
+                {
+                        array_len += 64;
+                        dir_array = realloc(dir_array,array_len * sizeof(dir_array[0]));
+                        if ( !dir_array )
+                        {
+                                closedir(dir);
+                                return NULL;
+                        }
+                }
+                memset(&dir_array[*entries],0,sizeof(dir_array[0])); // Wipe any alignment pads just to be safe
+                if ( 0 == afnamecpy(dir_array[*entries].atari_name,de->d_name) ) continue; // Skip invalid names
+                //memcpy(dir_array[*entries].d_name,de->d_name,256); // size from man page
+                strcpy(dir_array[*entries].d_name,de->d_name);
+                // Special files that go first
+                dir_array[*entries].order = 255; // Not a priority entry
+                if ( strcmp(dir_array[*entries].atari_name,"DOS     SYS") == 0 ) dir_array[*entries].order = 1;
+                if ( strcmp(dir_array[*entries].atari_name,"DUP     SYS") == 0 ) dir_array[*entries].order = 2;
+                if ( strcmp(dir_array[*entries].atari_name,"AUTORUN SYS") == 0 ) dir_array[*entries].order = 3;
+                if ( strcmp(dir_array[*entries].atari_name,"MEM     SAV") == 0 ) dir_array[*entries].order = 4;
+                ++*entries;
+        }
+        closedir(dir);
+
+        // Sort the directory entries
+        if ( *entries > 1 )
+        {
+                qsort(dir_array,*entries,sizeof(dir_array[0]),mydos_readdir_compare);
+        }
+
+        // Return
+        return dir_array;
+}
+
+
+/*
+ * mydos_read_dir()
+ *
+ * Read a directory and set up MyDOS emulation.
+ */
+void mydos_read_dir(struct host_mydos *mydos,struct mydos_dir *mdir)
+{
+        struct mydos_sort_dir *dir_array;
+        int entries;
+
+        if ( !quiet ) printf("\n  Re-read dir: %s\n",mdir->host_dir);
+        dir_array = mydos_readdir_sorted(mdir->host_dir,&entries);
+        if ( !dir_array )
+        {
+                if ( !quiet ) printf("  Failed to read directory: %s\n",mdir->host_dir);
+                return;
+        }
+        
+	char path[MAXPATHLEN];
+        struct stat sb;
+        struct mydos_dir newdir; // Read dir here and then merge
+        struct mydos_dir *nd = &newdir;
+        if ( !mdir->entry_count ) nd=mdir;
+        char *dirsave = mdir->host_dir;
+        memset(nd,0,sizeof(*nd));
+        nd->host_dir = dirsave;
+
+        for (int i=0;i<entries;++i)
+        {
+                strcpy(path,mdir->host_dir);
+                strcat(path,"/");
+                strcat(path,dir_array[i].d_name);
+                if ( access(path,R_OK) != 0 ) continue; // Ignore non-readable files
+                if ( stat(path,&sb) != 0 ) continue; // Shouldn't fail to stat
+                nd->hostfd[nd->entry_count] = -1;
+                nd->file_bytes[nd->entry_count] = sb.st_size;
+                nd->isdir[nd->entry_count] = (sb.st_mode & S_IFDIR) != 0;
+                memcpy(nd->atari_name[nd->entry_count],dir_array[i].atari_name,sizeof(nd->atari_name[0]));
+                if ( mydos->write && !access(path,W_OK) ) {
+                        nd->file_write[nd->entry_count] = 1;
+                }
+                nd->host_name[nd->entry_count] = strdup(path);
+                if ( !quiet ) printf("   %2d: %.8s.%.3s -> %s\n",nd->entry_count,nd->atari_name[nd->entry_count],&nd->atari_name[nd->entry_count][8],nd->host_name[nd->entry_count]);
+                ++nd->entry_count;
+                if ( nd->entry_count == 64 ) break; // dir full
+        }
+        free(dir_array);
+        //for ( int i=0;i<64;++i ) { if ( nd->host_name[i] ) printf("   nd %d: %s\n",i,nd->host_name[i]); } // Debug
+        if ( !quiet ) printf("  entry_count: %d\n",nd->entry_count);
+        gettimeofday(&nd->last_access,NULL);
+        // FIXME: sort directory?
+        if ( nd == mdir ) return; // No need to merge new read with old
+
+        if ( !quiet ) printf("  merging entries\n");
+        /*
+         * For each entry in the old directory, check to see if it's in the new directory.
+         * If it's not in the new directory, remove the entry
+         * If it's also in the new directory, copy over any updates and remove it from the new directory
+         */
+        for ( int i=0;i<64;++i )
+        {
+                if (0) next_i: continue;
+                if ( !mdir->host_name[i] ) continue;
+                for ( int j=0;j<64;++j )
+                {
+                        if ( !nd->host_name[j] ) continue;
+                        if ( strcmp(mdir->host_name[i],nd->host_name[j]) == 0 )
+                        {
+                                // This entry is in both new and old, copy from new to old and clear new
+                                if ( !quiet ) printf("  preserving entry previously found: %s\n",mdir->host_name[i]);
+                                // update status
+                                mdir->isdir[i] = nd->isdir[j];
+                                mdir->file_bytes[i] = nd->file_bytes[j];
+                                mdir->file_write[i] = nd->file_write[j];
+                                free(nd->host_name[j]);
+                                nd->host_name[j] = NULL;
+                                goto next_i;
+                        }
+                }
+                // This entry in mdir wasn't found; remove it
+                if ( !quiet ) printf("  removing entry previously found: %s\n",mdir->host_name[i]);
+                free(mdir->host_name[i]);
+                mdir->host_name[i]=NULL;
+                if ( mdir->hostfd[i] ) close(mdir->hostfd[i]);
+                mdir->hostfd[i] = -1;
+        }
+        // for ( int i=0;i<64;++i ) { if ( mdir->host_name[i] ) printf("   mdir %d: %s\n",i,mdir->host_name[i]); } // DEBUG
+        /*
+         * For each entry in the new directory, find space in the old directory and copy it over.
+         */
+        for (int j=0;j<64;++j)
+        {
+                if ( !nd->host_name[j] ) continue;
+                for ( int i=0;i<64;++i )
+                {
+                        if ( mdir->host_name[i] ) continue;
+                        if ( !quiet ) printf("  adding entry not previously found: %s\n",nd->host_name[j]);
+                        memcpy(mdir->atari_name[i],nd->atari_name[j],8+3+1);
+                        mdir->host_name[i] = nd->host_name[j];
+                        nd->host_name[j] = NULL;
+                        mdir->isdir[i] = nd->isdir[j];
+                        mdir->subdir_index[i] = nd->subdir_index[j];
+                        mdir->secskip[i] = nd->secskip[j];
+                        mdir->hostfd[i] = nd->hostfd[j];
+                        mdir->file_bytes[i] = nd->file_bytes[j];
+                        mdir->file_write[i] = nd->file_write[j];
+                        mdir->isopen[i] = nd->isopen[j];
+                        break;
+                }
+        }
+
+        /*
+         * set entry_count
+         */
+        mdir->entry_count = 0;
+        for (int i=63;i>=0;--i)
+        {
+                if ( mdir->host_name[i] )
+                {
+                        mdir->entry_count = i+1;
+                        break;
+                }
+        }
+        return;
+}
+
+/*
+ * mydos_dealloc_dir()
+ *
+ * Free all resources and clear out a directory
+ */
+void mydos_dealloc_dir(struct mydos_dir *dir)
+{
+        if ( dir->host_dir ) free(dir->host_dir);
+        for (int i=0;i<64;++i) if ( dir->host_name[i] ) free(dir->host_name[i]);
+        for (int i=0;i<64;++i) if ( dir->hostfd[i] ) close(dir->hostfd[i]);
+        memset(dir,0,sizeof(*dir));
+}
+
+/*
+ * mydos_alloc_subdir()
+ *
+ * We're accessing a new directory; assign it to a struct so that it can
+ * be read and mapped.
+ *
+ * This gets tricky when we need to drop an old entry.
+ *
+ * Return the index in the array of directories for a new directory.
+ */
+int mydos_alloc_subdir(struct host_mydos *mydos,char *host_name)
+{
+        int oldest=0;
+        // Easy: Find an unallocated directory
+        for (int i=1;i<ARRAY_SIZE(mydos->dir);++i)
+        {
+                if ( !mydos->dir[i].host_dir )
+                {
+                        oldest = i;
+                        break;
+                }
+        }
+
+        // Find oldest directory with no open files
+        if ( !oldest ) for (int i=1;i<ARRAY_SIZE(mydos->dir);++i)
+        {
+                if (0) next_i: continue;
+                for (int j=0;j<64;++j)
+                {
+                        if ( mydos->dir[i].host_name[j] && ( mydos->dir[i].isopen[j] || mydos->dir[i].hostfd[j] >= 0 ) )
+                        {
+                                goto next_i;
+                        }
+                }
+                if ( !oldest ) oldest = i;
+                else
+                {
+                        if ( timercmp( &mydos->dir[i].last_access,  &mydos->dir[oldest].last_access, < ) ) oldest = i;
+                }
+        }
+
+        // Find oldest directory with no write-open files
+        if ( !oldest ) for (int i=1;i<ARRAY_SIZE(mydos->dir);++i)
+        {
+                if (0) next_i2: continue;
+                for (int j=0;j<64;++j)
+                {
+                        if ( mydos->dir[i].host_name[j] && ( mydos->dir[i].hostfd[j] >= 0 ) )
+                        {
+                                goto next_i2;
+                        }
+                }
+                if ( !oldest ) oldest = i;
+                else
+                {
+                        if ( timercmp( &mydos->dir[i].last_access,  &mydos->dir[oldest].last_access, < ) ) oldest = i;
+                }
+        }
+
+        // Find oldest directory even with open files
+        if ( !oldest )
+        {
+                oldest = 1;
+                for (int i=21;i<ARRAY_SIZE(mydos->dir);++i)
+                {
+                        if ( timercmp( &mydos->dir[i].last_access,  &mydos->dir[oldest].last_access, < ) ) oldest = i;
+                }
+        }
+        mydos_dealloc_dir(&mydos->dir[oldest]);
+        mydos->dir[oldest].host_dir = strdup(host_name);
+        return oldest;
+}
+
+
+/*
+ * read_mydos_sector()
+ *
+ * Send host data back as a MyDOS image.
+ *
+ * For the root directory, files 0-63 are two sectors each starting at sector 4.
+ * Subdirectories of the root directory are 8 sectors each starting at sector 1024.
+ * This leaves free sectors: 132--359 and 369--719 for writing.
+ *
+ * Active subdirectories start at 1024*n, and have 512 sectors for 64 possible
+ * subdirectories and 128 bytes for 64 possible regular files.
+ */
+void read_mydos_sector(int disk,int sec)
+{
+        unsigned char buf[128];
+        memset(buf,0,sizeof(buf));
+
+        // Check for first sector of a regular file:
+        int isfile = 1;
+        int issecond = 0;
+        int dirnum = sec/1024;
+        int filenum;
+        if ( dirnum == 1 ) isfile = 0; // No file sectors in 1024..2047
+        if ( dirnum > 1 ) --dirnum;
+        filenum = sec % 1024;
+        if ( !dirnum ) filenum -= 4; // skip first three sectors for boot; entry 0 starts on sector 4
+        else filenum -= 512; // skip first 512 bytes for subdirectories
+        if ( filenum < 0 ) isfile = 0;
+        if ( isfile && filenum >= 64 && filenum < 128 )
+        {
+                issecond = 1; // additional sector
+                filenum -= 64;
+        }
+        if ( filenum < 0 || filenum >= 64 ) isfile = 0;
+        if ( isfile && disks[disk].mydos->dir[dirnum].entry_count <= filenum ) isfile = 0;
+        if ( isfile && disks[disk].mydos->dir[dirnum].isdir[filenum] ) isfile = 0;
+        if ( isfile && !issecond )
+        {
+                // This is the first sector of a file
+                if ( !quiet ) printf(" Read first sector of file: %d: %s\n",filenum,disks[disk].mydos->dir[dirnum].host_name[filenum]);
+                gettimeofday(&disks[disk].mydos->dir[dirnum].last_access,NULL);
+                disks[disk].mydos->dir[dirnum].secskip[filenum] = 0; // starting new read
+                // Open the file (close it first if previously opened)
+                if ( disks[disk].mydos->dir[dirnum].hostfd[filenum] >= 0 )
+                {
+                        close(disks[disk].mydos->dir[dirnum].hostfd[filenum]);
+                }
+                disks[disk].mydos->dir[dirnum].hostfd[filenum] = open(disks[disk].mydos->dir[dirnum].host_name[filenum],O_RDONLY);
+                if ( disks[disk].mydos->dir[dirnum].hostfd[filenum] < 0 )
+                {
+                        printf(" Failed to open file: %s\n",disks[disk].mydos->dir[dirnum].host_name[filenum]);
+                        sendrawdata(buf,128);
+                        return;
+                }
+                // Read 125 bytes
+                int r;
+                r = read(disks[disk].mydos->dir[dirnum].hostfd[filenum],buf,125);
+                if ( r < 0 )
+                {
+                        printf(" Failed to read file: %s\n",disks[disk].mydos->dir[dirnum].host_name[filenum]);
+                        sendrawdata(buf,128);
+                        return; // FIXME: handle error
+                }
+                buf[127] = r;
+                if ( sec < 720 )
+                {
+                        buf[125] = filenum << 2;
+                }
+                if ( r == 125 )
+                {
+                        buf[125] |= (sec+64)/256;
+                        buf[126] = (sec+64) & 0xff;
+                }
+                else
+                {
+                        close(disks[disk].mydos->dir[dirnum].hostfd[filenum]); // EOF; close file
+                }
+                sendrawdata(buf,128);
+                return;
+        }
+        if ( issecond )
+        {
+                // This is a subsequent sector of a file
+                gettimeofday(&disks[disk].mydos->dir[dirnum].last_access,NULL);
+                ++disks[disk].mydos->dir[dirnum].secskip[filenum]; // Next time read past this
+                // Read 125 bytes
+                int r;
+                r = read(disks[disk].mydos->dir[dirnum].hostfd[filenum],buf,125);
+                if ( r < 0 ) return; // FIXME: handle error
+                buf[127] = r;
+                if ( sec < 720 )
+                {
+                        buf[125] = filenum << 2;
+                }
+                if ( r >= 125 )
+                {
+                        buf[125] |= sec / 256;
+                        buf[126] =  sec & 0xff;
+                }
+                else
+                {
+                        close(disks[disk].mydos->dir[dirnum].hostfd[filenum]); // EOF; close file
+                        disks[disk].mydos->dir[dirnum].secskip[filenum] = 0;
+                }
+                sendrawdata(buf,128);
+                return;
+        }
+
+        // Check for a subdirectory
+        int isdir = 1;
+        int diroff;
+        dirnum = sec/1024 - 1;
+        filenum = (sec%1024)/8;
+        diroff = sec % 8;
+        if ( dirnum < 0 || dirnum >= 63 ) isdir = 0;
+        if ( filenum >= 64 ) isdir = 0;
+        if ( isdir && !disks[disk].mydos->dir[dirnum].isdir[filenum]) isdir = 0; // right location, but not a subdir entry
+        if ( sec >= 361 && sec <=368 )
+        {
+                isdir = 1;
+                dirnum = 0;
+                diroff = sec - 361;
+        }
+        if ( isdir )
+        {
+                // Make sure the directory is allocated
+                int reread = 0;
+                if (sec > 368 && disks[disk].mydos->dir[dirnum].subdir_index[filenum] == 0)
+                {
+                        disks[disk].mydos->dir[dirnum].subdir_index[filenum] = mydos_alloc_subdir(disks[disk].mydos,disks[disk].mydos->dir[dirnum].host_name[filenum]);
+                        reread = 1;
+                }
+                // Refresh directory if reading first sector
+                if ( !diroff || reread )
+                {
+                        // Re-read the directory
+                        mydos_read_dir(disks[disk].mydos,
+                                       &disks[disk].mydos->dir[
+                                               disks[disk].mydos->dir[dirnum].subdir_index[filenum]]);
+                }
+
+                gettimeofday(&disks[disk].mydos->dir[dirnum].last_access,NULL);
+                // Reading a directory sector for a directory
+                if ( sec >= 1024 )
+                {
+                        dirnum = disks[disk].mydos->dir[dirnum].subdir_index[filenum]; // Not the directory the directory is located in, but where it's really found
+                }
+                struct atari_dirent *ade = (void *)buf;
+                struct mydos_dir *mdir = &disks[disk].mydos->dir[dirnum];
+                if ( !quiet ) printf("Reading entries %d--%d of %d dirnum %d\n",diroff*8,diroff*8+7,mdir->entry_count,dirnum);
+                for (int i=0+diroff*8;i<8+diroff*8;++i)
+                {
+                        if ( i >= mdir->entry_count ) break; // End of directory
+                        // Fill in ade from mdir entry i
+                        ade->flag = 0;
+                        if ( !mdir->host_name[i] ) ade->flag = 0x80; // deleted
+                        if ( mdir->host_name[i] )
+                        {
+                                if ( mdir->isdir[i] )
+                                {
+                                        ade->flag |= 0x10; // mydos_subidr
+                                }
+                                else
+                                {
+                                        ade->flag |= 0x42; // normal file, DOS 2 (not DOS 1)
+                                        if ( dirnum ) ade->flag |= 0x04; // MyDOS extensions
+                                }
+                                if ( !mdir->file_write[i] )
+                                {
+                                        ade->flag |= 0x20; // locked
+                                }
+                                if ( mdir->isopen[i] )
+                                {
+                                        ade->flag |= 0x01; // open for write
+                                }
+                        }
+                        if ( mdir->isdir[i] )
+                        {
+                                ade->countlo = 8;
+                                ade->counthi = 0;
+                                ade->startlo = (MYDOS_DIR_START(dirnum,i)+diroff) & 0xff;
+                                ade->starthi = (MYDOS_DIR_START(dirnum,i)+diroff) / 0x100;
+                        } else {
+                                ade->countlo = MYDOS_SIZE_TO_SECTORS(mdir->file_bytes[i]) & 0xff;
+                                ade->counthi = MYDOS_SIZE_TO_SECTORS(mdir->file_bytes[i]) / 0x100;
+                                ade->startlo = (MYDOS_FILE_START(dirnum,i)+diroff) & 0xff;
+                                ade->starthi = (MYDOS_FILE_START(dirnum,i)+diroff) / 0x100;
+                        }
+                        memcpy(ade->namelo,mdir->atari_name[i],8+3); // Also copies namehi
+                        if ( !quiet ) printf("  Entry %d: flags %02x sector %d %.8s.%.3s\n",i,ade->flag,ade->starthi*256+ade->startlo,ade->namelo,ade->namehi);
+                        // Next entry
+                        ++ade;
+                }
+                sendrawdata(buf,128);
+                return;
+        }
+
+        // Check for VTOC sector
+        if ( sec == 360 )
+        {
+                struct mydos_vtoc *vtoc = (void *)buf;
+                vtoc->vtoc_sectors = 1;
+                vtoc->total_sectors[0] = 707 & 0xff;
+                vtoc->total_sectors[1] = 707 / 0x100;
+                vtoc->free_sectors[0] = (707 - 128) & 0xff;
+                vtoc->free_sectors[1] = (707 - 128) / 0x100;
+                if ( !disks[disk].mydos->write ) {
+                        vtoc->free_sectors[0] = 0;
+                        vtoc->free_sectors[1] = 0;
+                }
+                else
+                {
+                        // Set bit for each free sector
+                        for ( int i=3+128+1;i<720;++i )
+                        {
+                                if ( i>=360 && i<=368 ) continue;
+                                vtoc->bitmap[i/8] |= 1 << (7-(i%8));
+                        }
+                }
+                sendrawdata(buf,128);
+                return;
+        }
+
+        // Sector isn't active, return zeros (buf already set to zeros)
+        sendrawdata(buf,128);
+}
+
+/*
+ * write_mydos_sector()
+ *
+ * Receive data from the Atari for the host file system.
+ *
+ * Writes to directory entries can be used to:
+ *   lock/unlock (chmod)
+ *   rename
+ *   delete
+ *   open for append
+ *   open for writing (truncate)
+ *   create
+ * Support for append may not be implemented
+ *
+ * We can track files open for writing, but not files open for reading, so it's
+ * difficult to tell when we're done with a subdirectory.  We'll just keep the last
+ * 62 directories read, then reuse the oldest one without a file open for writing.
+ */
+void write_mydos_sector(int disk,int sec,unsigned char *buf)
+{
+        (void)disk;// FIXME: get mydos struct from disk
+        if ( sec == 360 ) return; // Ignore writes to sector 360
+        
+        // Check if sector is for a subdirectory
+        if ( ( sec >= 361 && sec <= 368 ) || // root directory
+             ( sec >= 1024 && (sec&1023) < 512 ) ) // subdirectory
+        {
+                (void)buf; // FIXME
+                return;
+        }
+
+        // Check if sector is in the regular write area
+        if ( sec >= 132 && sec <= 719 && !( sec >= 360 && sec <= 368 ) )
+        {
+                ; // FIXME - save file write data and correlate with file
+                return;
+        }
+}
+
+// If opening this in emacs, set tabs to be consistent.
+// Note: I don't use 8 character indent anymore, but I'm keeping this for change tracking.
+/* Local Variables: */
+/* c-basic-offset: 8 */
+/* End: */
