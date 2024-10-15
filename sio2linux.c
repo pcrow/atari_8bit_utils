@@ -261,6 +261,7 @@ struct image {
  */
 struct mydos_dir {
         char *host_dir;
+        int sector;
         int entry_count; // 0..64
         char atari_name[64][8+3+1]; // +1 for NUL
         char *host_name[64]; // strdup, so remember to free
@@ -319,7 +320,8 @@ void write_atr_head(int disk);
 void snoopread(int disk,int sec);
 int afnamecpy(char *an,const char *n);
 void init_mydos_drive(int disk,char *hostdir,int write);
-void read_mydos_sector(int disk,int sec);
+void read_mydos_sector(struct host_mydos *mydos,int sec);
+void write_mydos_sector(struct host_mydos *mydos,int sec,unsigned char *buf);
 
 /*
  * Macros
@@ -712,7 +714,7 @@ static void senddata(int disk,int sec)
 	int i;
 
         if ( disks[disk].mydos ) {
-                read_mydos_sector(disk,sec);
+                read_mydos_sector(disks[disk].mydos,sec);
                 return;
         }
 	if ( disks[disk].dir ) {
@@ -811,6 +813,10 @@ static void recvdata(int disk,int sec)
 	}
 	read(atari,&i,1);
 	if ((i & 0xff) != (sum & 0xff) && !quiet) printf( "[BAD SUM]" );
+        else if ( disks[disk].mydos )
+        {
+                write_mydos_sector(disks[disk].mydos,sec,mybuf);
+        }
 	else if (disks[disk].fakewrite) {
 		if ( !quiet) printf("[write discarded]");
 	}
@@ -1516,6 +1522,7 @@ void init_mydos_drive(int disk,char *hostdir,int write)
         disks[disk].mydos = calloc(1,sizeof(struct host_mydos));
         if ( !disks[disk].mydos ) return; // memory full error; won't happen
         disks[disk].mydos->dir[0].host_dir = strdup(hostdir);
+        disks[disk].mydos->dir[0].sector = 361;
         disks[disk].mydos->write = write;
         disks[disk].mydos->mydos = 1; // FIXME: Allow it to be just DOS 2.0s from command line
         // No, on demand: mydos_read_dir(disks[disk].mydos,0); // Read the root directory
@@ -1621,8 +1628,10 @@ void mydos_read_dir(struct host_mydos *mydos,struct mydos_dir *mdir)
         struct mydos_dir *nd = &newdir;
         if ( !mdir->entry_count ) nd=mdir;
         char *dirsave = mdir->host_dir;
+        int secsave = mdir->sector;
         memset(nd,0,sizeof(*nd));
         nd->host_dir = dirsave;
+        nd->sector = secsave;
 
         for (int i=0;i<entries;++i)
         {
@@ -1809,6 +1818,59 @@ int mydos_alloc_subdir(struct host_mydos *mydos,char *host_name)
         return oldest;
 }
 
+/*
+ * mydos_directory_sector()
+ *
+ * Fill in a buffer with one sector of a directory.
+ */
+void mydos_directory_sector(void *buf,struct mydos_dir *mdir,int secoff,int dirnum)
+{
+        memset(buf,0,128);
+        struct atari_dirent *ade = buf;
+        for (int i=0+secoff*8;i<8+secoff*8;++i)
+        {
+                if ( i >= mdir->entry_count ) break; // End of directory
+                // Fill in ade from mdir entry i
+                ade->flag = 0;
+                if ( !mdir->host_name[i] ) ade->flag = 0x80; // deleted
+                else
+                {
+                        if ( mdir->isdir[i] )
+                        {
+                                ade->flag |= 0x10; // mydos_subidr
+                        }
+                        else
+                        {
+                                ade->flag |= 0x42; // normal file, DOS 2 (not DOS 1)
+                                if ( dirnum ) ade->flag |= 0x04; // MyDOS extensions
+                        }
+                        if ( !mdir->file_write[i] )
+                        {
+                                ade->flag |= 0x20; // locked
+                        }
+                        if ( mdir->isopen[i] )
+                        {
+                                ade->flag |= 0x01; // open for write
+                        }
+                }
+                if ( mdir->isdir[i] )
+                {
+                        ade->countlo = 8;
+                        ade->counthi = 0;
+                        ade->startlo = (MYDOS_DIR_START(dirnum,i)+secoff) & 0xff;
+                        ade->starthi = (MYDOS_DIR_START(dirnum,i)+secoff) / 0x100;
+                } else {
+                        ade->countlo = MYDOS_SIZE_TO_SECTORS(mdir->file_bytes[i]) & 0xff;
+                        ade->counthi = MYDOS_SIZE_TO_SECTORS(mdir->file_bytes[i]) / 0x100;
+                        ade->startlo = (MYDOS_FILE_START(dirnum,i)+secoff) & 0xff;
+                        ade->starthi = (MYDOS_FILE_START(dirnum,i)+secoff) / 0x100;
+                }
+                memcpy(ade->namelo,mdir->atari_name[i],8+3); // Also copies namehi
+                if ( !quiet ) printf("  Entry %d: flags %02x sector %d %.8s.%.3s\n",i,ade->flag,ade->starthi*256+ade->startlo,ade->namelo,ade->namehi);
+                // Next entry
+                ++ade;
+        }
+}
 
 /*
  * read_mydos_sector()
@@ -1822,7 +1884,7 @@ int mydos_alloc_subdir(struct host_mydos *mydos,char *host_name)
  * Active subdirectories start at 1024*n, and have 512 sectors for 64 possible
  * subdirectories and 128 bytes for 64 possible regular files.
  */
-void read_mydos_sector(int disk,int sec)
+void read_mydos_sector(struct host_mydos *mydos,int sec)
 {
         unsigned char buf[128];
         memset(buf,0,sizeof(buf));
@@ -1844,32 +1906,32 @@ void read_mydos_sector(int disk,int sec)
                 filenum -= 64;
         }
         if ( filenum < 0 || filenum >= 64 ) isfile = 0;
-        if ( isfile && disks[disk].mydos->dir[dirnum].entry_count <= filenum ) isfile = 0;
-        if ( isfile && disks[disk].mydos->dir[dirnum].isdir[filenum] ) isfile = 0;
+        if ( isfile && mydos->dir[dirnum].entry_count <= filenum ) isfile = 0;
+        if ( isfile && mydos->dir[dirnum].isdir[filenum] ) isfile = 0;
         if ( isfile && !issecond )
         {
                 // This is the first sector of a file
-                if ( !quiet ) printf(" Read first sector of file: %d: %s\n",filenum,disks[disk].mydos->dir[dirnum].host_name[filenum]);
-                gettimeofday(&disks[disk].mydos->dir[dirnum].last_access,NULL);
-                disks[disk].mydos->dir[dirnum].secskip[filenum] = 0; // starting new read
+                if ( !quiet ) printf(" Read first sector of file: %d: %s\n",filenum,mydos->dir[dirnum].host_name[filenum]);
+                gettimeofday(&mydos->dir[dirnum].last_access,NULL);
+                mydos->dir[dirnum].secskip[filenum] = 0; // starting new read
                 // Open the file (close it first if previously opened)
-                if ( disks[disk].mydos->dir[dirnum].hostfd[filenum] >= 0 )
+                if ( mydos->dir[dirnum].hostfd[filenum] >= 0 )
                 {
-                        close(disks[disk].mydos->dir[dirnum].hostfd[filenum]);
+                        close(mydos->dir[dirnum].hostfd[filenum]);
                 }
-                disks[disk].mydos->dir[dirnum].hostfd[filenum] = open(disks[disk].mydos->dir[dirnum].host_name[filenum],O_RDONLY);
-                if ( disks[disk].mydos->dir[dirnum].hostfd[filenum] < 0 )
+                mydos->dir[dirnum].hostfd[filenum] = open(mydos->dir[dirnum].host_name[filenum],O_RDONLY);
+                if ( mydos->dir[dirnum].hostfd[filenum] < 0 )
                 {
-                        printf(" Failed to open file: %s\n",disks[disk].mydos->dir[dirnum].host_name[filenum]);
+                        printf(" Failed to open file: %s\n",mydos->dir[dirnum].host_name[filenum]);
                         sendrawdata(buf,128);
                         return;
                 }
                 // Read 125 bytes
                 int r;
-                r = read(disks[disk].mydos->dir[dirnum].hostfd[filenum],buf,125);
+                r = read(mydos->dir[dirnum].hostfd[filenum],buf,125);
                 if ( r < 0 )
                 {
-                        printf(" Failed to read file: %s\n",disks[disk].mydos->dir[dirnum].host_name[filenum]);
+                        printf(" Failed to read file: %s\n",mydos->dir[dirnum].host_name[filenum]);
                         sendrawdata(buf,128);
                         return; // FIXME: handle error
                 }
@@ -1885,7 +1947,7 @@ void read_mydos_sector(int disk,int sec)
                 }
                 else
                 {
-                        close(disks[disk].mydos->dir[dirnum].hostfd[filenum]); // EOF; close file
+                        close(mydos->dir[dirnum].hostfd[filenum]); // EOF; close file
                 }
                 sendrawdata(buf,128);
                 return;
@@ -1893,11 +1955,11 @@ void read_mydos_sector(int disk,int sec)
         if ( issecond )
         {
                 // This is a subsequent sector of a file
-                gettimeofday(&disks[disk].mydos->dir[dirnum].last_access,NULL);
-                ++disks[disk].mydos->dir[dirnum].secskip[filenum]; // Next time read past this
+                gettimeofday(&mydos->dir[dirnum].last_access,NULL);
+                ++mydos->dir[dirnum].secskip[filenum]; // Next time read past this
                 // Read 125 bytes
                 int r;
-                r = read(disks[disk].mydos->dir[dirnum].hostfd[filenum],buf,125);
+                r = read(mydos->dir[dirnum].hostfd[filenum],buf,125);
                 if ( r < 0 ) return; // FIXME: handle error
                 buf[127] = r;
                 if ( sec < 720 )
@@ -1911,8 +1973,8 @@ void read_mydos_sector(int disk,int sec)
                 }
                 else
                 {
-                        close(disks[disk].mydos->dir[dirnum].hostfd[filenum]); // EOF; close file
-                        disks[disk].mydos->dir[dirnum].secskip[filenum] = 0;
+                        close(mydos->dir[dirnum].hostfd[filenum]); // EOF; close file
+                        mydos->dir[dirnum].secskip[filenum] = 0;
                 }
                 sendrawdata(buf,128);
                 return;
@@ -1926,7 +1988,7 @@ void read_mydos_sector(int disk,int sec)
         diroff = sec % 8;
         if ( dirnum < 0 || dirnum >= 63 ) isdir = 0;
         if ( filenum >= 64 ) isdir = 0;
-        if ( isdir && !disks[disk].mydos->dir[dirnum].isdir[filenum]) isdir = 0; // right location, but not a subdir entry
+        if ( isdir && !mydos->dir[dirnum].isdir[filenum]) isdir = 0; // right location, but not a subdir entry
         if ( sec >= 361 && sec <=368 )
         {
                 isdir = 1;
@@ -1937,72 +1999,29 @@ void read_mydos_sector(int disk,int sec)
         {
                 // Make sure the directory is allocated
                 int reread = 0;
-                if (sec > 368 && disks[disk].mydos->dir[dirnum].subdir_index[filenum] == 0)
+                if (sec > 368 && mydos->dir[dirnum].subdir_index[filenum] == 0)
                 {
-                        disks[disk].mydos->dir[dirnum].subdir_index[filenum] = mydos_alloc_subdir(disks[disk].mydos,disks[disk].mydos->dir[dirnum].host_name[filenum]);
+                        mydos->dir[dirnum].subdir_index[filenum] = mydos_alloc_subdir(mydos,mydos->dir[dirnum].host_name[filenum]);
+                        mydos->dir[dirnum].sector = sec & ~7;
                         reread = 1;
                 }
                 // Refresh directory if reading first sector
                 if ( !diroff || reread )
                 {
                         // Re-read the directory
-                        mydos_read_dir(disks[disk].mydos,
-                                       &disks[disk].mydos->dir[
-                                               disks[disk].mydos->dir[dirnum].subdir_index[filenum]]);
+                        mydos_read_dir(mydos,
+                                       &mydos->dir[
+                                               mydos->dir[dirnum].subdir_index[filenum]]);
                 }
 
-                gettimeofday(&disks[disk].mydos->dir[dirnum].last_access,NULL);
+                gettimeofday(&mydos->dir[dirnum].last_access,NULL);
                 // Reading a directory sector for a directory
                 if ( sec >= 1024 )
                 {
-                        dirnum = disks[disk].mydos->dir[dirnum].subdir_index[filenum]; // Not the directory the directory is located in, but where it's really found
+                        dirnum = mydos->dir[dirnum].subdir_index[filenum]; // Not the directory the directory is located in, but where it's really found
                 }
-                struct atari_dirent *ade = (void *)buf;
-                struct mydos_dir *mdir = &disks[disk].mydos->dir[dirnum];
-                if ( !quiet ) printf("Reading entries %d--%d of %d dirnum %d\n",diroff*8,diroff*8+7,mdir->entry_count,dirnum);
-                for (int i=0+diroff*8;i<8+diroff*8;++i)
-                {
-                        if ( i >= mdir->entry_count ) break; // End of directory
-                        // Fill in ade from mdir entry i
-                        ade->flag = 0;
-                        if ( !mdir->host_name[i] ) ade->flag = 0x80; // deleted
-                        if ( mdir->host_name[i] )
-                        {
-                                if ( mdir->isdir[i] )
-                                {
-                                        ade->flag |= 0x10; // mydos_subidr
-                                }
-                                else
-                                {
-                                        ade->flag |= 0x42; // normal file, DOS 2 (not DOS 1)
-                                        if ( dirnum ) ade->flag |= 0x04; // MyDOS extensions
-                                }
-                                if ( !mdir->file_write[i] )
-                                {
-                                        ade->flag |= 0x20; // locked
-                                }
-                                if ( mdir->isopen[i] )
-                                {
-                                        ade->flag |= 0x01; // open for write
-                                }
-                        }
-                        if ( mdir->isdir[i] )
-                        {
-                                ade->countlo = 8;
-                                ade->counthi = 0;
-                                ade->startlo = (MYDOS_DIR_START(dirnum,i)+diroff) & 0xff;
-                                ade->starthi = (MYDOS_DIR_START(dirnum,i)+diroff) / 0x100;
-                        } else {
-                                ade->countlo = MYDOS_SIZE_TO_SECTORS(mdir->file_bytes[i]) & 0xff;
-                                ade->counthi = MYDOS_SIZE_TO_SECTORS(mdir->file_bytes[i]) / 0x100;
-                                ade->startlo = (MYDOS_FILE_START(dirnum,i)+diroff) & 0xff;
-                                ade->starthi = (MYDOS_FILE_START(dirnum,i)+diroff) / 0x100;
-                        }
-                        memcpy(ade->namelo,mdir->atari_name[i],8+3); // Also copies namehi
-                        if ( !quiet ) printf("  Entry %d: flags %02x sector %d %.8s.%.3s\n",i,ade->flag,ade->starthi*256+ade->startlo,ade->namelo,ade->namehi);
-                        // Next entry
-                        ++ade;
-                }
+                if ( !quiet ) printf("Reading entries %d--%d of %d dirnum %d\n",diroff*8,diroff*8+7,mydos->dir[dirnum].entry_count,dirnum);
+                mydos_directory_sector(buf,&mydos->dir[dirnum],diroff,dirnum);
                 sendrawdata(buf,128);
                 return;
         }
@@ -2016,7 +2035,7 @@ void read_mydos_sector(int disk,int sec)
                 vtoc->total_sectors[1] = 707 / 0x100;
                 vtoc->free_sectors[0] = (707 - 128) & 0xff;
                 vtoc->free_sectors[1] = (707 - 128) / 0x100;
-                if ( !disks[disk].mydos->write ) {
+                if ( !mydos->write ) {
                         vtoc->free_sectors[0] = 0;
                         vtoc->free_sectors[1] = 0;
                 }
@@ -2055,16 +2074,160 @@ void read_mydos_sector(int disk,int sec)
  * difficult to tell when we're done with a subdirectory.  We'll just keep the last
  * 62 directories read, then reuse the oldest one without a file open for writing.
  */
-void write_mydos_sector(int disk,int sec,unsigned char *buf)
+void write_mydos_sector(struct host_mydos *mydos,int sec,unsigned char *buf)
 {
-        (void)disk;// FIXME: get mydos struct from disk
         if ( sec == 360 ) return; // Ignore writes to sector 360
         
         // Check if sector is for a subdirectory
-        if ( ( sec >= 361 && sec <= 368 ) || // root directory
-             ( sec >= 1024 && (sec&1023) < 512 ) ) // subdirectory
+        for ( int i=0;i<ARRAY_SIZE(mydos->dir);++i)
         {
-                (void)buf; // FIXME
+                if ( !mydos->dir[i].host_dir ) continue;  // not active
+                if ( sec < mydos->dir[i].sector || sec >= mydos->dir[i].sector+8 ) continue; // Out of sector range
+                // Found a match!
+                struct atari_dirent orig[8];
+                struct atari_dirent *update = (void *)buf;
+                mydos_directory_sector(orig,&mydos->dir[i],sec-mydos->dir[i].sector,i);
+                // Now compare orig and update
+                for ( int j=0;j<ARRAY_SIZE(orig);++j )
+                {
+                        if ( memcmp(&orig[j],&update[j],sizeof(orig[0])) == 0 ) continue; // No change to this entry
+
+                        int flag=0,count=0,start=0,name=0; // track what has changed
+                        if ( orig[j].flag != update[j].flag )
+                        {
+                                if ( !quiet ) printf(" %d: update flags: %x->%x\n",j,orig[j].flag,update[j].flag);
+                                flag=1;
+                                // Could be any of:
+                                //  file delete
+                                //  file lock/unlock
+                                //  file creation
+                                //  file close (end writing)
+                                // FIXME
+                        }
+                        if ( orig[j].countlo != update[j].countlo || orig[j].counthi != update[j].counthi )
+                        {
+                                if ( !quiet ) printf(" %d: update count: %d->%d\n",j,orig[j].counthi*256+orig[j].countlo,update[j].counthi*256+update[j].countlo);
+                                count=1;
+                                // this should only change on file close, and can be ignored
+                        }
+                        if ( orig[j].startlo != update[j].startlo || orig[j].starthi != update[j].starthi )
+                        {
+                                if ( !quiet ) printf(" %d: update start: %d->%d\n",j,orig[j].starthi*256+orig[j].startlo,update[j].starthi*256+update[j].startlo);
+                                start=1;
+                                // this should only change on file creation
+                                // FIXME
+                        }
+                        if ( memcmp(orig[j].namelo,update[j].namelo,8+3) )
+                        {
+                                if ( !quiet ) printf(" %d: rename: %.8s.%.3s -> %.8s.%3s\n",j,orig[j].namelo,orig[j].namehi,update[j].namelo,update[j].namehi);
+                                name=1;
+                                // this can change for rename or file creation
+                                // FIXME
+                        }
+                        else
+                        {
+                                if ( !quiet ) printf(" %d: filename %.8s.%.3s\n",j,orig[j].namelo,orig[j].namehi);
+                        }
+
+                        /*
+                         * Handle each specific case
+                         */
+                        struct mydos_dir *mdir = &mydos->dir[i];
+                        int entry = (sec - mdir->sector) * 8 + j;
+
+                        // File rename
+                        if ( name && !start && !count && !flag )
+                        {
+                                // Seems simple, but doing it right is complex.
+                                // If the original name has been upcased from the host, we want to downcase it.
+                                char path[MAXPATHLEN],*p;
+                                int lower=0;
+                                strcpy(path,mdir->host_name[entry]);
+                                p=strrchr(path,'/');
+                                if ( !p ) return; // FIXME: error
+                                ++p;
+                                while ( *p && !isalpha(*p) ) ++p;
+                                if ( islower(*p) ) lower=1; // Need to lowercase it
+                                p=strrchr(path,'/');
+                                ++p;
+                                for (int k=0;k<8;++k)
+                                {
+                                        if ( update[j].namelo[k] == ' ' ) break;
+                                        if ( lower ) *p = tolower(update[j].namelo[k]);
+                                        else *p = update[j].namelo[k];
+                                        ++p;
+                                }
+                                if ( update[j].namehi[0] != ' ' )
+                                {
+                                        *p = '.';
+                                        ++p;
+                                        for (int k=0;k<3;++k)
+                                        {
+                                                if ( update[j].namehi[k] == ' ' ) break;
+                                                if ( lower ) *p = tolower(update[j].namehi[k]);
+                                                else *p = update[j].namehi[k];
+                                                ++p;
+                                        }
+                                }
+                                *p = 0; // NULL terminate, of course!
+                                if ( rename(mdir->host_name[entry],path) != 0 )
+                                {
+                                        return; // FIXME: report error
+                                }
+                                free(mdir->host_name[entry]);
+                                mdir->host_name[entry] = strdup(path);
+                                memcpy(mdir->atari_name[entry],update[j].namelo,8+3);
+                                return; // Success!
+                        }
+
+                        // File lock/unlock
+                        if ( !name && !start && !count && flag && (orig[j].flag & ~0x20) == (update[j].flag & ~0x20) )
+                        {
+                                struct stat sbuf;
+                                mode_t mode;
+                                if ( stat(mdir->host_name[entry],&sbuf) != 0 )
+                                {
+                                        return; // FIXME: report error
+                                }
+                                mode = sbuf.st_mode;
+
+                                if ( update[j].flag & 0x20 ) // Lock the file
+                                {
+                                        // chmod -w filename
+                                        if ( chmod(mdir->host_name[entry],mode & ~0222) != 0 )
+                                        {
+                                                return; // FIXME: report error
+                                        }
+                                        return;
+                                }
+                                else
+                                {
+                                        // chmod +w filename; set for user and group
+                                        if ( chmod(mdir->host_name[entry],mode | 0220) != 0 )
+                                        {
+                                                return; // FIXME: report error
+                                        }
+                                        return;
+                                }
+                        }
+
+                        // File deletion
+                        if ( !name && !start && !count && flag && update[j].flag == 0x80 )
+                        {
+                                if ( unlink(mdir->host_name[entry]) != 0 )
+                                {
+                                        return; // FIXME: report error
+                                }
+                                free(mdir->host_name[entry]);
+                                mdir->host_name[entry] = NULL;
+                                if ( mdir->hostfd[entry] >= 0 )
+                                {
+                                        close(mdir->hostfd[entry]);
+                                        mdir->hostfd[entry] = -1;
+                                }
+                                return;
+                        }
+                }
                 return;
         }
 
