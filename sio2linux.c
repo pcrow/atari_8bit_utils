@@ -272,7 +272,6 @@ struct mydos_dir {
         off_t file_bytes[64];
         int file_write[64]; // true if write permission
         struct timeval last_access; // Updated on any access to dir or file in dir
-        // FIXME: variables for tracking files open for writing
         int isopen[64]; // if open for writing, next sector to write (zero if not writing)
 };
 
@@ -1857,13 +1856,13 @@ void mydos_directory_sector(void *buf,struct mydos_dir *mdir,int secoff,int dirn
                 {
                         ade->countlo = 8;
                         ade->counthi = 0;
-                        ade->startlo = (MYDOS_DIR_START(dirnum,i)+secoff) & 0xff;
-                        ade->starthi = (MYDOS_DIR_START(dirnum,i)+secoff) / 0x100;
+                        ade->startlo = (MYDOS_DIR_START(dirnum,i)) & 0xff;
+                        ade->starthi = (MYDOS_DIR_START(dirnum,i)) / 0x100;
                 } else {
                         ade->countlo = MYDOS_SIZE_TO_SECTORS(mdir->file_bytes[i]) & 0xff;
                         ade->counthi = MYDOS_SIZE_TO_SECTORS(mdir->file_bytes[i]) / 0x100;
-                        ade->startlo = (MYDOS_FILE_START(dirnum,i)+secoff) & 0xff;
-                        ade->starthi = (MYDOS_FILE_START(dirnum,i)+secoff) / 0x100;
+                        ade->startlo = (MYDOS_FILE_START(dirnum,i)) & 0xff;
+                        ade->starthi = (MYDOS_FILE_START(dirnum,i)) / 0x100;
                 }
                 memcpy(ade->namelo,mdir->atari_name[i],8+3); // Also copies namehi
                 if ( !quiet ) printf("  Entry %d: flags %02x sector %d %.8s.%.3s\n",i,ade->flag,ade->starthi*256+ade->startlo,ade->namelo,ade->namehi);
@@ -2229,11 +2228,54 @@ void write_mydos_sector(struct host_mydos *mydos,int sec,unsigned char *buf)
                         }
 
                         // Directory creation
-                        // FIXME
+                        if ( update[j].counthi == 0 && update[j].countlo == 8 && update[j].flag == 0x10 && (orig[j].flag & ~0x80) == 0 )
+                        {
+                                // Set host path
+                                char path[MAXPATHLEN],*p;
+                                int lower=1; // FIXME: Make this a command-line option for case of new files
+                                strcpy(path,mdir->host_dir);
+				strcat(path,"/");
+                                p=path + strlen(path);
+                                for (int k=0;k<8;++k)
+                                {
+                                        if ( update[j].namelo[k] == ' ' ) break;
+                                        if ( lower ) *p = tolower(update[j].namelo[k]);
+                                        else *p = update[j].namelo[k];
+                                        ++p;
+                                }
+                                if ( update[j].namehi[0] != ' ' )
+                                {
+                                        *p = '.';
+                                        ++p;
+                                        for (int k=0;k<3;++k)
+                                        {
+                                                if ( update[j].namehi[k] == ' ' ) break;
+                                                if ( lower ) *p = tolower(update[j].namehi[k]);
+                                                else *p = update[j].namehi[k];
+                                                ++p;
+                                        }
+                                }
+                                *p = 0; // NULL terminate, of course!
+
+                                // Set up directory entry and open the file
+                                if ( !quiet ) printf(" mkdir %s\n",path);
+                                if ( mkdir(path,0775) )
+                                {
+                                        printf(" mkdir %s failed\n",path);
+                                        return;
+                                }
+                                if ( mdir->host_name[entry] ) free(mdir->host_name[entry]);
+                                mdir->host_name[entry] = strdup(path);
+                                memcpy(mdir->atari_name[entry],update[j].namelo,8+3);
+                                mdir->isdir[entry] = 1;
+                                mdir->file_write[entry] = 1;
+                                if ( mdir->entry_count <= entry ) mdir->entry_count = entry+1;
+                                return;
+                        }
 
                         // File creation
                         // Orig flags: $80 or $00, start sector is a free sector
-                        if ( (orig[j].flag & ~0x80) == 0 && start )
+                        if ( (orig[j].flag & ~0x80) == 0 && start && !(update[j].flag & 0x10) )
                         {
                                 // Set host path
                                 char path[MAXPATHLEN],*p;
