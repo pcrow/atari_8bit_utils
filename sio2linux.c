@@ -2001,7 +2001,7 @@ void read_mydos_sector(struct host_mydos *mydos,int sec)
                 if (sec > 368 && mydos->dir[dirnum].subdir_index[filenum] == 0)
                 {
                         mydos->dir[dirnum].subdir_index[filenum] = mydos_alloc_subdir(mydos,mydos->dir[dirnum].host_name[filenum]);
-                        mydos->dir[dirnum].sector = sec & ~7;
+                        mydos->dir[mydos->dir[dirnum].subdir_index[filenum]].sector = sec & ~7;
                         reread = 1;
                 }
                 // Refresh directory if reading first sector
@@ -2029,11 +2029,11 @@ void read_mydos_sector(struct host_mydos *mydos,int sec)
         if ( sec == 360 )
         {
                 struct mydos_vtoc *vtoc = (void *)buf;
-                vtoc->vtoc_sectors = 1;
-                vtoc->total_sectors[0] = 707 & 0xff;
-                vtoc->total_sectors[1] = 707 / 0x100;
-                vtoc->free_sectors[0] = (707 - 128) & 0xff;
-                vtoc->free_sectors[1] = (707 - 128) / 0x100;
+                vtoc->vtoc_sectors = 34; // normally 1 for 1 VTOC sector, but 34 for 65 VTOC sectors (max)
+                vtoc->total_sectors[0] = (65535-8-3-1-65) & 0xff;
+                vtoc->total_sectors[1] = (65535-8-3-1-65) / 0x100;
+                vtoc->free_sectors[0] = (707 - 128 - 64) & 0xff;
+                vtoc->free_sectors[1] = (707 - 128 - 64) / 0x100;
                 if ( !mydos->write ) {
                         vtoc->free_sectors[0] = 0;
                         vtoc->free_sectors[1] = 0;
@@ -2043,7 +2043,7 @@ void read_mydos_sector(struct host_mydos *mydos,int sec)
                         // Set bit for each free sector
                         for ( int i=3+128+1;i<720;++i )
                         {
-                                if ( i>=360 && i<=368 ) continue;
+                                if ( i>=360-64 && i<=368 ) continue;
                                 vtoc->bitmap[i/8] |= 1 << (7-(i%8));
                         }
                         // FIXME: Clear bits matching any isopen next write sectors to avoid conflicts if two files are being written
@@ -2077,6 +2077,7 @@ void read_mydos_sector(struct host_mydos *mydos,int sec)
 void write_mydos_sector(struct host_mydos *mydos,int sec,unsigned char *buf)
 {
         if ( sec == 360 ) return; // Ignore writes to sector 360
+        if ( sec < 360 && sec >= 360-64 ) return; // Additional VTOC sectors
         
         // Check if sector is for a subdirectory
         for ( int i=0;i<ARRAY_SIZE(mydos->dir);++i)
@@ -2088,6 +2089,11 @@ void write_mydos_sector(struct host_mydos *mydos,int sec,unsigned char *buf)
                 struct atari_dirent *update = (void *)buf;
                 mydos_directory_sector(orig,&mydos->dir[i],sec-mydos->dir[i].sector,i);
                 // Now compare orig and update
+                if ( memcmp(orig,update,128) == 0 )
+                {
+                        if ( !quiet ) printf(" Write with no changes\n");
+                        return;
+                }
                 for ( int j=0;j<ARRAY_SIZE(orig);++j )
                 {
                         if ( memcmp(&orig[j],&update[j],sizeof(orig[0])) == 0 ) continue; // No change to this entry
@@ -2208,6 +2214,18 @@ void write_mydos_sector(struct host_mydos *mydos,int sec,unsigned char *buf)
                                         }
                                         return;
                                 }
+                        }
+
+                        // Directory deletion
+                        if ( !name && !start && !count && flag && orig[j].flag == 0x10 && update[j].flag == 0x80 )
+                        {
+                                if ( rmdir(mdir->host_name[entry]) != 0 )
+                                {
+                                        return; // FIXME: report error
+                                }
+                                free(mdir->host_name[entry]);
+                                mdir->host_name[entry] = NULL;
+                                return;
                         }
 
                         // File deletion
