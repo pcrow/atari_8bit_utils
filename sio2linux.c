@@ -273,7 +273,7 @@ struct mydos_dir {
         int file_write[64]; // true if write permission
         struct timeval last_access; // Updated on any access to dir or file in dir
         // FIXME: variables for tracking files open for writing
-        int isopen[64]; // true if file is open for writing
+        int isopen[64]; // if open for writing, next sector to write (zero if not writing)
 };
 
 struct host_mydos {
@@ -2047,6 +2047,7 @@ void read_mydos_sector(struct host_mydos *mydos,int sec)
                                 if ( i>=360 && i<=368 ) continue;
                                 vtoc->bitmap[i/8] |= 1 << (7-(i%8));
                         }
+                        // FIXME: Clear bits matching any isopen next write sectors to avoid conflicts if two files are being written
                 }
                 sendrawdata(buf,128);
                 return;
@@ -2095,7 +2096,7 @@ void write_mydos_sector(struct host_mydos *mydos,int sec,unsigned char *buf)
                         int flag=0,count=0,start=0,name=0; // track what has changed
                         if ( orig[j].flag != update[j].flag )
                         {
-                                if ( !quiet ) printf(" %d: update flags: %x->%x\n",j,orig[j].flag,update[j].flag);
+                                if ( !quiet ) printf(" %d: update flags: %02x->%02x\n",j,orig[j].flag,update[j].flag);
                                 flag=1;
                                 // Could be any of:
                                 //  file delete
@@ -2115,14 +2116,13 @@ void write_mydos_sector(struct host_mydos *mydos,int sec,unsigned char *buf)
                                 if ( !quiet ) printf(" %d: update start: %d->%d\n",j,orig[j].starthi*256+orig[j].startlo,update[j].starthi*256+update[j].startlo);
                                 start=1;
                                 // this should only change on file creation
-                                // FIXME
                         }
                         if ( memcmp(orig[j].namelo,update[j].namelo,8+3) )
                         {
-                                if ( !quiet ) printf(" %d: rename: %.8s.%.3s -> %.8s.%3s\n",j,orig[j].namelo,orig[j].namehi,update[j].namelo,update[j].namehi);
+                                if ( !quiet && orig[j].namelo[0] ) printf(" %d: rename: %.8s.%.3s -> %.8s.%3s\n",j,orig[j].namelo,orig[j].namehi,update[j].namelo,update[j].namehi);
+                                if ( !quiet && !orig[j].namelo[0] ) printf(" %d: set name: %.8s.%3s\n",j,update[j].namelo,update[j].namehi);
                                 name=1;
                                 // this can change for rename or file creation
-                                // FIXME
                         }
                         else
                         {
@@ -2227,6 +2227,72 @@ void write_mydos_sector(struct host_mydos *mydos,int sec,unsigned char *buf)
                                 }
                                 return;
                         }
+
+                        // Directory creation
+                        // FIXME
+
+                        // File creation
+                        // Orig flags: $80 or $00, start sector is a free sector
+                        if ( (orig[j].flag & ~0x80) == 0 && start )
+                        {
+                                // Set host path
+                                char path[MAXPATHLEN],*p;
+                                int lower=1; // FIXME: Make this a command-line option for case of new files
+                                strcpy(path,mdir->host_dir);
+				strcat(path,"/");
+                                p=path + strlen(path);
+                                for (int k=0;k<8;++k)
+                                {
+                                        if ( update[j].namelo[k] == ' ' ) break;
+                                        if ( lower ) *p = tolower(update[j].namelo[k]);
+                                        else *p = update[j].namelo[k];
+                                        ++p;
+                                }
+                                if ( update[j].namehi[0] != ' ' )
+                                {
+                                        *p = '.';
+                                        ++p;
+                                        for (int k=0;k<3;++k)
+                                        {
+                                                if ( update[j].namehi[k] == ' ' ) break;
+                                                if ( lower ) *p = tolower(update[j].namehi[k]);
+                                                else *p = update[j].namehi[k];
+                                                ++p;
+                                        }
+                                }
+                                *p = 0; // NULL terminate, of course!
+
+                                // Set up directory entry and open the file
+                                if ( mdir->host_name[entry] ) free(mdir->host_name[entry]);
+                                mdir->host_name[entry] = strdup(path);
+                                memcpy(mdir->atari_name[entry],update[j].namelo,8+3);
+                                mdir->isopen[entry] = update[j].starthi*256+update[j].startlo;
+                                mdir->hostfd[entry] = open(path,O_WRONLY|O_CREAT,0664); // FIXME: permissions should be a config option
+                                if ( mdir->hostfd[entry] < 0 )
+                                {
+                                        mdir->isopen[entry] = 0;
+                                        printf(" Failed to create new file: %s\n",path);
+                                        return;
+                                }
+                                mdir->file_write[entry] = 1; // We're writing, so obviously...
+                                if ( mdir->entry_count <= entry ) mdir->entry_count = entry+1;
+                                return;
+                        }
+
+                        // Close file (that was open for write)
+                        if ( !name && flag && (orig[j].flag & ~0x1) == update[j].flag )
+                        {
+                                // Removing the open-for-write flag; write is completed
+                                if ( mdir->hostfd[entry] >= 0 )
+                                {
+                                        close(mdir->hostfd[entry]);
+                                        mdir->hostfd[entry] = -1;
+                                }
+                                if ( mdir->isopen[entry] )
+                                {
+                                        mdir->isopen[entry] = 0;
+                                }
+                        }
                 }
                 return;
         }
@@ -2234,7 +2300,24 @@ void write_mydos_sector(struct host_mydos *mydos,int sec,unsigned char *buf)
         // Check if sector is in the regular write area
         if ( sec >= 132 && sec <= 719 && !( sec >= 360 && sec <= 368 ) )
         {
-                ; // FIXME - save file write data and correlate with file
+                for ( int i=0;i<ARRAY_SIZE(mydos->dir);++i)
+                {
+                        if ( !mydos->dir[i].host_dir ) continue;
+                        for ( int j=0;j<64;++j )
+                        {
+                                if ( !mydos->dir[i].host_name[j] ) continue;
+                                if ( mydos->dir[i].isopen[j] != sec ) continue;
+                                // We've found the file that we're writing
+                                if ( buf[127] )
+                                {
+                                        write( mydos->dir[i].hostfd[j],buf,buf[127] );
+                                }
+                                mydos->dir[i].isopen[j] = (buf[125]*256 + buf[126]) & 1023;
+                                if ( !mydos->dir[i].isopen[j] ) mydos->dir[i].isopen[j] = -1; // Flag still open, but no valid chain
+                                return;
+                        }
+                }
+                printf(" Write %d bytes but open file not identified; ignored\n",buf[127]);
                 return;
         }
 }
