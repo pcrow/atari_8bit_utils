@@ -27,7 +27,9 @@ I rewrote that to add a bunch of features:
 * Create new dynamically sized images
   Each image starts as a 3-sector image file, but grows to accomodate the highest-numbered sector written.
 * Mount your native file system as an Atari disk
-  It's read-only for now, and it doesn't support subdirectories, but each file is mapped to a different starting sector, and as that sector is read, it automatically maps in the rest of the file.
+  Supports reading and writing, with MyDOS subdirectories.
+  Each file is mapped to a different starting sector, and as that sector is read, it automatically maps in the rest of the file.
+  Note/point won't work, appending to files won't work, and overwriting won't work, but most common uses will be fine.
 
 Binary load file analyzer
 
