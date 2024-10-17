@@ -2046,7 +2046,17 @@ void read_mydos_sector(struct host_mydos *mydos,int sec)
                                 if ( i>=360-64 && i<=368 ) continue;
                                 vtoc->bitmap[i/8] |= 1 << (7-(i%8));
                         }
-                        // FIXME: Clear bits matching any isopen next write sectors to avoid conflicts if two files are being written
+                        // Clear bits matching any isopen next write sectors to avoid conflicts if two files are being written
+                        for ( int i=0;i<ARRAY_SIZE(mydos->dir);++i)
+                        {
+                                if ( !mydos->dir[i].host_dir ) continue;  // not active
+                                for ( int j=0;j<64;++j )
+                                {
+                                        if ( !mydos->dir[i].isopen[j] ) continue;
+                                        const int busy = mydos->dir[i].isopen[j];
+                                        vtoc->bitmap[busy/8] &= ~(1 << (7-(busy%8)));
+                                }
+                        }
                 }
                 sendrawdata(buf,128);
                 return;
