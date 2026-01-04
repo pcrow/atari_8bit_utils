@@ -125,6 +125,24 @@ int atr_preinit(void)
 {
    int r;
 
+   // Set file system type
+   master_atrfs.fstype = ATR_UNKNOWN;
+   if ( options.fstype )
+   {
+      for (int i=0;i<ATR_MAXFSTYPE;++i)
+      {
+         if ( fs_ops[i] && fs_ops[i]->fstype && strcmp(options.fstype,fs_ops[i]->fstype) == 0 )
+         {
+            master_atrfs.fstype = i;
+            break;
+         }
+      }
+      if ( master_atrfs.fstype == ATR_UNKNOWN ) {
+         fprintf(stderr,"ERROR: Invalid file system type: %s\n",options.fstype);
+         return 1;
+      }
+   }
+
    if ( options.create )
    {
       switch (options.secsize)
@@ -198,20 +216,8 @@ int atr_preinit(void)
          return 1;
       }
 
-      // Set file system type
-      master_atrfs.fstype = ATR_SPECIAL; // Invalid for creation
-      if ( options.fstype )
-      {
-         for (int i=0;i<ATR_MAXFSTYPE;++i)
-         {
-            if ( fs_ops[i] && fs_ops[i]->fstype && strcmp(options.fstype,fs_ops[i]->fstype) == 0 )
-            {
-               master_atrfs.fstype = i;
-               break;
-            }
-         }
-      }
-      if ( master_atrfs.fstype == ATR_SPECIAL)
+      // Validate file system type
+      if ( master_atrfs.fstype == ATR_UNKNOWN)
       {
          if ( options.fstype )
          {
@@ -327,14 +333,18 @@ int atr_preinit(void)
       {
          if ( (fs_ops[i]->fs_sanity)(&master_atrfs) == 0 )
          {
-            master_atrfs.fstype = i;
+            if ( master_atrfs.fstype == ATR_UNKNOWN) master_atrfs.fstype = i;
+            if ( master_atrfs.fstype != (enum atrfstype)i ) {
+               fprintf(stderr,"Warning: Detected file system type %s, command-line specified: %s\n",fs_ops[i]->fstype,fs_ops[master_atrfs.fstype]->fstype);
+            }
             if ( options.debug ) fprintf(stderr,"DEBUG: %s detected %s image\n",__FUNCTION__,fs_ops[i]->name);
             return 0;
          }
       }
    }
-   fprintf(stderr,"Unable to determine file system type; expose raw non-zero sectors\n");
-   master_atrfs.fstype = ATR_UNKNOWN;
+   if (master_atrfs.fstype == ATR_UNKNOWN) {
+      fprintf(stderr,"Unable to determine file system type; expose raw non-zero sectors\n");
+   }
    return 0;
 }
 
@@ -744,6 +754,7 @@ int main(int argc,char *argv[])
              "    --upcase      (new files are create uppercase; operations are case insensitive)\n"
              "    --lowcase     (present all files as lower-case; implies --upcase)\n"
              "    --secsize=<#> (sector size to use if no ATR header is present)\n"
+             "    --fs=<type>   (override auto-detect file system type)\n"
              " Options used with --create:\n"
              "    --secsize=<#> (sector size if creating; default 128)\n"
              "    --sectors=<#> (number of sectors in image; default 720)\n"
