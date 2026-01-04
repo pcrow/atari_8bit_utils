@@ -1,0 +1,16 @@
+I wrote this back in the 80s.  Or at least modified it.  It's a tiny
+menu-based binary-load program that fits in the three boot sectors,
+allowing you to completely fill a standard DOS 2 or DOS 2.5 disk with
+games.
+
+I don't remember the details, but I based this on other longer menu
+programs.
+
+The MENU.000 and MENU.ASM files are for use with the Assembler Editor
+cartridge.  I've also included ASCII conversions.
+
+I don't remember why there are two versions.  The .000 file looks like a
+disassembly.
+
+The file "bootsectors" are the raw 3 boot sectors (384 bytes).  I used my
+disassembler on it to produce the "bootsectors.disasm" file.

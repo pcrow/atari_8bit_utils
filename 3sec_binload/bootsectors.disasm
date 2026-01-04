@@ -1,0 +1,250 @@
+BOOT	= $0009
+ZBUFP	= $0043
+ZDRVA	= $0045
+ERRNO	= $0049
+L00B0	= $00B0
+L00B1	= $00B1
+L00B2	= $00B2
+L00B3	= $00B3
+L00C0	= $00C0
+FR1	= $00E0
+SDLSTL	= $0230
+SDLSTH	= $0231
+COLDST	= $0244
+INITAD	= $02E2
+DBUFHI	= $0305
+DAUX1	= $030A
+DAUX2	= $030B
+L0B00	= $0B00
+L0B03	= $0B03
+L0B04	= $0B04
+L0B05	= $0B05
+L0B7D	= $0B7D
+L0B7E	= $0B7E
+L0B7F	= $0B7F
+LE424	= $E424
+LE425	= $E425
+DSKINV	= $E453
+BOOT_INI	= $E477
+	*= $0700
+	.byte	$00 ; Screen code for ' '
+BOOT_SECS	.byte	3
+BOOT_ADDR	.word	$0700
+LOAD_ADDR	.word	BOOT_INI
+BOOT_EXEC	LDY	#$00
+	STY	COLDST
+	INY
+	STY	BOOT
+	NOP
+	NOP
+	NOP
+	NOP
+	NOP
+	NOP
+	LDA	#$4A
+	STA	SDLSTL
+	LDA	#$08
+	STA	SDLSTH
+	LDA	#$7C
+	STA	L00B2
+	LDA	#$08
+	STA	L00B3
+	LDA	#$69
+	STA	L00B1
+L072A	LDA	L00B1
+	STA	DAUX1
+	LDA	#$01
+	STA	DAUX2
+	JSR	L080B
+	INC	L00B1
+	DEX
+L073A	LDA	L0B00,X
+	BEQ	L078E
+	BMI	L0782
+	CMP	#$01
+	BEQ	L0782
+	INC	L00B0
+	LDY	L00B0
+	LDA	L0B03,X
+	STA	L00C0,Y
+	LDA	L0B04,X
+	STA	FR1,Y
+	TYA
+	CLC
+	ADC	#$A0
+	LDY	#$03
+	STA	(L00B2),Y
+	INY
+	LDA	#$8E
+	STA	(L00B2),Y
+	INY
+L0763	INY
+	LDA	L0B05,X
+	INX
+	SEC
+	SBC	#$20
+	STA	(L00B2),Y
+	CPY	#$10
+	BNE	L0763
+	CLC
+	LDA	L00B2
+	ADC	#$14
+	STA	L00B2
+	BCC	L077C
+	INC	L00B3
+L077C	LDA	L00B0
+	CMP	#$14
+	BEQ	L078E
+L0782	TXA
+	AND	#$F0
+	CLC
+	ADC	#$10
+	TAX
+	ASL	A
+	BCC	L073A
+	BCS	L072A
+L078E	JSR	L0841
+	SEC
+	SBC	#$40
+	CMP	L00B0
+	BEQ	L079A
+	BCS	L078E
+L079A	TAX
+	INC	L0850,X
+	LDA	L00C0,X
+	STA	DAUX1
+	LDA	FR1,X
+	STA	DAUX2
+	JSR	L0815
+	DEX
+L07AC	JSR	L07F9
+	STA	ZBUFP
+	JSR	L07F9
+	STA	ZBUFP+1
+	AND	ZBUFP
+	CMP	#$FF
+	BEQ	L07AC
+	JSR	L07F9
+	STA	ZDRVA
+	JSR	L07F9
+	STA	ZDRVA+1
+L07C6	JSR	L07F9
+	STA	(ZBUFP),Y
+	INC	ZBUFP
+	BNE	L07D3
+	INC	ZBUFP+1
+	BEQ	L07DD
+L07D3	LDA	ZDRVA
+	CMP	ZBUFP
+	LDA	ZDRVA+1
+	SBC	ZBUFP+1
+	BCS	L07C6
+L07DD	LDA	INITAD
+	ORA	INITAD+1
+	BEQ	L07AC
+	STX	ERRNO
+	JSR	L07F6
+	LDX	ERRNO
+	LDY	#$00
+	STY	INITAD
+	STY	INITAD+1
+	BEQ	L07AC
+L07F6	JMP	(INITAD)
+L07F9	CPX	#$7D
+	BNE	L083C
+	LDA	DAUX1
+	ORA	DAUX2
+	BNE	L0815
+	NOP
+	NOP
+	NOP
+	JMP	($02E0)
+L080B	LDA	#$0B
+	STA	DBUFHI
+	NOP
+	NOP
+	NOP
+	NOP
+	NOP
+L0815	NOP
+	NOP
+	NOP
+	NOP
+	NOP
+	JSR	DSKINV
+	BMI	L0815
+	LDA	L0B7D
+	AND	#$03
+	STA	DAUX2
+	LDA	L0B7E
+	STA	DAUX1
+	NOP
+	NOP
+	NOP
+	LDA	L0B7F
+	AND	#$7F
+	STA	L07F9+1
+	LDY	#$00
+	LDX	#$00
+L083C	LDA	L0B00,X
+	INX
+	RTS
+L0841	LDA	LE425
+	PHA
+	LDA	LE424
+	PHA
+	RTS
+	.byte	$70 ; 'p'
+	.byte	$70 ; 'p'
+	.byte	$70 ; 'p'
+	.byte	$47 ; 'G'
+	.byte	$68 ; 'h'
+	.byte	$08 ; Screen code for '('
+L0850	.byte	$70 ; 'p'
+	.byte	$06 ; Screen code for '&'
+	.byte	$06 ; Screen code for '&'
+	.byte	$06 ; Screen code for '&'
+	.byte	$06 ; Screen code for '&'
+	.byte	$06 ; Screen code for '&'
+	.byte	$06 ; Screen code for '&'
+	.byte	$06 ; Screen code for '&'
+	.byte	$06 ; Screen code for '&'
+	.byte	$06 ; Screen code for '&'
+	.byte	$06 ; Screen code for '&'
+	.byte	$06 ; Screen code for '&'
+	.byte	$06 ; Screen code for '&'
+	.byte	$06 ; Screen code for '&'
+	.byte	$06 ; Screen code for '&'
+	.byte	$06 ; Screen code for '&'
+	.byte	$06 ; Screen code for '&'
+	.byte	$06 ; Screen code for '&'
+	.byte	$06 ; Screen code for '&'
+	.byte	$06 ; Screen code for '&'
+	.byte	$06 ; Screen code for '&'
+	.byte	$41 ; 'A'
+	.byte	$4A ; 'J'
+	.byte	$08 ; Screen code for '('
+	.byte	$00 ; Screen code for ' '
+	.byte	$00 ; Screen code for ' '
+	.byte	$00 ; Screen code for ' '
+	.byte	$2D ; '-' ; Screen code for 'M'
+	.byte	$21 ; '!' ; Screen code for 'A'
+	.byte	$2B ; '+' ; Screen code for 'K'
+	.byte	$25 ; '%' ; Screen code for 'E'
+	.byte	$00 ; Screen code for ' '
+	.byte	$33 ; '3' ; Screen code for 'S'
+	.byte	$25 ; '%' ; Screen code for 'E'
+	.byte	$2C ; ',' ; Screen code for 'L'
+	.byte	$25 ; '%' ; Screen code for 'E'
+	.byte	$23 ; '#' ; Screen code for 'C'
+	.byte	$34 ; '4' ; Screen code for 'T'
+	.byte	$29 ; ')' ; Screen code for 'I'
+	.byte	$2F ; '/' ; Screen code for 'O'
+	.byte	$2E ; '.' ; Screen code for 'N'
+	.byte	$00 ; Screen code for ' '
+	.byte	$00 ; Screen code for ' '
+	.byte	$00 ; Screen code for ' '
+	.byte	$00 ; Screen code for ' '
+	.byte	$00 ; Screen code for ' '
+	.byte	$00 ; Screen code for ' '
+	.byte	$00 ; Screen code for ' '
